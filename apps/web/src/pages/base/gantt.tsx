@@ -1,11 +1,21 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { GitBranch, Trash2 } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import { ApiError, baseApi, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { FeishuSelect } from "@/components/feishu-select";
 import { calendarDate, calendarDateTime, calendarKey, formatCalendarDateTime } from "./calendar-view";
 import { recordTitle } from "./registry";
 import type { UndoCellChange, UndoStep } from "./undo";
 import { BaseGanttGpuLayer } from "./base-gpu-layer";
+import {
+  addGanttDependency,
+  computeGanttArrowPath,
+  loadGanttDependencies,
+  removeGanttDependency,
+  saveGanttDependencies,
+  type GanttDependency,
+} from "./gantt-dependencies";
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -131,6 +141,20 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [pointerDraft, setPointerDraft] = useState<PointerBarDraft | null>(null);
+  const markerUid = useId();
+  const [deps, setDeps] = useState<GanttDependency[]>(() => loadGanttDependencies(baseId));
+  const [depsOpen, setDepsOpen] = useState(false);
+  const [depFromId, setDepFromId] = useState<number>(0);
+  const [depToId, setDepToId] = useState<number>(0);
+  const [depError, setDepError] = useState<string | null>(null);
+  const [hoveredDepId, setHoveredDepId] = useState<string | null>(null);
+  const depsWrapRef = useRef<HTMLDivElement>(null);
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const [timelineMetrics, setTimelineMetrics] = useState<{
+    width: number;
+    height: number;
+    rowCenters: Record<number, number>;
+  } | null>(null);
   const busyRef = useRef(false);
   const dragRef = useRef<DragState | null>(null);
   const cleanupPointerRef = useRef<(() => void) | null>(null);
@@ -152,7 +176,27 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     setError(null);
     dragRef.current = null;
     setPointerDraft(null);
+    setDeps(loadGanttDependencies(baseId));
+    setDepError(null);
   }, [baseId]);
+  useEffect(() => {
+    if (!depsOpen) return;
+    const onMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (depsWrapRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[role="listbox"]')) return;
+      setDepsOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setDepsOpen(false);
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [depsOpen]);
 
   const zoomCfg = ZOOM_META[zoom];
   const monthKey = `${String(month.year).padStart(4, "0")}-${String(month.month).padStart(2, "0")}-01`;
@@ -195,6 +239,43 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
 
   const [gpuActive, setGpuActive] = useState(false);
   const ganttScrollRef = useRef<HTMLDivElement>(null);
+  const taskOptions = useMemo(() => {
+    if (!startField || !endField) return [];
+    const out: { id: number; label: string }[] = [];
+    for (const rec of records) {
+      if (!ganttRange(rec.cells[startField.id], rec.cells[endField.id], sameField)) continue;
+      out.push({ id: rec.id, label: recordTitle(rec, fields, members) || t("未命名") });
+    }
+    return out;
+  }, [records, startField, endField, sameField, fields, members]);
+  const taskLabelById = useMemo(() => new Map(taskOptions.map((item) => [item.id, item.label])), [taskOptions]);
+  useEffect(() => {
+    if (taskOptions.length === 0) return;
+    if (!taskOptions.some((o) => o.id === depFromId)) {
+      setDepFromId(taskOptions[0].id);
+    }
+    if (!taskOptions.some((o) => o.id === depToId)) {
+      setDepToId(taskOptions[1]?.id ?? taskOptions[0].id);
+    }
+  }, [taskOptions, depFromId, depToId]);
+  useEffect(() => {
+    const el = rowsRef.current;
+    if (!el) return;
+    const measure = () => {
+      const timelineW = Math.max(0, el.clientWidth - 192);
+      const rowCenters: Record<number, number> = {};
+      el.querySelectorAll<HTMLElement>("[data-gantt-row]").forEach((row) => {
+        const rid = Number(row.dataset.ganttRow);
+        if (rid > 0) rowCenters[rid] = row.offsetTop + Math.min(20, row.offsetHeight / 2);
+      });
+      setTimelineMetrics({ width: timelineW, height: el.offsetHeight, rowCenters });
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [bars, zoom, days]);
   const ganttGpuBars = useMemo(
     () =>
       bars.map((bar) => ({
@@ -352,6 +433,55 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     ? t("{year} 年 {month} 月", { year: month.year, month: month.month })
     : `${monthBuckets[0].year}/${monthBuckets[0].month} – ${monthBuckets[monthBuckets.length - 1].year}/${monthBuckets[monthBuckets.length - 1].month}`;
 
+  const handleAddDep = () => {
+    setDepError(null);
+    const res = addGanttDependency(deps, depFromId, depToId);
+    if (!res.ok) {
+      setDepError(
+        res.reason === "cycle"
+          ? t("无法添加：该连线会形成循环依赖")
+          : res.reason === "self"
+            ? t("前置任务和后置任务不能相同")
+            : res.reason === "duplicate"
+              ? t("该依赖连线已存在")
+              : t("请选择有效的前置和后置任务"),
+      );
+      return;
+    }
+    setDeps(res.edges);
+    saveGanttDependencies(baseId, res.edges);
+  };
+
+  const handleRemoveDep = (id: string) => {
+    const next = removeGanttDependency(deps, id);
+    setDeps(next);
+    saveGanttDependencies(baseId, next);
+    setDepError(null);
+  };
+
+  const effectiveTimelineW =
+    timelineMetrics?.width && timelineMetrics.width > 0 ? timelineMetrics.width : days * zoomCfg.dayWidth;
+  const svgHeight =
+    timelineMetrics?.height && timelineMetrics.height > 0 ? timelineMetrics.height : bars.length * 41;
+  const barIndexMap = new Map<number, { bar: Bar; index: number }>();
+  bars.forEach((bar, index) => barIndexMap.set(bar.rec.id, { bar, index }));
+  const arrowItems = deps.flatMap((dep) => {
+    const fromEntry = barIndexMap.get(dep.fromId);
+    const toEntry = barIndexMap.get(dep.toId);
+    if (!fromEntry || !toEntry) return [];
+    const fromMilestone = fromEntry.bar.range.start === fromEntry.bar.range.end;
+    const toMilestone = toEntry.bar.range.start === toEntry.bar.range.end;
+    const fromX = fromMilestone
+      ? ((fromEntry.bar.visibleStart - first + 0.5) / days) * effectiveTimelineW + 7
+      : ((fromEntry.bar.visibleEnd - first + 1) / days) * effectiveTimelineW;
+    const toX = toMilestone
+      ? ((toEntry.bar.visibleStart - first + 0.5) / days) * effectiveTimelineW - 7
+      : ((toEntry.bar.visibleStart - first) / days) * effectiveTimelineW;
+    const fromY = timelineMetrics?.rowCenters[dep.fromId] ?? fromEntry.index * 41 + 20;
+    const toY = timelineMetrics?.rowCenters[dep.toId] ?? toEntry.index * 41 + 20;
+    return [{ dep, d: computeGanttArrowPath(fromX, fromY, toX, toY) }];
+  });
+
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-gantt data-gantt-zoom={zoom}>
       <div className="flex flex-wrap items-center gap-2 border-b px-4 py-2 text-[14px] font-medium">
@@ -360,7 +490,126 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
         <button type="button" className="h-8 rounded-md border px-3 text-[13px] font-normal hover:bg-hover" onClick={() => { const now = new Date(); setMonth({ year: now.getFullYear(), month: now.getMonth() + 1 }); }}>{t("今天")}</button>
         <span aria-live="polite">{titleLabel}</span>
         <span className="hidden text-[12px] font-normal text-subtle sm:inline">{t("开始「{start}」– 结束「{end}」", { start: startField.name, end: endField.name })}</span>
-        <div className="ml-auto flex rounded-md border p-0.5 text-[12px] font-normal" role="group" aria-label={t("甘特时间刻度")}>
+        <div ref={depsWrapRef} className="relative ml-auto">
+          <button
+            type="button"
+            data-gantt-deps-btn
+            aria-expanded={depsOpen}
+            aria-haspopup="dialog"
+            onClick={() => { setDepsOpen((v) => !v); setDepError(null); }}
+            className={cn(
+              "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] font-normal transition-colors hover:bg-hover",
+              depsOpen || deps.length > 0 ? "border-primary/40 bg-accent text-primary" : "text-muted-foreground",
+            )}
+          >
+            <GitBranch size={13} strokeWidth={1.7} aria-hidden />
+            <span>{t("依赖连线")}</span>
+            {deps.length > 0 && (
+              <span className="inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-medium text-white">
+                {deps.length}
+              </span>
+            )}
+          </button>
+          {depsOpen && (
+            <div
+              role="dialog"
+              aria-label={t("任务依赖连线")}
+              data-gantt-deps-popover
+              className="absolute right-0 top-9 z-40 w-[340px] max-w-[calc(100vw-24px)] rounded-lg border border-[#dee0e3] bg-surface p-3 text-[13px] font-normal text-foreground shadow-[0_6px_24px_rgba(31,35,41,0.14)]"
+            >
+              <div className="mb-2 flex items-center justify-between">
+                <span className="font-medium text-foreground">{t("任务依赖连线")}</span>
+                <span className="text-[11px] text-subtle">{t("{n} 条连线", { n: deps.length })}</span>
+              </div>
+              {canEdit && (
+                <div className="space-y-2 rounded-md border border-[#e5e6eb] bg-[#f7f8fa]/70 p-2.5 dark:bg-sidebar/40">
+                  {taskOptions.length < 2 ? (
+                    <p className="text-[12px] text-subtle">{t("至少需要两条已排期任务才能添加依赖连线。")}</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-1.5">
+                        <div className="min-w-0 space-y-1">
+                          <span className="block text-[11px] text-muted-foreground">{t("前置任务")}</span>
+                          <FeishuSelect
+                            ariaLabel={t("前置任务")}
+                            value={depFromId ? String(depFromId) : ""}
+                            options={taskOptions.map((item) => ({ value: String(item.id), label: item.label }))}
+                            onChange={(val) => { setDepFromId(Number(val)); setDepError(null); }}
+                            className="h-7 w-full border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                            chevronSize={11}
+                            menuMinWidth={132}
+                            dataAttr={{ "data-gantt-dep-from": true }}
+                          />
+                        </div>
+                        <span className="pt-4 text-[12px] text-subtle" aria-hidden>→</span>
+                        <div className="min-w-0 space-y-1">
+                          <span className="block text-[11px] text-muted-foreground">{t("后置任务")}</span>
+                          <FeishuSelect
+                            ariaLabel={t("后置任务")}
+                            value={depToId ? String(depToId) : ""}
+                            options={taskOptions.map((item) => ({ value: String(item.id), label: item.label }))}
+                            onChange={(val) => { setDepToId(Number(val)); setDepError(null); }}
+                            className="h-7 w-full border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+                            chevronSize={11}
+                            menuMinWidth={132}
+                            dataAttr={{ "data-gantt-dep-to": true }}
+                          />
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleAddDep}
+                        data-gantt-dep-add
+                        className="h-7 w-full rounded-md bg-primary text-[12px] font-medium text-white hover:opacity-90"
+                      >
+                        {t("添加连线")}
+                      </button>
+                    </>
+                  )}
+                  {depError && (
+                    <p role="alert" className="text-[12px] text-destructive" data-gantt-dep-error>
+                      {depError}
+                    </p>
+                  )}
+                </div>
+              )}
+              <div className="mt-2.5 max-h-48 space-y-1 overflow-y-auto">
+                {deps.length === 0 ? (
+                  <p className="py-3 text-center text-[12px] text-subtle">{t("暂无依赖连线")}</p>
+                ) : (
+                  deps.map((dep) => (
+                    <div
+                      key={dep.id}
+                      onMouseEnter={() => setHoveredDepId(dep.id)}
+                      onMouseLeave={() => setHoveredDepId((cur) => (cur === dep.id ? null : cur))}
+                      className={cn(
+                        "flex items-center gap-1.5 rounded-md border px-2 py-1.5 text-[12px]",
+                        hoveredDepId === dep.id ? "border-primary/40 bg-accent/50" : "border-transparent bg-hover/40",
+                      )}
+                      data-gantt-dep-item={dep.id}
+                    >
+                      <span className="min-w-0 flex-1 truncate">{taskLabelById.get(dep.fromId) ?? `#${dep.fromId}`}</span>
+                      <span className="shrink-0 text-subtle" aria-hidden>→</span>
+                      <span className="min-w-0 flex-1 truncate">{taskLabelById.get(dep.toId) ?? `#${dep.toId}`}</span>
+                      {canEdit && (
+                        <button
+                          type="button"
+                          aria-label={t("删除依赖连线")}
+                          onClick={() => handleRemoveDep(dep.id)}
+                          className="grid size-5 shrink-0 place-items-center rounded text-subtle hover:bg-surface hover:text-destructive"
+                          data-gantt-dep-remove={dep.id}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      )}
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="flex rounded-md border p-0.5 text-[12px] font-normal" role="group" aria-label={t("甘特时间刻度")}>
           {(["month", "bimonth", "quarter"] as const).map((z) => (
             <button
               key={z}
@@ -422,6 +671,43 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
             })}
           </div>
           {bars.length === 0 && <p className="py-12 text-center text-[13px] text-subtle">{t("本月没有排期的记录")}</p>}
+          <div ref={rowsRef} className="relative" data-gantt-rows>
+          {bars.length > 0 && (
+            <svg
+              data-gantt-dep-layer
+              aria-hidden="true"
+              width={effectiveTimelineW}
+              height={svgHeight}
+              viewBox={`0 0 ${effectiveTimelineW} ${Math.max(1, svgHeight)}`}
+              className="absolute left-48 top-0 z-10 overflow-visible"
+              style={{ pointerEvents: "none" }}
+            >
+              <defs>
+                <marker id={`${markerUid}-arrow`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+                  <path d="M 0 1 L 7 4 L 0 7 z" fill="#8f959e" />
+                </marker>
+                <marker id={`${markerUid}-arrow-active`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+                  <path d="M 0 1 L 7 4 L 0 7 z" fill="#3370ff" />
+                </marker>
+              </defs>
+              {arrowItems.map(({ dep, d }) => {
+                const active = hoveredDepId === dep.id || pointerDraft?.id === dep.fromId || pointerDraft?.id === dep.toId;
+                return (
+                  <path
+                    key={dep.id}
+                    data-gantt-dep-edge={`${dep.fromId}->${dep.toId}`}
+                    d={d}
+                    fill="none"
+                    stroke={active ? "#3370ff" : "#8f959e"}
+                    strokeWidth={active ? 1.8 : 1.4}
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    markerEnd={`url(#${active ? `${markerUid}-arrow-active` : `${markerUid}-arrow`})`}
+                  />
+                );
+              })}
+            </svg>
+          )}
           {bars.map((bar) => {
             const offset = bar.visibleStart - first, length = bar.visibleEnd - bar.visibleStart + 1;
             const totalDays = bar.range.end - bar.range.start + 1;
@@ -552,6 +838,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
               </div>
             );
           })}
+          </div>
         </div>
       </div>
       </div>

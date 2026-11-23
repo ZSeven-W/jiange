@@ -28,6 +28,7 @@ import {
   type SurveySkipRule,
 } from "@/lib/api";
 import { ResourceReferencesButton } from "@/pages/resource-references-button";
+import { FeishuSelect } from "@/components/feishu-select";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { buildSurveyCsv } from "./skip-logic";
@@ -482,14 +483,18 @@ export function SurveyPage({ surveyId }: { surveyId: number }) {
                     {q.type === "rating" && (
                       <div className="flex items-center gap-3 pl-8 text-[13px] text-muted-foreground">
                         <span>最高分值：</span>
-                        <select
-                          value={q.maxRating ?? 5}
+                        <FeishuSelect
+                          ariaLabel="最高分值"
+                          value={String(q.maxRating ?? 5)}
                           disabled={!canEdit}
-                          onChange={(e) => updateQuestion(idx, { maxRating: Number(e.target.value) })}
-                          className="h-8 rounded border bg-background px-2 text-foreground"
-                        >
-                          {[3, 5, 7, 10].map((n) => <option key={n} value={n}>{n} 分制</option>)}
-                        </select>
+                          options={[3, 5, 7, 10].map((n) => ({ value: String(n), label: `${n} 分制` }))}
+                          onChange={(val) => {
+                            const nextMax = Number(val);
+                            if (nextMax !== (q.maxRating ?? 5)) updateQuestion(idx, { maxRating: nextMax });
+                          }}
+                          className="h-8 rounded border bg-background px-2 text-[13px] text-foreground disabled:opacity-60"
+                          menuMinWidth={96}
+                        />
                         <span className="flex items-center gap-0.5 text-amber-400">
                           {Array.from({ length: Math.min(5, q.maxRating ?? 5) }).map((_, s) => <Star key={s} size={15} fill="currentColor" />)}
                         </span>
@@ -557,36 +562,43 @@ export function SurveyPage({ surveyId }: { surveyId: number }) {
                             {(q.skipRules ?? []).map((rule, ri) => (
                               <div key={ri} className="flex flex-wrap items-center gap-2 text-[12px]">
                                 <span>当选择</span>
-                                <select
+                                <FeishuSelect
+                                  ariaLabel="跳转条件选项"
                                   value={rule.whenOption}
                                   disabled={!canEdit}
-                                  onChange={(e) => {
+                                  options={(q.options ?? []).map((opt) => ({ value: opt, label: opt }))}
+                                  onChange={(val) => {
+                                    if (val === rule.whenOption) return;
                                     const rules = [...(q.skipRules ?? [])];
-                                    rules[ri] = { ...rule, whenOption: e.target.value };
+                                    rules[ri] = { ...rule, whenOption: val };
                                     updateQuestion(idx, { skipRules: rules });
                                   }}
-                                  className="h-7 rounded border bg-surface px-2"
-                                >
-                                  {(q.options ?? []).map((opt) => <option key={opt} value={opt}>{opt}</option>)}
-                                </select>
+                                  className="h-7 max-w-[200px] rounded border bg-surface px-2 text-[12px] disabled:opacity-60"
+                                  chevronSize={11}
+                                  menuMinWidth={120}
+                                />
                                 <span>时，跳转至</span>
-                                <select
+                                <FeishuSelect
+                                  ariaLabel="跳转目标题目"
                                   value={rule.jumpToQuestionId}
                                   disabled={!canEdit}
-                                  onChange={(e) => {
+                                  options={[
+                                    ...laterQuestions.map((tq, ti) => ({
+                                      value: tq.id,
+                                      label: `第 ${idx + 2 + ti} 题：${tq.title.slice(0, 18)}`,
+                                    })),
+                                    { value: "__END__", label: "直接结束并提交" },
+                                  ]}
+                                  onChange={(val) => {
+                                    if (val === rule.jumpToQuestionId) return;
                                     const rules = [...(q.skipRules ?? [])];
-                                    rules[ri] = { ...rule, jumpToQuestionId: e.target.value };
+                                    rules[ri] = { ...rule, jumpToQuestionId: val };
                                     updateQuestion(idx, { skipRules: rules });
                                   }}
-                                  className="h-7 rounded border bg-surface px-2"
-                                >
-                                  {laterQuestions.map((tq, ti) => (
-                                    <option key={tq.id} value={tq.id}>
-                                      第 {idx + 2 + ti} 题：{tq.title.slice(0, 18)}
-                                    </option>
-                                  ))}
-                                  <option value="__END__">直接结束并提交</option>
-                                </select>
+                                  className="h-7 max-w-[240px] rounded border bg-surface px-2 text-[12px] disabled:opacity-60"
+                                  chevronSize={11}
+                                  menuMinWidth={160}
+                                />
                                 {canEdit && (
                                   <button
                                     type="button"

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { SheetCellStyle, SheetNumFmt, SheetWorksheet } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import {
@@ -47,6 +48,7 @@ import type { SheetPanelMode } from "./sheet-panels";
 
 const TEXT_COLORS = ["#1f2329", "#d83931", "#ff8800", "#00b42a", "#3370ff", "#7b56d9"];
 const BG_COLORS = ["", "#fff7e6", "#eef3ff", "#e8ffea", "#ffece8", "#f2f3f5"];
+const BORDER_COLORS = ["#8f959e", "#1f2329", "#3370ff", "#d83931", "#00b42a"];
 const FONT_FAMILIES = ["", "PingFang SC", "Microsoft YaHei", "SimSun", "monospace"];
 const FONT_SIZES = [10, 11, 12, 14, 16, 18, 24];
 const NUM_FORMATS: { id: SheetNumFmt; label: string }[] = [
@@ -58,6 +60,49 @@ const NUM_FORMATS: { id: SheetNumFmt; label: string }[] = [
   { id: "integer", label: "整数" },
   { id: "date", label: "日期 YYYY-MM-DD" },
 ];
+
+export type SheetBorderPreset = "all" | "outer" | "bottom" | "topBottom" | "none";
+
+const BORDER_PRESETS: readonly { id: SheetBorderPreset; label: string }[] = [
+  { id: "all", label: "全边框" },
+  { id: "outer", label: "外框线" },
+  { id: "bottom", label: "下框线" },
+  { id: "topBottom", label: "上下框线" },
+  { id: "none", label: "清除边框" },
+];
+
+function BorderPresetIcon({ preset }: { preset: SheetBorderPreset }) {
+  const stroke = "#1f2329";
+  const faint = "#d0d3d6";
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true" className="shrink-0">
+      {/* Subtle base grid reference */}
+      <rect x="1.5" y="1.5" width="11" height="11" stroke={faint} strokeWidth="1" strokeDasharray={preset === "none" ? "2 1.5" : undefined} />
+      <line x1="7" y1="1.5" x2="7" y2="12.5" stroke={faint} strokeWidth="0.9" strokeDasharray="1.5 1.5" />
+      <line x1="1.5" y1="7" x2="12.5" y2="7" stroke={faint} strokeWidth="0.9" strokeDasharray="1.5 1.5" />
+
+      {preset === "all" && (
+        <>
+          <rect x="1.5" y="1.5" width="11" height="11" stroke={stroke} strokeWidth="1.2" />
+          <line x1="7" y1="1.5" x2="7" y2="12.5" stroke={stroke} strokeWidth="1.1" />
+          <line x1="1.5" y1="7" x2="12.5" y2="7" stroke={stroke} strokeWidth="1.1" />
+        </>
+      )}
+      {preset === "outer" && (
+        <rect x="1.5" y="1.5" width="11" height="11" stroke={stroke} strokeWidth="1.35" />
+      )}
+      {preset === "bottom" && (
+        <line x1="1" y1="12.5" x2="13" y2="12.5" stroke={stroke} strokeWidth="1.6" />
+      )}
+      {preset === "topBottom" && (
+        <>
+          <line x1="1" y1="1.5" x2="13" y2="1.5" stroke={stroke} strokeWidth="1.4" />
+          <line x1="1" y1="12.5" x2="13" y2="12.5" stroke={stroke} strokeWidth="1.4" />
+        </>
+      )}
+    </svg>
+  );
+}
 
 export interface SheetTabsBarProps {
   sheets: SheetWorksheet[];
@@ -260,7 +305,8 @@ export interface SheetToolbarProps {
   onToggleFormatBrush: () => void;
   onClearFormat: () => void;
   onStylePatch: (patch: Partial<SheetCellStyle>) => void;
-  onToggleBorder: () => void;
+  onToggleBorder?: () => void;
+  onApplyBorderPreset?: (preset: SheetBorderPreset, color?: string) => void;
   onToggleMerge: () => void;
   onInsertRowAbove: () => void;
   onInsertRowBelow: () => void;
@@ -276,6 +322,43 @@ export interface SheetToolbarProps {
   unresolvedCommentCount: number;
   onTogglePanel: (mode: SheetPanelMode) => void;
   onCollapseToolbar?: () => void;
+}
+
+type ToolbarMenuId = "file" | "insert" | "font" | "size" | "border" | "color" | "bg" | "numfmt" | "freeze";
+
+interface AnchorRect {
+  left: number;
+  top: number;
+  bottom: number;
+  right: number;
+  width: number;
+}
+
+interface OpenToolbarMenu {
+  id: ToolbarMenuId;
+  rect: AnchorRect;
+}
+
+const MENU_METRICS: Record<ToolbarMenuId, { width: number; estHeight: number }> = {
+  file: { width: 176, estHeight: 132 },
+  insert: { width: 164, estHeight: 224 },
+  font: { width: 148, estHeight: 184 },
+  size: { width: 84, estHeight: 212 },
+  border: { width: 184, estHeight: 224 },
+  color: { width: 176, estHeight: 52 },
+  bg: { width: 176, estHeight: 52 },
+  numfmt: { width: 176, estHeight: 244 },
+  freeze: { width: 164, estHeight: 144 },
+};
+
+function computeClampedMenuPos(rect: AnchorRect, id: ToolbarMenuId): { left: number; top: number; width: number } {
+  const { width, estHeight } = MENU_METRICS[id];
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+  const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const left = Math.max(8, Math.min(rect.left, vw - width - 8));
+  const fitsBelow = rect.bottom + 4 + estHeight <= vh - 8;
+  const top = fitsBelow ? rect.bottom + 4 : Math.max(8, rect.top - estHeight - 4);
+  return { left, top, width };
 }
 
 export function SheetToolbar(props: SheetToolbarProps) {
@@ -299,6 +382,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
     onClearFormat,
     onStylePatch,
     onToggleBorder,
+    onApplyBorderPreset,
     onToggleMerge,
     onInsertRowAbove,
     onInsertRowBelow,
@@ -316,26 +400,72 @@ export function SheetToolbar(props: SheetToolbarProps) {
     onCollapseToolbar,
   } = props;
 
-  const [openMenu, setOpenMenu] = useState<"file" | "insert" | "font" | "size" | "color" | "bg" | "numfmt" | "freeze" | null>(null);
+  const [openMenu, setOpenMenu] = useState<OpenToolbarMenu | null>(null);
+  const [borderColor, setBorderColor] = useState<string>("#8f959e");
   const rootRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const triggerElRef = useRef<HTMLButtonElement | null>(null);
+
+  const toggleMenu = (id: ToolbarMenuId, e: React.MouseEvent<HTMLButtonElement>) => {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    setOpenMenu((cur) => {
+      if (cur?.id === id) {
+        triggerElRef.current = null;
+        return null;
+      }
+      triggerElRef.current = el;
+      return {
+        id,
+        rect: { left: r.left, top: r.top, bottom: r.bottom, right: r.right, width: r.width },
+      };
+    });
+  };
+
+  const closeMenu = () => {
+    triggerElRef.current = null;
+    setOpenMenu(null);
+  };
 
   useEffect(() => {
     if (!openMenu) return;
-    const close = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpenMenu(null);
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node;
+      if (menuRef.current?.contains(target) || triggerElRef.current?.contains(target)) return;
+      closeMenu();
     };
-    const esc = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpenMenu(null);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        const trigger = triggerElRef.current;
+        closeMenu();
+        trigger?.focus();
+      }
     };
-    document.addEventListener("mousedown", close);
-    document.addEventListener("keydown", esc);
+    const onScroll = (e: Event) => {
+      const target = e.target as Node | null;
+      if (target && menuRef.current?.contains(target)) return;
+      closeMenu();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", closeMenu);
     return () => {
-      document.removeEventListener("mousedown", close);
-      document.removeEventListener("keydown", esc);
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", closeMenu);
     };
   }, [openMenu]);
 
-  const iconBtn = (label: string, active: boolean, disabled: boolean, onClick: () => void, children: React.ReactNode, dataAttr?: string) => (
+  const iconBtn = (
+    label: string,
+    active: boolean,
+    disabled: boolean,
+    onClick: (e: React.MouseEvent<HTMLButtonElement>) => void,
+    children: React.ReactNode,
+    dataAttr?: string,
+  ) => (
     <button
       type="button"
       title={label}
@@ -350,7 +480,14 @@ export function SheetToolbar(props: SheetToolbarProps) {
     </button>
   );
 
-  const labeledBtn = (label: string, active: boolean, disabled: boolean, onClick: () => void, children: React.ReactNode, dataAttr?: string) => (
+  const labeledBtn = (
+    label: string,
+    active: boolean,
+    disabled: boolean,
+    onClick: (e: React.MouseEvent<HTMLButtonElement>) => void,
+    children: React.ReactNode,
+    dataAttr?: string,
+  ) => (
     <button
       type="button"
       title={label}
@@ -366,18 +503,238 @@ export function SheetToolbar(props: SheetToolbarProps) {
   );
 
   const activeFmtLabel = NUM_FORMATS.find((f) => f.id === (activeStyle.numFmt || "general"))?.label.split(" ")[0] ?? t("常规");
+  const hasAnyBorders = !!(
+    activeStyle.borders &&
+    (activeStyle.borders.top || activeStyle.borders.right || activeStyle.borders.bottom || activeStyle.borders.left)
+  );
+
+  const renderPortaledMenu = () => {
+    if (!openMenu || typeof document === "undefined") return null;
+    const pos = computeClampedMenuPos(openMenu.rect, openMenu.id);
+    const baseMenuCls =
+      "fixed z-[120] rounded-lg border border-[#dee0e3] bg-white py-1 text-[#1f2329] shadow-[0_8px_28px_rgba(31,35,41,0.16)]";
+
+    let body: React.ReactNode = null;
+    if (openMenu.id === "file") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="file"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} text-[13px]`}
+        >
+          {canEdit && (
+            <button type="button" role="menuitem" disabled={importing} onClick={() => { closeMenu(); onTriggerImport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]">
+              <FileUp size={14} />{t("导入 XLSX")}
+            </button>
+          )}
+          {onExport && (
+            <button type="button" role="menuitem" onClick={() => { closeMenu(); onExport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]">
+              <Download size={14} />{t("导出 XLSX")}
+            </button>
+          )}
+          {onDuplicate && (
+            <button type="button" role="menuitem" onClick={() => { closeMenu(); onDuplicate(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]">
+              <MoreHorizontal size={14} />{t("创建副本")}
+            </button>
+          )}
+        </div>
+      );
+    } else if (openMenu.id === "insert") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="insert"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} text-[13px]`}
+        >
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onInsertRowAbove(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Rows3 size={14} />{t("上方插入行")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onInsertRowBelow(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Rows3 size={14} />{t("下方插入行")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onInsertColLeft(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Columns3 size={14} />{t("左侧插入列")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onInsertColRight(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Columns3 size={14} />{t("右侧插入列")}</button>
+          <div className="my-1 border-t border-[#eceef2]" />
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onDeleteRow(); }} className="flex h-8 w-full items-center gap-2 px-3 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={14} />{t("删除当前行")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onDeleteCol(); }} className="flex h-8 w-full items-center gap-2 px-3 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={14} />{t("删除当前列")}</button>
+        </div>
+      );
+    } else if (openMenu.id === "font") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="font"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} text-[12px]`}
+        >
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onStylePatch({ fontFamily: "" }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${!activeStyle.fontFamily ? "font-medium text-[#3370ff]" : ""}`}>
+            {t("默认字体")}
+          </button>
+          {FONT_FAMILIES.filter(Boolean).map((f) => (
+            <button key={f} type="button" role="menuitem" onClick={() => { closeMenu(); onStylePatch({ fontFamily: f }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${activeStyle.fontFamily === f ? "font-medium text-[#3370ff]" : ""}`} style={{ fontFamily: f }}>
+              {f}
+            </button>
+          ))}
+        </div>
+      );
+    } else if (openMenu.id === "size") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="size"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} text-[12px]`}
+        >
+          {FONT_SIZES.map((sz) => (
+            <button key={sz} type="button" role="menuitem" onClick={() => { closeMenu(); onStylePatch({ fontSize: sz }); }} className={`flex h-7 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${(activeStyle.fontSize || 12) === sz ? "font-medium text-[#3370ff]" : ""}`}>
+              {sz}
+            </button>
+          ))}
+        </div>
+      );
+    } else if (openMenu.id === "border") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          aria-label={t("边框样式")}
+          data-sheet-toolbar-menu="border"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} p-1.5 text-[12px]`}
+        >
+          <div className="space-y-0.5">
+            {BORDER_PRESETS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="menuitem"
+                data-sheet-border-preset={item.id}
+                onClick={() => {
+                  closeMenu();
+                  if (onApplyBorderPreset) {
+                    onApplyBorderPreset(item.id, borderColor);
+                  } else if (onToggleBorder) {
+                    onToggleBorder();
+                  }
+                }}
+                className="flex h-8 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[#1f2329] hover:bg-[#f2f3f5]"
+              >
+                <BorderPresetIcon preset={item.id} />
+                <span>{t(item.label)}</span>
+              </button>
+            ))}
+          </div>
+          <div className="mt-1.5 flex items-center justify-between border-t border-[#eff0f1] px-2 pt-2 pb-0.5">
+            <span className="text-[11px] text-[#8f959e]">{t("边框颜色")}</span>
+            <div className="flex items-center gap-1">
+              {BORDER_COLORS.map((hex) => (
+                <button
+                  key={hex}
+                  type="button"
+                  aria-label={hex}
+                  onClick={() => setBorderColor(hex)}
+                  className={`size-4 rounded-full border transition-transform ${
+                    borderColor === hex ? "scale-110 border-[#3370ff] ring-2 ring-[#3370ff]/30" : "border-[#dee0e3]"
+                  }`}
+                  style={{ backgroundColor: hex }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    } else if (openMenu.id === "color") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="color"
+          style={{ left: pos.left, top: pos.top }}
+          className="fixed z-[120] flex gap-1.5 rounded-lg border border-[#dee0e3] bg-white p-2 shadow-[0_8px_28px_rgba(31,35,41,0.16)]"
+        >
+          {TEXT_COLORS.map((hex) => (
+            <button
+              key={hex}
+              type="button"
+              aria-label={hex}
+              onClick={() => { closeMenu(); onStylePatch({ color: hex }); }}
+              className="size-5 rounded-full border border-[#dee0e3] transition-transform hover:scale-110"
+              style={{ backgroundColor: hex }}
+            />
+          ))}
+        </div>
+      );
+    } else if (openMenu.id === "bg") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="bg"
+          style={{ left: pos.left, top: pos.top }}
+          className="fixed z-[120] flex gap-1.5 rounded-lg border border-[#dee0e3] bg-white p-2 shadow-[0_8px_28px_rgba(31,35,41,0.16)]"
+        >
+          {BG_COLORS.map((hex) => (
+            <button
+              key={hex || "none"}
+              type="button"
+              aria-label={hex || t("无填充")}
+              onClick={() => { closeMenu(); onStylePatch({ bg: hex }); }}
+              className="size-5 rounded border border-[#dee0e3] text-[10px] transition-transform hover:scale-110"
+              style={{ backgroundColor: hex || "#ffffff" }}
+            >
+              {hex ? "" : "×"}
+            </button>
+          ))}
+        </div>
+      );
+    } else if (openMenu.id === "numfmt") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="numfmt"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} text-[12px]`}
+        >
+          {NUM_FORMATS.map((fmt) => (
+            <button
+              key={fmt.id}
+              type="button"
+              role="menuitem"
+              onClick={() => { closeMenu(); onStylePatch({ numFmt: fmt.id }); }}
+              className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${activeStyle.numFmt === fmt.id ? "font-medium text-[#3370ff]" : ""}`}
+            >
+              {t(fmt.label)}
+            </button>
+          ))}
+        </div>
+      );
+    } else if (openMenu.id === "freeze") {
+      body = (
+        <div
+          ref={menuRef}
+          role="menu"
+          data-sheet-toolbar-menu="freeze"
+          style={{ left: pos.left, top: pos.top, width: pos.width }}
+          className={`${baseMenuCls} text-[12px]`}
+        >
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onFreezeRows(1, 0); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("冻结首行")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onFreezeRows(0, 1); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("冻结首列")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onFreezeRows(1, 1); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("同时冻结首行首列")}</button>
+          <button type="button" role="menuitem" onClick={() => { closeMenu(); onFreezeRows(0, 0); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("取消冻结")}</button>
+        </div>
+      );
+    }
+
+    return body ? createPortal(body, document.body) : null;
+  };
 
   return (
     <div ref={rootRef} className="relative flex h-[54px] min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#e5e6eb] bg-white px-2" data-sheet-toolbar>
       <div className="relative shrink-0">
-        {labeledBtn(t("菜单"), openMenu === "file", false, () => setOpenMenu((m) => (m === "file" ? null : "file")), <Menu size={15} />)}
-        {openMenu === "file" && (
-          <div role="menu" className="fixed left-3 top-[148px] z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-lg">
-            {canEdit && <button type="button" role="menuitem" disabled={importing} onClick={() => { setOpenMenu(null); onTriggerImport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><FileUp size={14} />{t("导入 XLSX")}</button>}
-            {onExport && <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onExport(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Download size={14} />{t("导出 XLSX")}</button>}
-            {onDuplicate && <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onDuplicate(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><MoreHorizontal size={14} />{t("创建副本")}</button>}
-          </div>
-        )}
+        {labeledBtn(t("菜单"), openMenu?.id === "file", false, (e) => toggleMenu("file", e), <Menu size={15} />)}
       </div>
 
       {labeledBtn(t("撤销"), false, !canEdit || !canUndo, onUndo, <Undo2 size={15} />, "undo")}
@@ -386,18 +743,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
       {labeledBtn(t("清除格式"), false, !canEdit, onClearFormat, <Eraser size={15} />, "clear-format")}
 
       <div className="relative shrink-0">
-        {labeledBtn(t("插入"), openMenu === "insert", !canEdit, () => setOpenMenu((m) => (m === "insert" ? null : "insert")), <Plus size={15} />)}
-        {openMenu === "insert" && (
-          <div role="menu" className="fixed z-50 mt-1 w-40 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-lg" style={{ left: 180, top: 148 }}>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onInsertRowAbove(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Rows3 size={14} />{t("上方插入行")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onInsertRowBelow(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Rows3 size={14} />{t("下方插入行")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onInsertColLeft(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Columns3 size={14} />{t("左侧插入列")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onInsertColRight(); }} className="flex h-8 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"><Columns3 size={14} />{t("右侧插入列")}</button>
-            <div className="my-1 border-t border-[#eceef2]" />
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onDeleteRow(); }} className="flex h-8 w-full items-center gap-2 px-3 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={14} />{t("删除当前行")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onDeleteCol(); }} className="flex h-8 w-full items-center gap-2 px-3 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={14} />{t("删除当前列")}</button>
-          </div>
-        )}
+        {labeledBtn(t("插入"), openMenu?.id === "insert", !canEdit, (e) => toggleMenu("insert", e), <Plus size={15} />)}
       </div>
 
       <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
@@ -408,42 +754,44 @@ export function SheetToolbar(props: SheetToolbarProps) {
             <button
               type="button"
               aria-label={t("字体")}
+              aria-expanded={openMenu?.id === "font"}
               disabled={!canEdit}
-              onClick={() => setOpenMenu((m) => (m === "font" ? null : "font"))}
-              className="flex h-6 w-[88px] items-center justify-between gap-1 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45"
+              onClick={(e) => toggleMenu("font", e)}
+              className={`flex h-6 w-[88px] items-center justify-between gap-1 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${openMenu?.id === "font" ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
             >
               <span className="truncate">{activeStyle.fontFamily || t("默认字体")}</span>
               <ChevronDown size={11} className="shrink-0 text-[#8f959e]" />
             </button>
-            {openMenu === "font" && (
-              <div role="menu" className="fixed z-50 w-36 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
-                <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ fontFamily: "" }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${!activeStyle.fontFamily ? "font-medium text-[#3370ff]" : ""}`}>{t("默认字体")}</button>
-                {FONT_FAMILIES.filter(Boolean).map((f) => (
-                  <button key={f} type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ fontFamily: f }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${activeStyle.fontFamily === f ? "font-medium text-[#3370ff]" : ""}`} style={{ fontFamily: f }}>{f}</button>
-                ))}
-              </div>
-            )}
           </div>
           <div className="relative">
             <button
               type="button"
               aria-label={t("字号")}
+              aria-expanded={openMenu?.id === "size"}
               disabled={!canEdit}
-              onClick={() => setOpenMenu((m) => (m === "size" ? null : "size"))}
-              className="flex h-6 w-11 items-center justify-between gap-1 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45"
+              onClick={(e) => toggleMenu("size", e)}
+              className={`flex h-6 w-11 items-center justify-between gap-1 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${openMenu?.id === "size" ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
             >
               <span>{activeStyle.fontSize || 12}</span>
               <ChevronDown size={11} className="shrink-0 text-[#8f959e]" />
             </button>
-            {openMenu === "size" && (
-              <div role="menu" className="fixed z-50 w-20 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
-                {FONT_SIZES.map((sz) => (
-                  <button key={sz} type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ fontSize: sz }); }} className={`flex h-7 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${(activeStyle.fontSize || 12) === sz ? "font-medium text-[#3370ff]" : ""}`}>{sz}</button>
-                ))}
-              </div>
-            )}
           </div>
-          {iconBtn(t("边框"), !!activeStyle.borders, !canEdit, onToggleBorder, <Grid2X2 size={14} />, "borders")}
+          <button
+            type="button"
+            title={t("边框")}
+            aria-label={t("边框")}
+            aria-expanded={openMenu?.id === "border"}
+            aria-haspopup="menu"
+            disabled={!canEdit}
+            data-sheet-tool="borders"
+            onClick={(e) => toggleMenu("border", e)}
+            className={`inline-flex h-7 items-center gap-0.5 rounded px-1.5 text-[#4b5058] transition-colors enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${
+              hasAnyBorders || openMenu?.id === "border" ? "bg-[#e1eaff] text-[#3370ff]" : ""
+            }`}
+          >
+            <Grid2X2 size={14} />
+            <ChevronDown size={10} className="text-[#8f959e]" />
+          </button>
         </div>
         <div className="flex items-center gap-0.5">
           {iconBtn(t("粗体"), !!activeStyle.bold, !canEdit, () => onStylePatch({ bold: !activeStyle.bold }), <Bold size={14} />, "bold")}
@@ -451,20 +799,19 @@ export function SheetToolbar(props: SheetToolbarProps) {
           {iconBtn(t("斜体"), !!activeStyle.italic, !canEdit, () => onStylePatch({ italic: !activeStyle.italic }), <Italic size={14} />, "italic")}
           {iconBtn(t("下划线"), !!activeStyle.underline, !canEdit, () => onStylePatch({ underline: !activeStyle.underline }), <Underline size={14} />, "underline")}
           <div className="relative">
-            {iconBtn(t("字体颜色"), openMenu === "color", !canEdit, () => setOpenMenu((m) => (m === "color" ? null : "color")), <span className="flex flex-col items-center leading-none"><Palette size={13} /><span className="mt-0.5 h-0.5 w-3.5" style={{ backgroundColor: activeStyle.color || "#1f2329" }} /></span>)}
-            {openMenu === "color" && (
-              <div className="fixed z-50 flex gap-1.5 rounded-md border border-[#dee0e3] bg-white p-2 shadow-lg" style={{ top: 148 }}>
-                {TEXT_COLORS.map((hex) => <button key={hex} type="button" aria-label={hex} onClick={() => { setOpenMenu(null); onStylePatch({ color: hex }); }} className="size-5 rounded-full border border-[#dee0e3]" style={{ backgroundColor: hex }} />)}
-              </div>
+            {iconBtn(
+              t("字体颜色"),
+              openMenu?.id === "color",
+              !canEdit,
+              (e) => toggleMenu("color", e),
+              <span className="flex flex-col items-center leading-none">
+                <Palette size={13} />
+                <span className="mt-0.5 h-0.5 w-3.5" style={{ backgroundColor: activeStyle.color || "#1f2329" }} />
+              </span>,
             )}
           </div>
           <div className="relative">
-            {iconBtn(t("单元格填充"), openMenu === "bg", !canEdit, () => setOpenMenu((m) => (m === "bg" ? null : "bg")), <Highlighter size={14} />)}
-            {openMenu === "bg" && (
-              <div className="fixed z-50 flex gap-1.5 rounded-md border border-[#dee0e3] bg-white p-2 shadow-lg" style={{ top: 148 }}>
-                {BG_COLORS.map((hex) => <button key={hex || "none"} type="button" aria-label={hex || t("无填充")} onClick={() => { setOpenMenu(null); onStylePatch({ bg: hex }); }} className="size-5 rounded border border-[#dee0e3] text-[10px]" style={{ backgroundColor: hex || "#ffffff" }}>{hex ? "" : "×"}</button>)}
-              </div>
-            )}
+            {iconBtn(t("单元格填充"), openMenu?.id === "bg", !canEdit, (e) => toggleMenu("bg", e), <Highlighter size={14} />)}
           </div>
         </div>
       </div>
@@ -496,9 +843,10 @@ export function SheetToolbar(props: SheetToolbarProps) {
         <button
           type="button"
           disabled={!canEdit}
+          aria-expanded={openMenu?.id === "numfmt"}
           data-sheet-tool="numfmt"
-          onClick={() => setOpenMenu((m) => (m === "numfmt" ? null : "numfmt"))}
-          className="flex h-6 shrink-0 items-center justify-between gap-2 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:opacity-45"
+          onClick={(e) => toggleMenu("numfmt", e)}
+          className={`flex h-6 shrink-0 items-center justify-between gap-2 rounded px-1.5 text-[12px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:opacity-45 ${openMenu?.id === "numfmt" ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
         >
           <span>{t(activeFmtLabel)}</span>
           <ChevronDown size={11} className="text-[#8f959e]" />
@@ -509,29 +857,12 @@ export function SheetToolbar(props: SheetToolbarProps) {
           {iconBtn(t("0.00 小数"), activeStyle.numFmt === "decimal2", !canEdit, () => onStylePatch({ numFmt: activeStyle.numFmt === "decimal2" ? "general" : "decimal2" }), <span className="text-[11px] font-medium leading-none">.00</span>, "fmt-decimal2")}
           {iconBtn(t("0.0 小数"), activeStyle.numFmt === "decimal1", !canEdit, () => onStylePatch({ numFmt: activeStyle.numFmt === "decimal1" ? "general" : "decimal1" }), <span className="text-[11px] font-medium leading-none">.0</span>, "fmt-decimal1")}
         </div>
-        {openMenu === "numfmt" && (
-          <div role="menu" className="fixed z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
-            {NUM_FORMATS.map((fmt) => (
-              <button key={fmt.id} type="button" role="menuitem" onClick={() => { setOpenMenu(null); onStylePatch({ numFmt: fmt.id }); }} className={`flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5] ${activeStyle.numFmt === fmt.id ? "font-medium text-[#3370ff]" : ""}`}>
-                {t(fmt.label)}
-              </button>
-            ))}
-          </div>
-        )}
       </div>
 
       <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
       <div className="relative shrink-0">
-        {labeledBtn(t("冻结"), frozenRows > 0 || frozenCols > 0 || openMenu === "freeze", !canEdit, () => setOpenMenu((m) => (m === "freeze" ? null : "freeze")), <PanelTop size={15} />, "freeze")}
-        {openMenu === "freeze" && (
-          <div role="menu" className="fixed right-24 z-50 w-40 rounded-md border border-[#dee0e3] bg-white py-1 text-[12px] shadow-lg" style={{ top: 148 }}>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onFreezeRows(1, 0); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("冻结首行")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onFreezeRows(0, 1); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("冻结首列")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onFreezeRows(1, 1); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("同时冻结首行首列")}</button>
-            <button type="button" role="menuitem" onClick={() => { setOpenMenu(null); onFreezeRows(0, 0); }} className="flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("取消冻结")}</button>
-          </div>
-        )}
+        {labeledBtn(t("冻结"), frozenRows > 0 || frozenCols > 0 || openMenu?.id === "freeze", !canEdit, (e) => toggleMenu("freeze", e), <PanelTop size={15} />, "freeze")}
       </div>
 
       {labeledBtn(t("筛选"), filterEnabled, !canEdit, onToggleFilter, <Filter size={15} />, "filter")}
@@ -575,6 +906,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
           <ChevronUp size={15} />
         </button>
       )}
+      {renderPortaledMenu()}
     </div>
   );
 }

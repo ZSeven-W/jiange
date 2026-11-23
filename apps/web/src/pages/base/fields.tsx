@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { BaseTable, Cell, Field, FieldType, User } from "@/lib/api";
+import { baseApi, type BaseTable, type Cell, type Field, type FieldType, type User } from "@/lib/api";
 import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
 import { TypeGlyph } from "./cells";
 import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
+import { FeishuSelect } from "@/components/feishu-select";
 import { ArrowDownAZ, ArrowDownZA, ArrowLeftToLine, ArrowRightToLine, EyeOff, Snowflake, Check, ChevronDown, ChevronRight, Copy, Filter, Info, LayoutPanelTop, Pencil, Search, Trash2 } from "lucide-react";
 import { popupPosition } from "./popup-position";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
+import { clearLookupRollup, getLookupRollup, lookupFieldConfig, setLookupRollup, type RollupAgg } from "./rollup";
 
 /** Shared form for creating and editing a field. */
 export function FieldForm({
@@ -21,11 +23,15 @@ export function FieldForm({
   baseId,
   tables = [],
   activeTableId,
+  fields,
+  targetFields,
 }: {
   members?: User[];
   baseId?: number;
   tables?: BaseTable[];
   activeTableId?: number;
+  fields?: Field[];
+  targetFields?: Field[];
   initial?: Field;
   onSubmit: (f: Partial<Field>) => void | Promise<void>;
   onCancel: () => void;
@@ -41,6 +47,15 @@ export function FieldForm({
     const other = tables.find((tbl) => tbl.id !== activeTableId);
     return other?.id ?? tables[0]?.id ?? 0;
   });
+  const initialLookup = lookupFieldConfig(initial);
+  const [linkFieldId, setLinkFieldId] = useState<number>(initialLookup.linkFieldId);
+  const [lookupFieldId, setLookupFieldId] = useState<number>(initialLookup.lookupFieldId);
+  const [rollupAgg, setRollupAgg] = useState<RollupAgg>(() =>
+    initial?.type === "lookup" ? getLookupRollup(initial, baseId) : "raw",
+  );
+  const [fetchedTableFields, setFetchedTableFields] = useState<Field[]>([]);
+  const [fetchedTargetFields, setFetchedTargetFields] = useState<Field[]>([]);
+  const [loadingTargets, setLoadingTargets] = useState(false);
   const [desc, setDesc] = useState(initial?.description ?? "");
   const [formula, setFormula] = useState(initial?.formula ?? "");
   const [colors, setColors] = useState<number[]>(initial?.optionColors ?? []);
@@ -59,6 +74,60 @@ export function FieldForm({
   const typeButton = useRef<HTMLButtonElement>(null);
   const [typePosition, setTypePosition] = useState<ReturnType<typeof popupPosition> | null>(null);
   const typeMenu = useRef<HTMLDivElement>(null);
+
+  const tableFields = fields ?? fetchedTableFields;
+  const linkFields = tableFields.filter((f) => f.type === "link" && f.id !== initial?.id);
+  const selectedLink = linkFields.find((f) => f.id === linkFieldId);
+  const availableTargetFields = (targetFields ?? fetchedTargetFields).filter(
+    (f) => f.id !== initial?.id && f.type !== "lookup",
+  );
+
+  useEffect(() => {
+    if (fields !== undefined || !baseId) return;
+    const abort = new AbortController();
+    void baseApi.get(baseId, abort.signal, activeTableId)
+      .then((snap) => { if (!abort.signal.aborted) setFetchedTableFields(snap.fields ?? []); })
+      .catch(() => undefined);
+    return () => abort.abort();
+  }, [fields, baseId, activeTableId]);
+
+  useEffect(() => {
+    if (type !== "lookup" || linkFields.length === 0) return;
+    if (!linkFields.some((f) => f.id === linkFieldId)) {
+      setLinkFieldId(linkFields[0].id);
+    }
+  }, [type, linkFields, linkFieldId]);
+
+  useEffect(() => {
+    if (type !== "lookup" || targetFields !== undefined) return;
+    if (!selectedLink) {
+      setFetchedTargetFields([]);
+      setLoadingTargets(false);
+      return;
+    }
+    const targetBaseId = Number(selectedLink.options?.[0]) || baseId || 0;
+    const linkTargetTableId = selectedLink.targetTableId;
+    if (targetBaseId === baseId && (!linkTargetTableId || linkTargetTableId === activeTableId)) {
+      setFetchedTargetFields(tableFields);
+      setLoadingTargets(false);
+      return;
+    }
+    if (!targetBaseId) return;
+    const abort = new AbortController();
+    setLoadingTargets(true);
+    void baseApi.get(targetBaseId, abort.signal, linkTargetTableId)
+      .then((snap) => { if (!abort.signal.aborted) setFetchedTargetFields(snap.fields ?? []); })
+      .catch(() => { if (!abort.signal.aborted) setFetchedTargetFields([]); })
+      .finally(() => { if (!abort.signal.aborted) setLoadingTargets(false); });
+    return () => abort.abort();
+  }, [type, targetFields, selectedLink, baseId, activeTableId, tableFields]);
+
+  useEffect(() => {
+    if (type !== "lookup" || availableTargetFields.length === 0) return;
+    if (!availableTargetFields.some((f) => f.id === lookupFieldId)) {
+      setLookupFieldId(availableTargetFields[0].id);
+    }
+  }, [type, availableTargetFields, lookupFieldId]);
   useEffect(() => {
     const place = () => {
       const rect = anchor.current?.closest("th")?.getBoundingClientRect();
@@ -88,7 +157,12 @@ export function FieldForm({
   useEffect(() => {
     const close = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (form.current?.contains(target) || typeMenu.current?.contains(target) || anchor.current?.closest("th")?.contains(target)) return;
+      if (
+        form.current?.contains(target) ||
+        typeMenu.current?.contains(target) ||
+        anchor.current?.closest("th")?.contains(target) ||
+        (target instanceof Element && target.closest('[role="listbox"]'))
+      ) return;
       if (!saving && !uncertain) onCancel();
     };
     const escape = (event: KeyboardEvent) => {
@@ -123,20 +197,38 @@ export function FieldForm({
       onSubmit={async (e) => {
         e.preventDefault();
         if (saving || uncertain) return;
+        if (type === "lookup" && (!linkFieldId || !lookupFieldId)) return;
         setSaving(true); setError("");
         try {
+          const finalName = name.trim() || initial?.name || t("新字段");
           const linkOptions = type === "link" && baseId ? [String(baseId)] : undefined;
+          const lookupOptions = type === "lookup" && linkFieldId > 0 && lookupFieldId > 0
+            ? [String(linkFieldId), String(lookupFieldId)]
+            : undefined;
           await onSubmit({
-            name: name.trim() || initial?.name || t("新字段"),
+            name: finalName,
             type,
             description: desc.trim(),
             formula: type === "formula" ? formula.trim() : undefined,
-            options: def.hasOptions ? names : linkOptions,
+            options: def.hasOptions ? names : type === "lookup" ? lookupOptions : linkOptions,
             optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined,
             targetTableId: type === "link" && targetTableId > 0 ? targetTableId : undefined,
             multiple: type === "person" ? multi : false,
             defaultValue: defaultCell(type, dflt, names, members),
           });
+          if (baseId) {
+            if (type === "lookup") {
+              setLookupRollup(baseId, {
+                fieldId: initial?.id,
+                linkFieldId,
+                lookupFieldId,
+                fieldName: finalName,
+                agg: rollupAgg,
+              });
+            } else if (initial?.id && initial.type === "lookup") {
+              clearLookupRollup(baseId, initial.id);
+            }
+          }
           onCancel();
         } catch {
           setError(t("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。"));
@@ -222,10 +314,13 @@ export function FieldForm({
               </div>
             )
           ) : DEFAULT_KINDS[type] === "select" ? (
-            <select value={names.includes(dflt) ? dflt : ""} onChange={(e) => setDflt(e.target.value)} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
-              <option value="">{t("无")}</option>
-              {names.map((n) => <option key={n} value={n}>{n}</option>)}
-            </select>
+            <FeishuSelect
+              value={names.includes(dflt) ? dflt : ""}
+              options={[{ value: "", label: t("无") }, ...names.map((n) => ({ value: n, label: n }))]}
+              onChange={setDflt}
+              ariaLabel={t("默认值")}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+            />
           ) : DEFAULT_KINDS[type] === "checkbox" ? (
             <span className="flex h-8 items-center gap-2"><input type="checkbox" className="accent-primary" checked={dflt === "true"} onChange={(e) => setDflt(e.target.checked ? "true" : "")} />{t("默认勾选")}</span>
           ) : (
@@ -238,7 +333,7 @@ export function FieldForm({
         <div className="space-y-1.5" data-field-suggest>
           <span className="text-[12px] text-muted-foreground">{t("推荐")}</span>
           <div className="flex flex-wrap gap-2">
-            {(["formula", "created_by", "link"] as FieldType[]).map((typeKey) => (
+            {(["formula", "created_by", "link", ...(linkFields.length > 0 ? (["lookup"] as FieldType[]) : [])] as FieldType[]).map((typeKey) => (
               <button key={typeKey} type="button" onClick={() => setType(typeKey)} className={cn("flex h-7 items-center gap-1 rounded-md bg-hover px-2 text-[12px] text-muted-foreground hover:text-foreground", typeKey === type && "bg-accent text-primary")}>
                 <TypeGlyph t={typeKey} size={13} /> {t(REGISTRY[typeKey].label)}
               </button>
@@ -247,16 +342,80 @@ export function FieldForm({
         </div>
       )}
       {type === "link" && tables.length > 0 && (
-        <label className="block space-y-1.5" data-field-link-target>
+        <div className="block space-y-1.5" data-field-link-target>
           <span className="text-[12px] text-muted-foreground">{t("关联数据表")}</span>
-          <select value={targetTableId || ""} onChange={(e) => setTargetTableId(Number(e.target.value))} className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary">
-            {tables.map((tbl) => (
-              <option key={tbl.id} value={tbl.id}>
-                {tbl.name}{tbl.id === activeTableId ? ` (${t("当前表")})` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+          <FeishuSelect
+            value={targetTableId ? String(targetTableId) : ""}
+            options={tables.map((tbl) => ({
+              value: String(tbl.id),
+              label: `${tbl.name}${tbl.id === activeTableId ? ` (${t("当前表")})` : ""}`,
+            }))}
+            onChange={(val) => setTargetTableId(Number(val))}
+            ariaLabel={t("关联数据表")}
+            className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+          />
+        </div>
+      )}
+      {type === "lookup" && (
+        <div className="space-y-2.5 rounded-md border border-[#e5e6eb] bg-[#f7f8fa]/60 p-2.5 dark:bg-sidebar/40" data-field-lookup-wizard>
+          <div className="space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("关联字段")}</span>
+            {linkFields.length === 0 ? (
+              <p className="text-[12px] text-amber-600" data-lookup-no-link>{t("当前表暂无关联字段，请先添加「关联」字段。")}</p>
+            ) : (
+              <FeishuSelect
+                value={linkFieldId ? String(linkFieldId) : ""}
+                options={linkFields.map((lf) => ({ value: String(lf.id), label: lf.name }))}
+                onChange={(val) => {
+                  setLinkFieldId(Number(val));
+                  setLookupFieldId(0);
+                }}
+                ariaLabel={t("关联字段")}
+                className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+                dataAttr={{ "data-field-lookup-link": true }}
+              />
+            )}
+          </div>
+          {linkFields.length > 0 && (
+            <>
+              <div className="space-y-1">
+                <span className="text-[12px] text-muted-foreground">{t("引用字段")}</span>
+                {loadingTargets ? (
+                  <p className="text-[12px] text-subtle">{t("正在加载目标表字段…")}</p>
+                ) : availableTargetFields.length > 0 ? (
+                  <FeishuSelect
+                    value={lookupFieldId ? String(lookupFieldId) : ""}
+                    options={availableTargetFields.map((tf) => ({ value: String(tf.id), label: tf.name }))}
+                    onChange={(val) => setLookupFieldId(Number(val))}
+                    ariaLabel={t("引用字段")}
+                    className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+                    dataAttr={{ "data-field-lookup-target": true }}
+                  />
+                ) : (
+                  <p className="text-[12px] text-subtle">{t("目标表暂无可引用的字段")}</p>
+                )}
+              </div>
+              <div className="space-y-1">
+                <span className="text-[12px] text-muted-foreground">{t("汇总方式")}</span>
+                <FeishuSelect
+                  value={rollupAgg}
+                  options={[
+                    { value: "raw", label: t("原值展示") },
+                    { value: "sum", label: t("求和") },
+                    { value: "avg", label: t("平均值") },
+                    { value: "count", label: t("计数") },
+                    { value: "min", label: t("最小值") },
+                    { value: "max", label: t("最大值") },
+                  ]}
+                  onChange={(val) => setRollupAgg(val as RollupAgg)}
+                  ariaLabel={t("汇总方式")}
+                  className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+                  dataAttr={{ "data-field-lookup-rollup": true }}
+                />
+              </div>
+            </>
+          )}
+        </div>
       )}
       {type === "formula" && (
         <textarea
@@ -275,7 +434,7 @@ export function FieldForm({
         <button type="button" disabled={saving} onClick={onCancel} className="h-8 rounded-md border px-4 hover:bg-hover disabled:opacity-50">
           {t("取消")}
         </button>
-        <button type="submit" disabled={saving || uncertain} className="h-8 rounded-md bg-primary px-4 text-white hover:bg-primary-hover disabled:opacity-50">
+        <button type="submit" disabled={saving || uncertain || (type === "lookup" && (!linkFieldId || !lookupFieldId))} className="h-8 rounded-md bg-primary px-4 text-white hover:bg-primary-hover disabled:opacity-50">
           {saving ? t("保存中…") : t("确定")}
         </button>
       </div>

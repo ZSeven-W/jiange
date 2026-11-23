@@ -13,6 +13,7 @@ import {
   type OrgSyncSource,
 } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
+import { FeishuSelect } from "@/components/feishu-select";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -508,19 +509,18 @@ export function OrgSyncPanel({
             data-sync-source-name
             className="h-9 min-w-44 flex-1 rounded-md border bg-surface px-3 text-[13px]"
           />
-          <select
-            aria-label={t("同步协议类型")}
+          <FeishuSelect
+            ariaLabel={t("同步协议类型")}
             value={newProvider}
-            onChange={(e) => setNewProvider(e.target.value as OrgSyncProvider)}
-            data-sync-provider-select
-            className="h-9 rounded-md border bg-surface px-2.5 text-[13px]"
-          >
-            {(Object.keys(PROVIDER_LABELS) as OrgSyncProvider[]).map((k) => (
-              <option key={k} value={k}>
-                {t(PROVIDER_LABELS[k])}
-              </option>
-            ))}
-          </select>
+            options={(Object.keys(PROVIDER_LABELS) as OrgSyncProvider[]).map((k) => ({
+              value: k,
+              label: t(PROVIDER_LABELS[k]),
+            }))}
+            onChange={(val) => setNewProvider(val as OrgSyncProvider)}
+            dataAttr={{ "data-sync-provider-select": true }}
+            className="h-9 border bg-surface px-2.5 text-[13px]"
+            menuMinWidth={148}
+          />
           <label className="inline-flex h-9 items-center gap-1.5 rounded-md border px-2.5 text-[12px] text-muted-foreground">
             <input type="checkbox" checked={newAutoInvite} onChange={(e) => setNewAutoInvite(e.target.checked)} />
             {t("自动邀请未加入邮箱")}

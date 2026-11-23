@@ -42,6 +42,10 @@ describe("OrgPage", () => {
     expect(html).toContain("Alice");
     expect(html).toContain("负责人");
     expect(html).toContain("新建一级部门");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('aria-label="选择部门成员"');
+    expect(html).toContain('data-select-value="1"');
+    expect(html).toContain("data-select-options");
   });
 
   it("hides admin mutation buttons for regular workspace members", () => {

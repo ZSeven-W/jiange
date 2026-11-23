@@ -246,7 +246,16 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
     readonly: true,
     parse: () => undefined,
     format: (v) => (Array.isArray(v) ? v.map((x) => String(x)).join(",") : String(v ?? "")),
-    compare: (a, b) => String(a).localeCompare(String(b)),
+    compare: (a, b) => {
+      const sa = Array.isArray(a) ? a.map((x) => String(x)).join(",") : String(a);
+      const sb = Array.isArray(b) ? b.map((x) => String(x)).join(",") : String(b);
+      const na = Number(sa);
+      const nb = Number(sb);
+      if (sa.trim() !== "" && sb.trim() !== "" && Number.isFinite(na) && Number.isFinite(nb)) {
+        return na - nb;
+      }
+      return sa.localeCompare(sb, zh);
+    },
   },
 };
 
@@ -307,6 +316,15 @@ export function displayValue(rec: BaseRecord | undefined, f: Field | undefined, 
       return rec.updatedAt;
     case "formula":
       return formulaCache.get(rec)?.get(f.id) ?? undefined;
+    case "lookup": {
+      const raw = rec.cells[f.id];
+      const agg = getLookupRollup(f, rec.baseId);
+      if (agg === "raw") return raw;
+      const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+      const aggregated = aggregateRollupValues(items, agg);
+      if (aggregated === null || aggregated === undefined) return undefined;
+      return [String(aggregated)];
+    }
     default:
       return rec.cells[f.id];
   }
@@ -435,6 +453,16 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
       if (!ids.length) return null;
       return ids.map((id) => memberName(id, members) || `成员 #${id}`).join("、");
     }
+    case "lookup": {
+      const raw = rec.cells[f.id];
+      const agg = getLookupRollup(f, rec.baseId);
+      const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
+      if (agg !== "raw") {
+        const res = aggregateRollupValues(items, agg);
+        return typeof res === "number" ? res : null;
+      }
+      return items.length ? items.map((x) => String(x)).join(",") : null;
+    }
     default: {
       const v = rec.cells[f.id];
       if (v === undefined) return null;
@@ -445,4 +473,5 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
 }
 
 import { evalFormula, FormulaError, formulaRefs, type FormulaEnv, type FormulaValue } from "./formula";
+import { aggregateRollupValues, getLookupRollup } from "./rollup";
 import { ArrowLeftRight, CalendarDays, CircleChevronDown, CircleEllipsis, Clock3, FunctionSquare, Hash, Link2, Mail, Paperclip, PenLine, Phone, Search, SquareCheck, Star, LetterText, User as UserIcon } from "lucide-react";

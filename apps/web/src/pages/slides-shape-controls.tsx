@@ -1,4 +1,20 @@
-import { AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignStartHorizontal, AlignStartVertical, BringToFront, ChevronDown, ChevronUp, SendToBack, Trash2 } from "lucide-react";
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalSpaceAround,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalSpaceAround,
+  BringToFront,
+  ChevronDown,
+  ChevronUp,
+  Group,
+  SendToBack,
+  Trash2,
+  Ungroup,
+} from "lucide-react";
 import type { SlideShape } from "@/lib/api";
 import { FeishuSelect } from "@/components/feishu-select";
 import type { ShapeAlignment, ShapeOrderAction } from "./slides-shape-order";
@@ -61,6 +77,123 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
       <div className="flex items-center gap-0.5" role="group" aria-label="对象对齐到页面">{alignments.map(([alignment, label, Icon]) => <button key={alignment} type="button" aria-label={label} title={label} onClick={() => onAlign(alignment)} className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Icon size={13} /></button>)}</div>
       <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
       <button type="button" onClick={onDelete} title={text ? "删除文本框" : image ? "删除图片" : "删除图形"} aria-label={text ? "删除文本框" : image ? "删除图片" : "删除图形"} className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={13} /><span>删除</span></button>
+    </div>
+  );
+}
+
+/** Floating Feishu pill for multi-selected / grouped slide objects (zero canvas zoom jump). */
+export function SlideMultiShapeControls({
+  count,
+  grouped,
+  onGroup,
+  onUngroup,
+  onAlign,
+  onDistributeHorizontal,
+  onDistributeVertical,
+  onDelete,
+}: {
+  count: number;
+  grouped: boolean;
+  onGroup: () => void;
+  onUngroup: () => void;
+  onAlign: (alignment: ShapeAlignment) => void;
+  onDistributeHorizontal: () => void;
+  onDistributeVertical: () => void;
+  onDelete: () => void;
+}) {
+  const alignments: [ShapeAlignment, string, typeof AlignStartHorizontal][] = [
+    ["left", "左对齐", AlignStartHorizontal],
+    ["hcenter", "水平居中", AlignCenterHorizontal],
+    ["right", "右对齐", AlignEndHorizontal],
+    ["top", "顶对齐", AlignStartVertical],
+    ["vcenter", "垂直居中", AlignCenterVertical],
+    ["bottom", "底对齐", AlignEndVertical],
+  ];
+  const canDistribute = count >= 3;
+  return (
+    <div
+      data-slides-multi-controls
+      role="group"
+      aria-label="多选对象操作"
+      onPointerDown={(e) => e.stopPropagation()}
+      className="pointer-events-auto absolute left-1/2 top-2.5 z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-lg border border-[#dee0e3] bg-white/95 px-2.5 py-1 text-[12px] text-[#4e5969] shadow-[0_4px_16px_rgba(31,35,41,0.12)] backdrop-blur-xs [&>*]:shrink-0"
+    >
+      <span className="rounded bg-[#e8efff] px-1.5 py-0.5 text-[11px] font-medium text-[#3370ff]">
+        已选 {count} 项
+      </span>
+      <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
+      {grouped ? (
+        <button
+          type="button"
+          aria-label="取消编组"
+          title="取消编组"
+          onClick={onUngroup}
+          className="inline-flex h-6 items-center gap-1 rounded bg-[#e8efff] px-1.5 font-medium text-[#3370ff] hover:bg-[#d8e5ff]"
+        >
+          <Ungroup size={13} />
+          <span>取消编组</span>
+        </button>
+      ) : (
+        <button
+          type="button"
+          aria-label="编组"
+          title="编组"
+          onClick={onGroup}
+          className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[#4e5969] hover:bg-[#f2f3f5]"
+        >
+          <Group size={13} />
+          <span>编组</span>
+        </button>
+      )}
+      <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
+      <div className="flex items-center gap-0.5" role="group" aria-label="多选对齐">
+        {alignments.map(([alignment, label, Icon]) => (
+          <button
+            key={alignment}
+            type="button"
+            aria-label={label}
+            title={label}
+            onClick={() => onAlign(alignment)}
+            className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"
+          >
+            <Icon size={13} />
+          </button>
+        ))}
+      </div>
+      <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
+      <div className="flex items-center gap-0.5" role="group" aria-label="等距分布">
+        <button
+          type="button"
+          aria-label="水平等距分布"
+          title={canDistribute ? "水平等距分布" : "水平等距分布（需选中至少 3 项）"}
+          disabled={!canDistribute}
+          onClick={onDistributeHorizontal}
+          className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-35"
+        >
+          <AlignHorizontalSpaceAround size={13} />
+        </button>
+        <button
+          type="button"
+          aria-label="垂直等距分布"
+          title={canDistribute ? "垂直等距分布" : "垂直等距分布（需选中至少 3 项）"}
+          disabled={!canDistribute}
+          onClick={onDistributeVertical}
+          className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-35"
+        >
+          <AlignVerticalSpaceAround size={13} />
+        </button>
+      </div>
+      <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
+      <button
+        type="button"
+        onClick={onDelete}
+        title="批量删除"
+        aria-label="批量删除"
+        className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"
+      >
+        <Trash2 size={13} />
+        <span>批量删除</span>
+      </button>
     </div>
   );
 }

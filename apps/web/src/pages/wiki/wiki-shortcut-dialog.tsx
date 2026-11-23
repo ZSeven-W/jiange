@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Folder, Link2, Search, X } from "lucide-react";
 import { ApiError, docsApi, wikiApi, type DocMeta, type WikiNodeEntry } from "@/lib/api";
 import { BaseColorIcon, DocColorIcon, SheetColorIcon, SlidesColorIcon, WhiteboardIcon } from "@/components/feishu-icons";
+import { FeishuSelect } from "@/components/feishu-select";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -168,17 +169,22 @@ export function WikiShortcutDialog({
                   {t("当前工作区暂无其他可访问的知识库，可切换到「云盘与文档」引用云盘文件。")}
                 </p>
               ) : (
-                <select
+                <FeishuSelect
                   id="wiki-shortcut-source-space"
-                  value={effectiveSourceSpaceId}
-                  onChange={(e) => { setSelectedSourceSpaceId(Number(e.target.value)); setSelectedTarget(null); }}
-                  data-wiki-shortcut-space-select
-                  className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
-                >
-                  {otherSpaces.map((s) => (
-                    <option key={s.id} value={s.id}>{s.name}</option>
-                  ))}
-                </select>
+                  ariaLabel={t("来源知识库")}
+                  value={String(effectiveSourceSpaceId)}
+                  options={otherSpaces.map((s) => ({ value: String(s.id), label: s.name }))}
+                  onChange={(val) => {
+                    const nextSpaceId = Number(val);
+                    if (nextSpaceId !== effectiveSourceSpaceId) {
+                      setSelectedSourceSpaceId(nextSpaceId);
+                      setSelectedTarget(null);
+                    }
+                  }}
+                  dataAttr={{ "data-wiki-shortcut-space-select": true }}
+                  className="h-9 w-full border bg-surface px-3 text-[13px]"
+                  menuMinWidth={220}
+                />
               )}
             </div>
           )}
@@ -233,18 +239,19 @@ export function WikiShortcutDialog({
               <label className="mb-1 block text-[12px] font-medium text-muted-foreground" htmlFor="wiki-shortcut-parent">
                 {t("放置位置")}
               </label>
-              <select
+              <FeishuSelect
                 id="wiki-shortcut-parent"
-                value={parentId ?? ""}
-                onChange={(e) => setParentId(e.target.value ? Number(e.target.value) : null)}
-                data-wiki-shortcut-parent
-                className="h-9 w-full rounded-md border bg-surface px-2.5 text-[13px]"
-              >
-                <option value="">{t("知识库根目录")}</option>
-                {editableParents.map((n) => (
-                  <option key={n.id} value={n.id}>{n.title}</option>
-                ))}
-              </select>
+                ariaLabel={t("放置位置")}
+                value={parentId ? String(parentId) : ""}
+                options={[
+                  { value: "", label: t("知识库根目录") },
+                  ...editableParents.map((n) => ({ value: String(n.id), label: n.title })),
+                ]}
+                onChange={(val) => setParentId(val ? Number(val) : null)}
+                dataAttr={{ "data-wiki-shortcut-parent": true }}
+                className="h-9 w-full border bg-surface px-2.5 text-[13px]"
+                menuMinWidth={180}
+              />
             </div>
             <div>
               <label className="mb-1 block text-[12px] font-medium text-muted-foreground" htmlFor="wiki-shortcut-alias">

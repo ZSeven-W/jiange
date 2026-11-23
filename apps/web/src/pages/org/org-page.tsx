@@ -5,6 +5,7 @@ import { ApiError, orgApi, type Me, type OrgDepartment, type OrgGroup, type Work
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 import { ask, askText } from "@/components/ui/ask";
+import { FeishuSelect } from "@/components/feishu-select";
 import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { OrgSyncPanel } from "./org-sync-panel";
@@ -234,14 +235,21 @@ export function OrgPage({ me }: { me: Me }) {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {me.workspaces.length > 1 && (
-              <select
-                aria-label={t("切换企业空间")}
-                value={effectiveWsId}
-                onChange={(e) => { setWorkspaceId(Number(e.target.value)); setSelectedDeptId(null); setSelectedGroupId(null); }}
-                className="h-8 rounded-md border bg-surface px-2.5 text-[13px]"
-              >
-                {me.workspaces.map((ws) => <option key={ws.id} value={ws.id}>{ws.name}</option>)}
-              </select>
+              <FeishuSelect
+                ariaLabel={t("切换企业空间")}
+                value={String(effectiveWsId)}
+                options={me.workspaces.map((ws) => ({ value: String(ws.id), label: ws.name }))}
+                onChange={(val) => {
+                  const nextId = Number(val);
+                  if (nextId !== effectiveWsId) {
+                    setWorkspaceId(nextId);
+                    setSelectedDeptId(null);
+                    setSelectedGroupId(null);
+                  }
+                }}
+                className="h-8 max-w-[180px] border bg-surface px-2.5 text-[13px]"
+                menuMinWidth={160}
+              />
             )}
             {data && (
               <span className="inline-flex items-center gap-1 rounded-full bg-sidebar px-2.5 py-1 text-[12px] text-muted-foreground">
@@ -334,19 +342,19 @@ export function OrgPage({ me }: { me: Me }) {
                           }, t("已添加部门成员"));
                         }}
                       >
-                        <select
-                          aria-label={t("选择部门成员")}
-                          value={effectiveDeptPick}
-                          onChange={(e) => setDeptMemberId(Number(e.target.value))}
+                        <FeishuSelect
+                          ariaLabel={t("选择部门成员")}
+                          value={String(effectiveDeptPick)}
+                          options={
+                            availableDeptMembers.length === 0
+                              ? [{ value: "0", label: t("暂无可添加的空间成员") }]
+                              : availableDeptMembers.map((m) => ({ value: String(m.userId), label: `${m.name} (${m.email})` }))
+                          }
+                          onChange={(val) => setDeptMemberId(Number(val))}
                           disabled={availableDeptMembers.length === 0}
-                          className="h-9 min-w-44 flex-1 rounded-md border bg-surface px-2.5 text-[13px]"
-                        >
-                          {availableDeptMembers.length === 0 ? (
-                            <option value={0}>{t("暂无可添加的空间成员")}</option>
-                          ) : (
-                            availableDeptMembers.map((m) => <option key={m.userId} value={m.userId}>{m.name} ({m.email})</option>)
-                          )}
-                        </select>
+                          className="h-9 min-w-44 shrink flex-1 border bg-surface px-2.5 text-[13px] disabled:opacity-60"
+                          menuMinWidth={200}
+                        />
                         <label className="inline-flex items-center gap-1.5 text-[13px] text-muted-foreground">
                           <input type="checkbox" checked={deptLeader} onChange={(e) => setDeptLeader(e.target.checked)} />
                           {t("设为负责人")}
@@ -471,19 +479,19 @@ export function OrgPage({ me }: { me: Me }) {
                           void runMutation(() => orgApi.setGroupMember(effectiveWsId, activeGroup.id, me.user.id, effectiveGroupPick, true), t("已添加组成员"));
                         }}
                       >
-                        <select
-                          aria-label={t("选择组成员")}
-                          value={effectiveGroupPick}
-                          onChange={(e) => setGroupMemberId(Number(e.target.value))}
+                        <FeishuSelect
+                          ariaLabel={t("选择组成员")}
+                          value={String(effectiveGroupPick)}
+                          options={
+                            availableGroupMembers.length === 0
+                              ? [{ value: "0", label: t("暂无可添加的空间成员") }]
+                              : availableGroupMembers.map((m) => ({ value: String(m.userId), label: `${m.name} (${m.email})` }))
+                          }
+                          onChange={(val) => setGroupMemberId(Number(val))}
                           disabled={availableGroupMembers.length === 0}
-                          className="h-9 min-w-44 flex-1 rounded-md border bg-surface px-2.5 text-[13px]"
-                        >
-                          {availableGroupMembers.length === 0 ? (
-                            <option value={0}>{t("暂无可添加的空间成员")}</option>
-                          ) : (
-                            availableGroupMembers.map((m) => <option key={m.userId} value={m.userId}>{m.name} ({m.email})</option>)
-                          )}
-                        </select>
+                          className="h-9 min-w-44 shrink flex-1 border bg-surface px-2.5 text-[13px] disabled:opacity-60"
+                          menuMinWidth={200}
+                        />
                         <button type="submit" disabled={!effectiveGroupPick || busy} className="inline-flex h-9 items-center gap-1 rounded-md bg-primary px-3 text-[13px] font-medium text-white disabled:opacity-50">
                           <UserPlus size={14} />{t("添加到用户组")}
                         </button>
@@ -544,15 +552,17 @@ export function OrgPage({ me }: { me: Me }) {
                     placeholder={t("输入邮箱邀请加入当前企业空间")}
                     className="h-9 min-w-52 flex-1 rounded-md border px-3 text-[14px]"
                   />
-                  <select
-                    aria-label={t("成员角色")}
+                  <FeishuSelect
+                    ariaLabel={t("成员角色")}
                     value={inviteRole}
-                    onChange={(e) => setInviteRole(e.target.value as "member" | "admin")}
-                    className="h-9 rounded-md border bg-surface px-2.5 text-[13px]"
-                  >
-                    <option value="member">{t("普通成员")}</option>
-                    <option value="admin">{t("管理员")}</option>
-                  </select>
+                    options={[
+                      { value: "member", label: t("普通成员") },
+                      { value: "admin", label: t("管理员") },
+                    ]}
+                    onChange={(val) => setInviteRole(val as "member" | "admin")}
+                    className="h-9 border bg-surface px-2.5 text-[13px]"
+                    menuMinWidth={112}
+                  />
                   <button type="submit" disabled={!inviteEmail.trim() || busy} className="inline-flex h-9 items-center gap-1 rounded-md bg-primary px-3 text-[13px] font-medium text-white disabled:opacity-50">
                     <UserPlus size={14} />{t("邀请加入空间")}
                   </button>
@@ -571,18 +581,24 @@ export function OrgPage({ me }: { me: Me }) {
                     <div className="flex items-center gap-2">
                       {canAdmin && member.role !== "owner" ? (
                         <>
-                          <select
-                            aria-label={t("调整{name}的空间角色", { name: member.name })}
+                          <FeishuSelect
+                            ariaLabel={t("调整{name}的空间角色", { name: member.name })}
                             value={member.role}
                             disabled={busy}
-                            onChange={(e) => void runMutation(async () => {
-                              await orgApi.upsertMember(effectiveWsId, me.user.id, member.email, e.target.value as "member" | "admin");
-                            }, t("成员角色已更新"))}
-                            className="h-8 rounded-md border bg-surface px-2 text-[13px]"
-                          >
-                            <option value="member">{t("普通成员")}</option>
-                            <option value="admin">{t("管理员")}</option>
-                          </select>
+                            options={[
+                              { value: "member", label: t("普通成员") },
+                              { value: "admin", label: t("管理员") },
+                            ]}
+                            onChange={(val) => {
+                              if (val !== member.role) {
+                                void runMutation(async () => {
+                                  await orgApi.upsertMember(effectiveWsId, me.user.id, member.email, val as "member" | "admin");
+                                }, t("成员角色已更新"));
+                              }
+                            }}
+                            className="h-8 border bg-surface px-2 text-[13px]"
+                            menuMinWidth={108}
+                          />
                           <button
                             type="button"
                             disabled={busy}

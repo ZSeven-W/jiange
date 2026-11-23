@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, CheckCheck, FileEdit, RotateCcw, X, XCircle } from "lucide-react";
 import type { DocSuggestion } from "@/lib/api";
 import { Avatar } from "@/components/brand";
+import { FeishuSelect } from "@/components/feishu-select";
 import { Button } from "@/components/ui/button";
 import { colorFor } from "@/lib/presence";
 import { cn } from "@/lib/utils";
@@ -224,23 +225,27 @@ export function SuggestionPanel({
       {canSuggest && composerOpen && (
         <form onSubmit={handleSubmit} className="space-y-2.5 border-b bg-emerald-50/40 p-3.5 dark:bg-emerald-950/15" data-suggestion-composer>
           <div className="space-y-1">
-            <label className="block text-[12px] font-medium text-foreground">目标段落</label>
-            <select
+            <label className="block text-[12px] font-medium text-foreground" htmlFor="suggestion-target-block">目标段落</label>
+            <FeishuSelect
+              id="suggestion-target-block"
+              ariaLabel="目标段落"
               value={activeBlock?.id ?? ""}
-              onChange={(e) => handleSelectBlock(e.target.value)}
-              data-suggestion-block-select
-              className="h-8 w-full rounded-md border bg-surface px-2 text-[12px] text-foreground outline-none focus:border-primary"
-            >
-              {blocks.map((b, i) => {
+              options={blocks.map((b, i) => {
                 const label = BLOCK_TYPE_LABELS[b.type] ?? b.type;
                 const snippet = b.text.trim() ? b.text.trim().slice(0, 26) : "(空白段落)";
-                return (
-                  <option key={b.id} value={b.id}>
-                    #{i + 1} [{label}] {snippet}
-                  </option>
-                );
+                return {
+                  value: b.id,
+                  label: `#${i + 1} [${label}] ${snippet}`,
+                };
               })}
-            </select>
+              onChange={(val) => {
+                if (val !== (activeBlock?.id ?? "")) handleSelectBlock(val);
+              }}
+              disabled={blocks.length === 0}
+              dataAttr={{ "data-suggestion-block-select": true }}
+              className="h-8 w-full border bg-surface px-2 text-[12px] text-foreground disabled:opacity-60"
+              menuMinWidth={240}
+            />
           </div>
 
           {activeBlock && (

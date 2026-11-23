@@ -1,8 +1,14 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Star } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Logo } from "@/components/brand";
 import { clearPublicFormDraft, readPublicFormDraft, writePublicFormDraft, type FormDraftEntry } from "./public-form-draft";
+import {
+  isValidFormBranchRule,
+  loadBranchRulesForFields,
+  visibleFormFields,
+  type FormBranchRule,
+} from "./base/form-branching";
 
 export interface FormFieldDef {
   id: number;
@@ -12,7 +18,7 @@ export interface FormFieldDef {
   options?: string[];
   required?: boolean;
 }
-interface FormDefinition { title: string; desc: string; fields: FormFieldDef[] }
+interface FormDefinition { title: string; desc: string; fields: FormFieldDef[]; branchRules?: FormBranchRule[] }
 export type FormValue = string | string[] | boolean;
 export function validPublicFormDefinition(value: unknown): value is FormDefinition {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -24,6 +30,9 @@ export function validPublicFormDefinition(value: unknown): value is FormDefiniti
     const field = item as Record<string, unknown>;
     if (!Number.isSafeInteger(field.id) || (field.id as number) <= 0 || ids.has(field.id as number) || typeof field.name !== "string" || typeof field.type !== "string" || (field.description !== undefined && typeof field.description !== "string") || (field.required !== undefined && typeof field.required !== "boolean") || (field.options !== undefined && (!Array.isArray(field.options) || field.options.length > 1000 || !field.options.every((option) => typeof option === "string")))) return false;
     ids.add(field.id as number);
+  }
+  if (data.branchRules !== undefined) {
+    if (!Array.isArray(data.branchRules) || data.branchRules.length > 500 || !data.branchRules.every(isValidFormBranchRule)) return false;
   }
   return true;
 }
@@ -38,9 +47,10 @@ export function publicFormResponseIsDefinite(status: number, code: unknown): boo
 export function publicFormReceiptIsConfirmed(status: number, value: unknown): boolean {
   return status === 201 && !!value && typeof value === "object" && !Array.isArray(value) && (value as { ok?: unknown }).ok === true;
 }
-export function formCells(fields: FormFieldDef[], values: Record<number, FormValue>): Record<string, unknown> {
+export function formCells(fields: FormFieldDef[], values: Record<number, FormValue>, rules?: readonly FormBranchRule[]): Record<string, unknown> {
+  const activeFields = rules && rules.length > 0 ? visibleFormFields(fields, rules, values) : fields;
   const cells: Record<string, unknown> = {};
-  for (const f of fields) {
+  for (const f of activeFields) {
     if (!supportsPublicFormField(f.type)) { if (f.required) throw new Error(`${f.name} 暂不支持填写，请联系收集者。`); continue; }
     const v = values[f.id];
     if (v === undefined || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0)) {
@@ -107,7 +117,7 @@ export function PublicFormField({ field, value, onChange, disabled = false }: { 
 }
 
 /** A published bearer link; numeric legacy links never reach this component. */
-export function PublicForm({ token }: { token: string }) {
+export function PublicForm({ token, branchRules: explicitBranchRules }: { token: string; branchRules?: FormBranchRule[] }) {
   const [def, setDef] = useState<FormDefinition | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
@@ -168,11 +178,22 @@ export function PublicForm({ token }: { token: string }) {
     setDraftError(saved ? "" : "本标签页无法保存填写草稿，请勿刷新或关闭页面。");
   };
 
+  const activeBranchRules = useMemo(() => {
+    if (explicitBranchRules && explicitBranchRules.length > 0) return explicitBranchRules;
+    if (def?.branchRules && def.branchRules.length > 0) return def.branchRules;
+    return def ? loadBranchRulesForFields(def.fields.map((f) => f.id)) : [];
+  }, [explicitBranchRules, def]);
+
+  const displayedFields = useMemo(
+    () => (def ? visibleFormFields(def.fields, activeBranchRules, values) : []),
+    [def, activeBranchRules, values],
+  );
+
   const submit = async () => {
     if (submitting.current?.token === token || uncertain || !def || !submissionKey || !draftReady || defToken !== token || keyToken !== token) return;
     let cells: Record<string, unknown>;
     const submittedValues = valuesRef.current;
-    try { cells = formCells(def.fields, submittedValues); }
+    try { cells = formCells(def.fields, submittedValues, activeBranchRules); }
     catch (error) { setErr(error instanceof Error ? error.message : "填写内容无效。"); return; }
     if (!Object.keys(cells).length) { setErr("请填写至少一项内容。"); return; }
     // A lost response may follow a committed record. Preserve an unknown
@@ -220,7 +241,7 @@ export function PublicForm({ token }: { token: string }) {
       {done && defToken === token ? <div className="py-10 text-center" data-form-done><div className="mx-auto mb-3 grid size-12 place-items-center rounded-full bg-[#D9F5D6] text-[22px] text-[#237B19]">✓</div><p className="text-[16px] font-medium">提交成功</p><p className="mt-1 text-[13px] text-muted-foreground">感谢你的反馈！</p><FormDraftRecovery unmatched={unmatched} unreadable={unreadable}/>{draftError && <p role="alert" className="mt-3 text-[13px] text-destructive">{draftError}</p>}</div> : def && defToken === token && <>
         <h1 className="text-[20px] font-semibold">{def.title || "表单"}</h1>
         {def.desc && <p className="mb-5 mt-1 text-[13px] text-muted-foreground">{def.desc}</p>}
-        <div className="mt-5 space-y-5">{def.fields.map((f) => <PublicFormField key={f.id} field={f} value={values[f.id]} disabled={busy || !draftReady || defToken !== token || (!!submissionKey && keyToken !== token)} onChange={(value) => updateValue(f.id, value)} />)}</div>
+        <div className="mt-5 space-y-5">{displayedFields.map((f) => <PublicFormField key={f.id} field={f} value={values[f.id]} disabled={busy || !draftReady || defToken !== token || (!!submissionKey && keyToken !== token)} onChange={(value) => updateValue(f.id, value)} />)}</div>
         {draftReady && submissionKey && unreadable === null && !draftError && <p className="sr-only" role="status">填写内容自动保存在当前标签页，提交后清除已提交内容。</p>}
         <FormDraftRecovery unmatched={unmatched} unreadable={unreadable}/>
         {draftError && <p role="alert" className="mt-3 text-[13px] text-destructive">{draftError}</p>}

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { FolderInput, Import, X } from "lucide-react";
 import { ApiError, driveApi, wikiApi, type DriveEntry, type WikiNodeEntry } from "@/lib/api";
+import { FeishuSelect } from "@/components/feishu-select";
 import { useI18n } from "@/lib/i18n";
 
 export function WikiMoveNodeDialog({
@@ -101,36 +102,39 @@ export function WikiMoveNodeDialog({
         <div className="mt-4 space-y-3">
           <div>
             <label className="mb-1 block text-[13px] font-medium" htmlFor="wiki-move-space">{t("目标知识库")}</label>
-            <select
+            <FeishuSelect
               id="wiki-move-space"
-              value={targetSpaceId}
-              onChange={(e) => {
-                setTargetSpaceId(Number(e.target.value));
-                setTargetParentId(null);
+              ariaLabel={t("目标知识库")}
+              value={String(targetSpaceId)}
+              options={editableSpaces.map((s) => ({ value: String(s.id), label: s.name }))}
+              onChange={(val) => {
+                const nextSpaceId = Number(val);
+                if (nextSpaceId !== targetSpaceId) {
+                  setTargetSpaceId(nextSpaceId);
+                  setTargetParentId(null);
+                }
               }}
-              className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
-            >
-              {editableSpaces.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
+              className="h-9 w-full border bg-surface px-3 text-[13px]"
+              menuMinWidth={220}
+            />
           </div>
           <div>
             <label className="mb-1 block text-[13px] font-medium" htmlFor="wiki-move-parent">{t("目标父级位置")}</label>
-            <select
+            <FeishuSelect
               id="wiki-move-parent"
-              value={targetParentId ?? 0}
-              onChange={(e) => {
-                const v = Number(e.target.value);
+              ariaLabel={t("目标父级位置")}
+              value={String(targetParentId ?? 0)}
+              options={[
+                { value: "0", label: t("知识库根目录") },
+                ...parentChoices.map((p) => ({ value: String(p.id), label: p.title })),
+              ]}
+              onChange={(val) => {
+                const v = Number(val);
                 setTargetParentId(v > 0 ? v : null);
               }}
-              className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
-            >
-              <option value={0}>{t("知识库根目录")}</option>
-              {parentChoices.map((p) => (
-                <option key={p.id} value={p.id}>{p.title}</option>
-              ))}
-            </select>
+              className="h-9 w-full border bg-surface px-3 text-[13px]"
+              menuMinWidth={220}
+            />
           </div>
           {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}
           <div className="flex justify-end gap-2 pt-2">
@@ -236,40 +240,40 @@ export function WikiImportDriveDialog({
 
           <div>
             <label className="mb-1 block text-[13px] font-medium" htmlFor="wiki-import-source">{t("选择要迁入的文档或目录")}</label>
-            <select
+            <FeishuSelect
               id="wiki-import-source"
-              value={selected?.id ?? 0}
-              onChange={(e) => setSelectedId(Number(e.target.value))}
+              ariaLabel={t("选择要迁入的文档或目录")}
+              value={String(selected?.id ?? 0)}
+              options={
+                candidates.length === 0
+                  ? [{ value: "0", label: t("当前目录下暂无可迁入项") }]
+                  : candidates.map((c) => ({ value: String(c.id), label: c.title || t("未命名文档") }))
+              }
+              onChange={(val) => setSelectedId(Number(val))}
               disabled={candidates.length === 0}
-              className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
-              data-wiki-import-source
-            >
-              {candidates.length === 0 ? (
-                <option value={0}>{t("当前目录下暂无可迁入项")}</option>
-              ) : (
-                candidates.map((c) => (
-                  <option key={c.id} value={c.id}>{c.title || t("未命名文档")}</option>
-                ))
-              )}
-            </select>
+              dataAttr={{ "data-wiki-import-source": true }}
+              className="h-9 w-full border bg-surface px-3 text-[13px] disabled:opacity-60"
+              menuMinWidth={220}
+            />
           </div>
 
           <div>
             <label className="mb-1 block text-[13px] font-medium" htmlFor="wiki-import-parent">{t("迁入位置")}</label>
-            <select
+            <FeishuSelect
               id="wiki-import-parent"
-              value={targetParentId ?? 0}
-              onChange={(e) => {
-                const v = Number(e.target.value);
+              ariaLabel={t("迁入位置")}
+              value={String(targetParentId ?? 0)}
+              options={[
+                { value: "0", label: t("知识库根目录") },
+                ...parentChoices.map((p) => ({ value: String(p.id), label: p.title })),
+              ]}
+              onChange={(val) => {
+                const v = Number(val);
                 setTargetParentId(v > 0 ? v : null);
               }}
-              className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
-            >
-              <option value={0}>{t("知识库根目录")}</option>
-              {parentChoices.map((p) => (
-                <option key={p.id} value={p.id}>{p.title}</option>
-              ))}
-            </select>
+              className="h-9 w-full border bg-surface px-3 text-[13px]"
+              menuMinWidth={220}
+            />
           </div>
 
           {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}

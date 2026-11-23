@@ -21,9 +21,37 @@ import {
 import { SlideShapes } from "./slides-shapes";
 import { SlidesGpuLayer } from "./slides-gpu-layer";
 import { isDarkSlideBackground, PresenterView, SlideSurface } from "./slides-presenter";
-import { SlideShapeControls } from "./slides-shape-controls";
+import { SlideShapeControls, SlideMultiShapeControls } from "./slides-shape-controls";
 import { SlideTextControls } from "./slides-text-controls";
 import { bodyHasBullets, loadSlideTextStyles, saveSlideTextStyles, toggleBodyBullets, type SlideFieldTextStyle, type SlideTextStyleMap } from "./slides-text-style";
+import { applyThemeToTextStyles, type SlideThemePreset } from "./slides-themes";
+import {
+  applyTransitionToAllPages,
+  getSlideTransition,
+  loadSlideTransitions,
+  saveSlideTransitions,
+  setSlideTransition,
+  SLIDE_TRANSITION_DURATION_MS,
+  SLIDE_TRANSITION_KEYFRAMES_CSS,
+  slideTransitionAnimationStyle,
+  type SlideTransitionKind,
+  type SlideTransitionMap,
+} from "./slides-transitions";
+import {
+  alignMultipleShapes,
+  distributeShapesHorizontally,
+  distributeShapesVertically,
+  expandSelectionWithGroups,
+  groupShapes,
+  isSelectionSingleGroup,
+  loadSlideShapeGroups,
+  pruneShapeGroups,
+  saveSlideShapeGroups,
+  shapesInMarquee,
+  ungroupShapes,
+  type SlideDeckShapeGroups,
+  type SlideRect,
+} from "./slides-multi-select";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
 import { alignSlideShape, moveShapeOrder, type ShapeAlignment, type ShapeOrderAction } from "./slides-shape-order";
@@ -84,7 +112,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [sharing, setSharing] = useState(false);
   const [shapeMenu, setShapeMenu] = useState(false);
   const [gpuActive, setGpuActive] = useState(false);
-  const [previewShape, setPreviewShape] = useState<SlideShape | null>(null);
+  const [previewShapes, setPreviewShapes] = useState<ReadonlyMap<string, SlideShape> | null>(null);
   const shapeButtonRef = useRef<HTMLButtonElement>(null);
   const shapeMenuRef = useRef<HTMLDivElement>(null);
   const [formatOpen, setFormatOpen] = useState(false);
@@ -134,7 +162,67 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const pageMenuRef = useRef<HTMLDivElement>(null);
   const pageActionCount = useRef(0);
   const copyRequest = useRef<AbortController | null>(null);
-  const [selectedShape, setSelectedShape] = useState<string | null>(null);
+  const [selectedShapes, setSelectedShapes] = useState<string[]>([]);
+  const selectedShape = selectedShapes.length === 1 ? selectedShapes[0] : null;
+  const setSelectedShape = (id: string | null) => setSelectedShapes(id ? [id] : []);
+  const [shapeGroups, setShapeGroups] = useState<SlideDeckShapeGroups>(() => loadSlideShapeGroups(deckId));
+  useEffect(() => { setShapeGroups(loadSlideShapeGroups(deckId)); }, [deckId]);
+  const updatePageGroups = (pageId: number, updater: (prev: SlideDeckShapeGroups[number] | undefined) => SlideDeckShapeGroups[number]) => {
+    setShapeGroups((prev) => {
+      const nextPage = updater(prev[pageId]);
+      const next: SlideDeckShapeGroups = { ...prev };
+      if (Object.keys(nextPage).length > 0) next[pageId] = nextPage;
+      else delete next[pageId];
+      saveSlideShapeGroups(deckId, next);
+      return next;
+    });
+  };
+  const [marqueeRect, setMarqueeRect] = useState<SlideRect | null>(null);
+  const marqueeDrag = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startPctX: number;
+    startPctY: number;
+    rect: DOMRect;
+    baseSelection: string[];
+    active: boolean;
+  } | null>(null);
+  const [transitions, setTransitions] = useState<SlideTransitionMap>(() => loadSlideTransitions(deckId));
+  useEffect(() => { setTransitions(loadSlideTransitions(deckId)); }, [deckId]);
+  const [transitionPreview, setTransitionPreview] = useState<{ kind: SlideTransitionKind; nonce: number } | null>(null);
+  const transitionPreviewTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (transitionPreviewTimer.current !== null) window.clearTimeout(transitionPreviewTimer.current); }, []);
+  const updatePageTransition = (pageId: number, kind: SlideTransitionKind) => {
+    setTransitions((prev) => {
+      const next = setSlideTransition(prev, pageId, kind);
+      saveSlideTransitions(deckId, next);
+      return next;
+    });
+  };
+  const triggerTransitionPreview = (kind: SlideTransitionKind) => {
+    if (transitionPreviewTimer.current !== null) {
+      window.clearTimeout(transitionPreviewTimer.current);
+      transitionPreviewTimer.current = null;
+    }
+    if (kind === "none") {
+      setTransitionPreview(null);
+      return;
+    }
+    const startPreview = () => {
+      setTransitionPreview({ kind, nonce: Date.now() });
+      transitionPreviewTimer.current = window.setTimeout(() => {
+        setTransitionPreview(null);
+        transitionPreviewTimer.current = null;
+      }, SLIDE_TRANSITION_DURATION_MS + 80);
+    };
+    if (transitionPreview) {
+      setTransitionPreview(null);
+      requestAnimationFrame(startPreview);
+    } else {
+      startPreview();
+    }
+  };
   const [titleFocusPage, setTitleFocusPage] = useState<number | null>(null);
   const [bodyFocusPage, setBodyFocusPage] = useState<number | null>(null);
   const [activeTextField, setActiveTextField] = useState<{ pageId: number; kind: "title" | "body" } | null>(null);
@@ -419,6 +507,11 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify({ type: "cursor", pageId: active?.id ?? 0 }));
   }, [active?.id]);
+  useEffect(() => {
+    marqueeDrag.current = null;
+    setMarqueeRect(null);
+    setPreviewShapes(null);
+  }, [active?.id]);
   const draft = active ? queue.get(active) : null;
   const canInsert = canEdit && pages.isSuccess && !create.isPending && !remove.isPending && pageActions === 0 && !insertPageUnknown && (!active || draft?.state === "saved");
   canPasteRef.current = canEdit && pages.isSuccess && !pages.isError && !copyPageUnknown && !visibilityUnknown && !insertPageUnknown && !queue.hasUnsaved() && !create.isPending && !remove.isPending && pageActions === 0;
@@ -433,7 +526,12 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     document.addEventListener("pointerdown", outside); document.addEventListener("keydown", escape); window.addEventListener("resize", close);
     return () => { cancelAnimationFrame(focus); document.removeEventListener("pointerdown", outside); document.removeEventListener("keydown", escape); window.removeEventListener("resize", close); };
   }, [layoutPicker]);
-  const chosenShape = draft?.content.shapes.find((shape) => shape.id === selectedShape);
+  const existingShapeIdSet = new Set((draft?.content.shapes ?? []).map((shape) => shape.id));
+  const activeSelectedShapes = draft ? selectedShapes.filter((id) => existingShapeIdSet.has(id)) : [];
+  const activePageGroups = active ? shapeGroups[active.id] : undefined;
+  const chosenShape = activeSelectedShapes.length === 1 ? draft?.content.shapes.find((shape) => shape.id === activeSelectedShapes[0]) : undefined;
+  const multiSelectedCount = activeSelectedShapes.length;
+  const multiSelectionGrouped = activeSelectedShapes.length > 1 && isSelectionSingleGroup(activePageGroups, activeSelectedShapes);
   const zoom = manualZoom ?? fitZoom;
   useEffect(() => { if (!zoomEditing.current) setZoomText(String(zoom)); }, [zoom]);
   useEffect(() => {
@@ -452,6 +550,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     const shapes = patchSlideShape(current.content.shapes, id, patch);
     queue.edit(active, { shapes });
   };
+  const replaceShapes = (nextShapes: SlideShape[]) => {
+    if (!active) return;
+    queue.edit(active, { shapes: nextShapes });
+  };
   const orderShape = (id: string, action: ShapeOrderAction) => {
     if (!active) return;
     const shapes = moveShapeOrder(queue.get(active).content.shapes, id, action);
@@ -465,6 +567,37 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     const next = shapes.slice();
     next[index] = alignSlideShape(shapes[index], alignment);
     queue.edit(active, { shapes: next });
+  };
+  const alignSelectedShapes = (alignment: ShapeAlignment) => {
+    if (!active || activeSelectedShapes.length < 2) return;
+    const next = alignMultipleShapes(queue.get(active).content.shapes, activeSelectedShapes, alignment);
+    queue.edit(active, { shapes: next });
+  };
+  const distributeSelectedHorizontally = () => {
+    if (!active || activeSelectedShapes.length < 3) return;
+    const next = distributeShapesHorizontally(queue.get(active).content.shapes, activeSelectedShapes);
+    queue.edit(active, { shapes: next });
+  };
+  const distributeSelectedVertically = () => {
+    if (!active || activeSelectedShapes.length < 3) return;
+    const next = distributeShapesVertically(queue.get(active).content.shapes, activeSelectedShapes);
+    queue.edit(active, { shapes: next });
+  };
+  const groupSelectedShapes = () => {
+    if (!active || activeSelectedShapes.length < 2) return;
+    updatePageGroups(active.id, (prev) => groupShapes(prev, activeSelectedShapes));
+  };
+  const ungroupSelectedShapes = () => {
+    if (!active || activeSelectedShapes.length < 2) return;
+    updatePageGroups(active.id, (prev) => ungroupShapes(prev, activeSelectedShapes));
+  };
+  const deleteSelectedShapes = () => {
+    if (!active || !activeSelectedShapes.length) return;
+    const removeSet = new Set(activeSelectedShapes);
+    const nextShapes = queue.get(active).content.shapes.filter((shape) => !removeSet.has(shape.id));
+    queue.edit(active, { shapes: nextShapes });
+    updatePageGroups(active.id, (prev) => pruneShapeGroups(prev, new Set(nextShapes.map((shape) => shape.id))));
+    setSelectedShapes([]);
   };
   const addShape = (kind: SlideShape["kind"]) => {
     if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return;
@@ -527,11 +660,12 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       if (structureHistoryAction.current(redo)) return;
       if (!active) return;
       if (redo) queue.redo(active); else queue.undo(active);
-      if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null);
+      const living = new Set(queue.get(active).content.shapes.map((shape) => shape.id));
+      setSelectedShapes((prev) => { const next = prev.filter((id) => living.has(id)); return next.length === prev.length ? prev : next; });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, canEdit, playing, sharing, importPreview, selectedShape, queue]);
+  }, [active, canEdit, playing, sharing, importPreview, queue]);
 
   useEffect(() => {
     if (!playing) return;
@@ -553,17 +687,36 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   if (meta.data.kind !== "slides") return <ResourceTypeNotice id={deckId} kind={meta.data.kind} verified={!meta.isFetching} blockNavigation={queue.hasUnsaved() || !!titleDraft}>{queue.hasUnsaved() && <><p role="alert" className="mt-3 text-[13px] text-red-600">当前演示文稿有未保存内容，请勿刷新或关闭；恢复文件类型和权限后重试。</p><SlidesDraftRecovery queue={queue}/></>}<SlideTitleRecovery draft={titleDraft}/></ResourceTypeNotice>;
 
   if (playing && (!playbackPage || !playbackDraft)) return <div className="fixed inset-0 z-[80] grid place-items-center bg-[#1f2329] text-white"><div className="text-center"><p>没有可放映的幻灯片</p><button type="button" onClick={stopPresentation} className="mt-4 rounded border px-3 py-1">退出放映</button></div></div>;
-  if (playing && playbackPage && playbackDraft) return (
-    <div ref={playbackRef} tabIndex={-1} aria-label={audienceWindow ? "演示者视图" : "幻灯片放映"} className="fixed inset-0 z-[80] outline-none" data-slides-playing>
-      {audienceWindow ? <>
-        <PresenterView pages={playable} currentId={playbackPage.id} content={playbackDraft.content} contentFor={(page) => queue.get(page).content} onSelect={setCurrent} onExit={stopPresentation}/>
-        {createPortal(<div aria-label="观众视图" className="flex h-dvh items-center justify-center bg-black"><div className="w-full" style={{ width: "min(100vw, calc(100dvh * 16 / 9))" }}><SlideSurface content={playbackDraft.content}/></div></div>, audienceMountRef.current!)}
-      </> : <div className="flex h-full flex-col items-center justify-center bg-[#1f2329] p-4 sm:p-10">
-        <div className="w-full max-w-[1280px] shrink-0" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))" }}><SlideSurface content={playbackDraft.content}/></div>
-        <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) <= 0} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i > 0) setCurrent(playable[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{playable.findIndex((page) => page.id === playbackPage.id) + 1} / {playable.length}</span><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) >= playable.length - 1} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i < playable.length - 1) setCurrent(playable[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={stopPresentation}>退出放映</button></div>
-      </div>}
-    </div>
-  );
+  if (playing && playbackPage && playbackDraft) {
+    const playbackTransition = getSlideTransition(transitions, playbackPage.id);
+    const playbackAnimStyle = slideTransitionAnimationStyle(playbackTransition);
+    return (
+      <div ref={playbackRef} tabIndex={-1} aria-label={audienceWindow ? "演示者视图" : "幻灯片放映"} className="fixed inset-0 z-[80] outline-none" data-slides-playing>
+        {audienceWindow ? <>
+          <PresenterView pages={playable} currentId={playbackPage.id} content={playbackDraft.content} contentFor={(page) => queue.get(page).content} textStyles={textStyles} transitions={transitions} onSelect={setCurrent} onExit={stopPresentation}/>
+          {createPortal(
+            <div aria-label="观众视图" className="flex h-dvh items-center justify-center bg-black">
+              <style>{SLIDE_TRANSITION_KEYFRAMES_CSS}</style>
+              <div className="w-full overflow-hidden" style={{ width: "min(100vw, calc(100dvh * 16 / 9))" }}>
+                <div key={playbackPage.id} data-slide-transition={playbackTransition} style={playbackAnimStyle}>
+                  <SlideSurface content={playbackDraft.content} textStyle={textStyles[playbackPage.id]}/>
+                </div>
+              </div>
+            </div>,
+            audienceMountRef.current!,
+          )}
+        </> : <div className="flex h-full flex-col items-center justify-center bg-[#1f2329] p-4 sm:p-10">
+          <style>{SLIDE_TRANSITION_KEYFRAMES_CSS}</style>
+          <div className="w-full max-w-[1280px] shrink-0 overflow-hidden" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))" }}>
+            <div key={playbackPage.id} data-slide-transition={playbackTransition} style={playbackAnimStyle}>
+              <SlideSurface content={playbackDraft.content} textStyle={textStyles[playbackPage.id]}/>
+            </div>
+          </div>
+          <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) <= 0} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i > 0) setCurrent(playable[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{playable.findIndex((page) => page.id === playbackPage.id) + 1} / {playable.length}</span><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) >= playable.length - 1} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i < playable.length - 1) setCurrent(playable[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={stopPresentation}>退出放映</button></div>
+        </div>}
+      </div>
+    );
+  }
 
   const beginPageAction = () => { pageActionCount.current++; setPageActions(pageActionCount.current); };
   const endPageAction = () => { pageActionCount.current--; setPageActions(pageActionCount.current); };
@@ -1066,10 +1219,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     if (current.state !== "saved" || current.page.revision !== version || !sameSlideContent(current.content, content)) { setOperationError("页面已变化，请核对后重新操作。"); return; }
     setOperationError(""); deletingPage.current = true; beginPageAction(); remove.mutate(current.page);
   };
-  const applyBackgroundToAll = async () => {
+  const applyBackgroundToAll = async (overrideColor?: string, themeForStyles?: SlideThemePreset) => {
     if (!canEdit || !active || !pages.isSuccess || pages.isFetching || queue.hasUnsaved() || pageActionCount.current || insertingPage.current || create.isPending || remove.isPending) return;
     const before = list.map((page) => queue.get(page).page);
-    const color = queue.get(active).content.background;
+    const color = overrideColor ?? queue.get(active).content.background;
     if (!before.length || before.length > 1000 || !/^(|#[0-9a-f]{6})$/i.test(color)) { setOperationError("背景颜色或页面数量不受支持。"); return; }
     setOperationError(""); setBackgroundApplying(true); beginPageAction();
     try {
@@ -1078,6 +1231,14 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       const id = ++backgroundBatchSequence.current;
       if (!after || !queue.acceptBackgroundBatch(before, after, id)) { setBackgroundBatchUnknown(true); setOperationError("背景已提交，但页面状态发生变化；请保留内容并重新打开核对。"); void invalidate(); return; }
       mergeBackgroundPages(after);
+      if (themeForStyles) {
+        const pageIds = after.map((page) => page.id);
+        setTextStyles((prev) => {
+          const next = applyThemeToTextStyles(prev, pageIds, themeForStyles);
+          saveSlideTextStyles(deckId, next);
+          return next;
+        });
+      }
       if (before.some((page, index) => page.background !== after[index].background)) setBackgroundHistory((history) => ({ undo: [...history.undo, { id, before, after }].slice(-50), redo: [] }));
       void invalidate();
     } catch (error) {
@@ -1086,6 +1247,15 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       setOperationError(known ? error.status === 409 ? "页面已变化，未应用背景，请刷新后重试。" : error.status === 404 || error.status === 405 ? "服务端不支持批量设置背景，请升级后重试。" : error.message : "应用结果未确认，请重新打开并检查背景后再编辑。");
       void invalidate();
     } finally { setBackgroundApplying(false); endPageAction(); }
+  };
+  const applyTransitionToAll = (kind: SlideTransitionKind) => {
+    const pageIds = list.map((page) => page.id);
+    setTransitions((prev) => {
+      const next = applyTransitionToAllPages(prev, pageIds, kind);
+      saveSlideTransitions(deckId, next);
+      return next;
+    });
+    setClipboardNotice(kind === "none" ? "已清除全部页面的切换动画。" : "已将切换动画应用到全部页面。");
   };
   const openPageMenu = (page: Page, x: number, y: number) => {
     activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null);
@@ -1102,6 +1272,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const printablePages = playable.length ? playable : list;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor data-document-print-restricted={!canDownload ? "true" : undefined}>
+      <style>{SLIDE_TRANSITION_KEYFRAMES_CSS}</style>
       <header className="flex h-14 shrink-0 items-center gap-1.5 border-b bg-white pl-14 pr-2 sm:gap-2 sm:pr-3 md:px-5">
         <button type="button" onClick={() => { location.hash = "#/drive/mine"; }} aria-label="返回云盘" className="grid size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5]"><ChevronLeft size={17}/></button>
         <span className="hidden size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white sm:grid"><Presentation size={15}/></span>
@@ -1167,7 +1338,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
               const pagePeers = collaborators.filter((c) => c.pageId === page.id);
               return <div key={page.id} className={cn("group relative mb-6 flex gap-1 sm:mb-0 [@media(pointer:coarse)]:mb-6", dropMarker?.id === page.id && (dropMarker.after ? "after:absolute after:-bottom-1 after:left-5 after:right-0 after:h-0.5 after:bg-[#3370ff]" : "before:absolute before:-top-1 before:left-5 before:right-0 before:h-0.5 before:bg-[#3370ff]"))} data-slides-page={page.id} onContextMenu={(event) => { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, event.clientX || rect.left, event.clientY || rect.bottom); }}>
                 <span className={cn("w-4 pt-1 text-right text-[11px] text-[#8f959e]", page.hidden && "line-through")}>{index + 1}</span>
-                <button type="button" draggable={false} onPointerDown={(event) => beginPageDrag(event, page, false)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} onClick={() => { if (suppressPageClick.current) return; activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null); }} onKeyDown={(event) => { if (!event.shiftKey && !event.altKey && event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "m") { event.preventDefault(); doInsert(page); } else if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") { event.preventDefault(); doCopy(page); } }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}${page.hidden ? "，已隐藏" : ""}`} className={cn("relative aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}><SlideSurface content={item.content} showPlaceholder/>{pagePeers.length > 0 && <span className="pointer-events-none absolute bottom-1 left-1 flex items-center gap-0.5">{pagePeers.slice(0, 3).map((peer) => <span key={peer.userId} data-slide-peer-badge={peer.userId} title={`${peer.name} 正在查看此页`} className="inline-flex h-4 items-center justify-center rounded-full px-1 text-[9px] font-medium text-white shadow-sm sm:px-1.5" style={{ backgroundColor: slidePeerColor(peer.userId) }}><span className="sm:hidden">{peer.name.slice(0, 1)}</span><span className="hidden sm:inline">{peer.name.slice(0, 4)}</span></span>)}</span>}{page.hidden && <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded bg-[#f2f3f5] text-[#646a73]" title="已隐藏"><EyeOff size={13}/></span>}</button>
+                <button type="button" draggable={false} onPointerDown={(event) => beginPageDrag(event, page, false)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} onClick={() => { if (suppressPageClick.current) return; activePageRef.current = page.id; setCurrent(page.id); setSelectedShape(null); }} onKeyDown={(event) => { if (!event.shiftKey && !event.altKey && event.ctrlKey && !event.metaKey && event.key.toLowerCase() === "m") { event.preventDefault(); doInsert(page); } else if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "d") { event.preventDefault(); doCopy(page); } }} aria-label={`第 ${index + 1} 页 ${item.content.title || "未命名"}${page.hidden ? "，已隐藏" : ""}`} className={cn("relative aspect-video min-w-0 flex-1 overflow-hidden rounded-[4px] border-2 bg-white text-left shadow-sm", active?.id === page.id ? "border-[#3370ff]" : "border-transparent hover:border-[#c8d4f4]")} style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}><SlideSurface content={item.content} textStyle={textStyles[page.id]} showPlaceholder/>{pagePeers.length > 0 && <span className="pointer-events-none absolute bottom-1 left-1 flex items-center gap-0.5">{pagePeers.slice(0, 3).map((peer) => <span key={peer.userId} data-slide-peer-badge={peer.userId} title={`${peer.name} 正在查看此页`} className="inline-flex h-4 items-center justify-center rounded-full px-1 text-[9px] font-medium text-white shadow-sm sm:px-1.5" style={{ backgroundColor: slidePeerColor(peer.userId) }}><span className="sm:hidden">{peer.name.slice(0, 1)}</span><span className="hidden sm:inline">{peer.name.slice(0, 4)}</span></span>)}</span>}{page.hidden && <span className="absolute bottom-1 right-1 grid size-5 place-items-center rounded bg-[#f2f3f5] text-[#646a73]" title="已隐藏"><EyeOff size={13}/></span>}</button>
                 <button type="button" aria-label={`拖动第 ${index + 1} 页排序`} title="拖动排序" disabled={!canEdit || orderUnknown || queue.hasUnsaved()} onPointerDown={(event) => beginPageDrag(event, page, true)} onPointerMove={movePageDrag} onPointerUp={endPageDrag} onPointerCancel={stopPageDrag} onLostPointerCapture={() => { if (dragPage.current) stopPageDrag(); }} className="absolute -bottom-6 left-5 right-0 grid h-6 touch-none select-none place-items-center rounded text-[#8f959e] active:bg-[#e8efff] active:text-[#3370ff] disabled:opacity-40 sm:hidden [@media(pointer:coarse)]:grid"><GripHorizontal size={16}/></button>
                 <button type="button" aria-label={`第 ${index + 1} 页更多操作`} aria-haspopup="menu" aria-expanded={pageMenu?.id === page.id} data-slide-options={page.id} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); openPageMenu(page, rect.right, rect.bottom); }} className={cn("absolute right-1 top-1 grid size-7 place-items-center rounded bg-white/90 text-[#646a73] shadow-sm hover:bg-[#f2f3f5] focus:pointer-events-auto focus:opacity-100 sm:pointer-events-auto sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100", active?.id === page.id ? "opacity-100" : "pointer-events-none opacity-0")}><MoreHorizontal size={16}/></button>
               </div>;
@@ -1178,8 +1349,8 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
         <section className="flex min-w-0 flex-1 flex-col">
           <div className="flex h-14 shrink-0 items-center gap-1 overflow-x-auto border-b border-[#e5e6eb] bg-white px-3 text-[12px] text-[#4e5969] [&>button]:shrink-0 [&>button]:whitespace-nowrap">
             <div className="flex shrink-0 items-center gap-0.5 border-r border-[#e5e6eb] pr-2">
-              <button type="button" data-slides-undo aria-label={undoLabel} title={`${undoLabel} (⌘/Ctrl+Z)`} disabled={!canUndoAny} onClick={() => { if (!tryBackgroundHistory(false) && !tryStructureHistory(false) && active) { queue.undo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="flex h-12 min-w-10 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={15}/><span>撤销</span></button>
-              <button type="button" data-slides-redo aria-label={redoLabel} title={`${redoLabel} (⌘/Ctrl+Shift+Z)`} disabled={!canRedoAny} onClick={() => { if (!tryBackgroundHistory(true) && !tryStructureHistory(true) && active) { queue.redo(active); if (selectedShape && !queue.get(active).content.shapes.some((shape) => shape.id === selectedShape)) setSelectedShape(null); } }} className="flex h-12 min-w-10 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={15}/><span>重做</span></button>
+              <button type="button" data-slides-undo aria-label={undoLabel} title={`${undoLabel} (⌘/Ctrl+Z)`} disabled={!canUndoAny} onClick={() => { if (!tryBackgroundHistory(false) && !tryStructureHistory(false) && active) { queue.undo(active); const living = new Set(queue.get(active).content.shapes.map((shape) => shape.id)); setSelectedShapes((prev) => prev.filter((id) => living.has(id))); } }} className="flex h-12 min-w-10 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Undo2 size={15}/><span>撤销</span></button>
+              <button type="button" data-slides-redo aria-label={redoLabel} title={`${redoLabel} (⌘/Ctrl+Shift+Z)`} disabled={!canRedoAny} onClick={() => { if (!tryBackgroundHistory(true) && !tryStructureHistory(true) && active) { queue.redo(active); const living = new Set(queue.get(active).content.shapes.map((shape) => shape.id)); setSelectedShapes((prev) => prev.filter((id) => living.has(id))); } }} className="flex h-12 min-w-10 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-30"><Redo2 size={15}/><span>重做</span></button>
             </div>
             <div className="flex min-w-max flex-1 items-center justify-center gap-1">
             <button type="button" disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("text")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Type size={16}/>文本</button>
@@ -1201,8 +1372,20 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
           {draft?.state === "pending" && !canDraft && <div role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">权限尚未确认，输入仍保留在本地，未发送到服务器。<SlidesDraftRecovery queue={queue}/></div>}
           <div className="relative flex min-h-0 flex-1 flex-col">
-          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) queue.edit(active, { shapes: queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id) }); setSelectedShape(null); }}/>}
-          {!chosenShape && canDraft && active && draft && activeTextField?.pageId === active.id && (() => {
+          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) { const nextShapes = queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id); queue.edit(active, { shapes: nextShapes }); updatePageGroups(active.id, (prev) => pruneShapeGroups(prev, new Set(nextShapes.map((shape) => shape.id)))); } setSelectedShape(null); }}/>}
+          {multiSelectedCount > 1 && canEdit && (
+            <SlideMultiShapeControls
+              count={multiSelectedCount}
+              grouped={multiSelectionGrouped}
+              onGroup={groupSelectedShapes}
+              onUngroup={ungroupSelectedShapes}
+              onAlign={alignSelectedShapes}
+              onDistributeHorizontal={distributeSelectedHorizontally}
+              onDistributeVertical={distributeSelectedVertically}
+              onDelete={deleteSelectedShapes}
+            />
+          )}
+          {activeSelectedShapes.length === 0 && canDraft && active && draft && activeTextField?.pageId === active.id && (() => {
             const isTitle = activeTextField.kind === "title";
             const dark = isDarkSlideBackground(draft.content.background);
             const large = hasLargeSlideTitle(draft.content.layout);
@@ -1243,13 +1426,95 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
                 } : undefined;
                 const keepTextToolbar = (related: EventTarget | null) =>
                   related instanceof Element && (!!related.closest("[data-slides-text-controls]") || !!related.closest('[role="listbox"]'));
-                return <div className="group/slide relative m-auto shrink-0 bg-white shadow-[0_4px_18px_rgba(31,35,41,0.12)]" style={{ width: SLIDE_WIDTH * zoom / 100, height: SLIDE_HEIGHT * zoom / 100, backgroundColor: gpuActive ? "transparent" : draft.content.background || "#fff" }} data-slides-canvas onPointerDown={(event) => { if (event.target instanceof Element && !event.target.closest("[data-slide-object]")) { queue.endGroup(active.id); setSelectedShape(null); if (!event.target.closest("[data-slides-title]") && !event.target.closest("[data-slides-body]") && !event.target.closest("[data-slides-text-controls]")) setActiveTextField(null); } }}>
-                <SlidesGpuLayer background={draft.content.background} shapes={previewShape ? draft.content.shapes.map((s) => (s.id === previewShape.id ? previewShape : s)) : draft.content.shapes} selectedId={selectedShape} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
+                return <div
+                  className={cn("group/slide relative m-auto shrink-0 bg-white shadow-[0_4px_18px_rgba(31,35,41,0.12)]", transitionPreview && "overflow-hidden")}
+                  style={{
+                    width: SLIDE_WIDTH * zoom / 100,
+                    height: SLIDE_HEIGHT * zoom / 100,
+                    backgroundColor: gpuActive ? "transparent" : draft.content.background || "#fff",
+                    ...(transitionPreview ? slideTransitionAnimationStyle(transitionPreview.kind) : {}),
+                  }}
+                  data-slides-canvas
+                  data-slide-transition-preview={transitionPreview?.kind}
+                  onPointerDown={(event) => {
+                    const target = event.target instanceof Element ? event.target : null;
+                    if (!target || target.closest("[data-slide-object]")) return;
+                    queue.endGroup(active.id);
+                    if (!event.shiftKey) setSelectedShapes([]);
+                    if (!target.closest("[data-slides-title]") && !target.closest("[data-slides-body]") && !target.closest("[data-slides-text-controls]")) {
+                      setActiveTextField(null);
+                    }
+                    if (!canEdit || event.button !== 0 || target.closest("input, textarea, button, [data-slides-title], [data-slides-body], [data-slides-text-controls]")) return;
+                    const rect = event.currentTarget.getBoundingClientRect();
+                    if (!rect.width || !rect.height) return;
+                    const startPctX = Math.min(100, Math.max(0, ((event.clientX - rect.left) / rect.width) * 100));
+                    const startPctY = Math.min(100, Math.max(0, ((event.clientY - rect.top) / rect.height) * 100));
+                    marqueeDrag.current = {
+                      pointerId: event.pointerId,
+                      startClientX: event.clientX,
+                      startClientY: event.clientY,
+                      startPctX,
+                      startPctY,
+                      rect,
+                      baseSelection: event.shiftKey ? activeSelectedShapes : [],
+                      active: false,
+                    };
+                    try {
+                      event.currentTarget.setPointerCapture(event.pointerId);
+                    } catch {
+                      /* synthetic pointer events may not support capture */
+                    }
+                  }}
+                  onPointerMove={(event) => {
+                    const m = marqueeDrag.current;
+                    if (!m || m.pointerId !== event.pointerId) return;
+                    if (!m.active && Math.hypot(event.clientX - m.startClientX, event.clientY - m.startClientY) < 4) return;
+                    m.active = true;
+                    const curPctX = Math.min(100, Math.max(0, ((event.clientX - m.rect.left) / m.rect.width) * 100));
+                    const curPctY = Math.min(100, Math.max(0, ((event.clientY - m.rect.top) / m.rect.height) * 100));
+                    const nextRect: SlideRect = {
+                      x: Math.min(m.startPctX, curPctX),
+                      y: Math.min(m.startPctY, curPctY),
+                      width: Math.abs(curPctX - m.startPctX),
+                      height: Math.abs(curPctY - m.startPctY),
+                    };
+                    setMarqueeRect(nextRect);
+                    const hits = shapesInMarquee(draft.content.shapes, nextRect);
+                    const expanded = expandSelectionWithGroups([...m.baseSelection, ...hits], activePageGroups, existingShapeIdSet);
+                    setSelectedShapes(expanded);
+                  }}
+                  onPointerUp={(event) => {
+                    if (marqueeDrag.current?.pointerId === event.pointerId) {
+                      marqueeDrag.current = null;
+                      setMarqueeRect(null);
+                    }
+                  }}
+                  onPointerCancel={(event) => {
+                    if (marqueeDrag.current?.pointerId === event.pointerId) {
+                      marqueeDrag.current = null;
+                      setMarqueeRect(null);
+                    }
+                  }}
+                >
+                <SlidesGpuLayer background={draft.content.background} shapes={previewShapes ? draft.content.shapes.map((s) => previewShapes.get(s.id) ?? s) : draft.content.shapes} selectedId={selectedShape} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
                 <div className="absolute left-0 top-0 z-[1]" style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT, padding: hasLargeSlideTitle(draft.content.layout) ? 0 : "48px 57.6px", transform: `scale(${zoom / 100})`, transformOrigin: "top left", containerType: "inline-size" }}>
                   {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canDraft} style={titleInlineStyle} onFocus={() => { setSelectedShape(null); setTitleFocusPage(active.id); setActiveTextField({ pageId: active.id, kind: "title" }); }} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={(event) => { setTitleFocusPage(null); queue.endGroup(active.id); if (!keepTextToolbar(event.relatedTarget)) setActiveTextField((prev) => prev?.kind === "title" ? null : prev); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-white" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px]", isDarkSlideBackground(draft.content.background) ? "placeholder:text-white/80" : "placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
                   {draft.content.layout === "blank" && !draft.content.title && titleFocusPage !== active.id && !!draft.content.body && <div aria-hidden="true" className="h-[55px]"/>}
                   {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canDraft} style={bodyInlineStyle} onFocus={() => { setSelectedShape(null); setBodyFocusPage(active.id); setActiveTextField({ pageId: active.id, kind: "body" }); }} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={(event) => { setBodyFocusPage(null); queue.endGroup(active.id); if (!keepTextToolbar(event.relatedTarget)) setActiveTextField((prev) => prev?.kind === "body" ? null : prev); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-[#e5e7eb]" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
-                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} scale={zoom / 100} gpuBacked={gpuActive} onPreviewChange={setPreviewShape} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setActiveTextField(null); setSelectedShape(id); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
+                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} selectedIds={activeSelectedShapes} pageGroups={activePageGroups} scale={zoom / 100} gpuBacked={gpuActive} onPreviewManyChange={setPreviewShapes} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setActiveTextField(null); setSelectedShapes([id]); }} onSelectMany={(ids) => { queue.endGroup(active.id); setActiveTextField(null); setSelectedShapes(ids); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onChangeMany={(nextShapes) => replaceShapes(nextShapes)} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
+                  {marqueeRect && (
+                    <div
+                      data-slides-marquee
+                      aria-hidden="true"
+                      className="pointer-events-none absolute z-20 rounded-[2px] border border-[#3370ff] bg-[#3370ff]/12"
+                      style={{
+                        left: `${marqueeRect.x}%`,
+                        top: `${marqueeRect.y}%`,
+                        width: `${marqueeRect.width}%`,
+                        height: `${marqueeRect.height}%`,
+                      }}
+                    />
+                  )}
                 </div>
                 <input ref={backgroundRef} type="color" value={/^#[0-9a-f]{6}$/i.test(draft.content.background) ? draft.content.background : "#ffffff"} disabled={!canEdit} onChange={(event) => { if (backgroundTarget.current === active.id && activePageRef.current === active.id && canEditRef.current && !pageActionCount.current) queue.edit(active, { background: event.target.value }); }} className="sr-only" aria-label="幻灯片背景颜色" />
               </div>; })() : <div className="m-auto flex flex-col items-center gap-3 text-[13px] text-[#8f959e]"><ImageIcon size={32} strokeWidth={1.2}/><span>新建一页，开始制作幻灯片</span></div>}
@@ -1260,7 +1525,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           <footer className="flex h-9 shrink-0 items-center justify-between border-t border-[#e5e6eb] bg-white px-4 text-[12px] text-[#8f959e]"><span>{active ? `${list.findIndex((page) => page.id === active.id) + 1} / ${list.length}` : "0 / 0"}</span><span className="hidden sm:inline">使用方向键切换放映页面</span></footer>
         </section>
       </div>
-      {formatOpen && active && draft && <SlideFormatPanel key={active.id} background={draft.content.background} layout={draft.content.layout ?? ""} shapes={draft.content.shapes} usedColors={list.map((page) => queue.get(page).content.background)} canEdit={canEdit} busy={pageActions > 0 || pages.isFetching || queue.hasUnsaved()} applying={backgroundApplying} onChange={(color) => { if (canEdit && !pageActionCount.current && activePageRef.current === active.id) queue.edit(active, { background: color }); }} onLayoutChange={(layout) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; const plan = planSlideLayout(queue.get(active).content, layout); if (!plan.ok) { setOperationError(plan.message); return; } setOperationError(""); setSelectedShape(null); queue.edit(active, plan.content); }} onMore={() => { if (canEdit && activePageRef.current === active.id) { backgroundTarget.current = active.id; backgroundRef.current?.click(); } }} onApplyAll={() => void applyBackgroundToAll()} onClose={() => { setFormatOpen(false); backgroundButtonRef.current?.focus(); }}/>}
+      {formatOpen && active && draft && <SlideFormatPanel key={active.id} background={draft.content.background} layout={draft.content.layout ?? ""} shapes={draft.content.shapes} usedColors={list.map((page) => queue.get(page).content.background)} textStyle={textStyles[active.id]} transition={getSlideTransition(transitions, active.id)} canEdit={canEdit} busy={pageActions > 0 || pages.isFetching || queue.hasUnsaved()} applying={backgroundApplying} onChange={(color) => { if (canEdit && !pageActionCount.current && activePageRef.current === active.id) queue.edit(active, { background: color }); }} onLayoutChange={(layout) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; const plan = planSlideLayout(queue.get(active).content, layout); if (!plan.ok) { setOperationError(plan.message); return; } setOperationError(""); setSelectedShape(null); queue.edit(active, plan.content); }} onMore={() => { if (canEdit && activePageRef.current === active.id) { backgroundTarget.current = active.id; backgroundRef.current?.click(); } }} onApplyAll={() => void applyBackgroundToAll()} onApplyTheme={(theme) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; patchFieldStyle(active.id, "title", { color: theme.titleColor }); patchFieldStyle(active.id, "body", { color: theme.bodyColor }); }} onApplyThemeAll={(theme) => void applyBackgroundToAll(theme.background, theme)} onTransitionChange={(kind) => { if (canEdit && activePageRef.current === active.id) updatePageTransition(active.id, kind); }} onPreviewTransition={(kind) => triggerTransitionPreview(kind)} onApplyTransitionAll={(kind) => { if (canEdit) applyTransitionToAll(kind); }} onClose={() => { setFormatOpen(false); backgroundButtonRef.current?.focus(); }}/>}
       </div>
       {pageMenu && (() => {
         const page = list.find((item) => item.id === pageMenu.id);
@@ -1328,7 +1593,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
             const item = queue.get(page);
             return (
               <div key={page.id} data-slides-print-page style={{ backgroundColor: item.content.background || "#fff", containerType: "inline-size" }}>
-                <SlideSurface content={item.content}/>
+                <SlideSurface content={item.content} textStyle={textStyles[page.id]}/>
               </div>
             );
           })}

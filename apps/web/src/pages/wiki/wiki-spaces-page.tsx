@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpen, Globe, Lock, Plus, Search, Settings, X } from "lucide-react";
 import { ApiError, wikiApi, type Me, type WikiSpace, type WikiVisibility } from "@/lib/api";
+import { FeishuSelect } from "@/components/feishu-select";
 import { go } from "@/lib/route";
 import { useI18n } from "@/lib/i18n";
 
@@ -83,16 +84,14 @@ export function WikiSpacesPage({ me }: { me: Me }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {me.workspaces.length > 1 && (
-            <select
-              aria-label={t("切换企业空间")}
-              value={effectiveWsId}
-              onChange={(e) => setWorkspaceId(Number(e.target.value))}
-              className="h-9 max-w-[160px] rounded-md border bg-surface px-2.5 text-[13px]"
-            >
-              {me.workspaces.map((ws) => (
-                <option key={ws.id} value={ws.id}>{ws.name}</option>
-              ))}
-            </select>
+            <FeishuSelect
+              ariaLabel={t("切换企业空间")}
+              value={String(effectiveWsId)}
+              options={me.workspaces.map((ws) => ({ value: String(ws.id), label: ws.name }))}
+              onChange={(val) => setWorkspaceId(Number(val))}
+              className="h-9 max-w-[160px] border bg-surface px-2.5 text-[13px]"
+              menuMinWidth={160}
+            />
           )}
           <button
             type="button"

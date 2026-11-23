@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Check,
   ClipboardList,
   ExternalLink,
   FileSpreadsheet,
@@ -19,12 +20,16 @@ import {
   slidesApi,
   surveysApi,
   type BaseRecord,
+  type Cell,
   type DocMeta,
   type Field,
+  type Role,
+  type SheetBatchResult,
   type SheetSnapshot,
   type SlidesPage,
   type SurveyDetailResponse,
 } from "@/lib/api";
+import { FeishuSelect } from "@/components/feishu-select";
 import { cn } from "@/lib/utils";
 
 export type EmbedResourceKind = "sheet" | "base" | "survey" | "slides";
@@ -97,6 +102,109 @@ function formatBaseCell(val: unknown): string {
   return String(val);
 }
 
+const INLINE_EDITABLE_BASE_FIELD_TYPES = new Set<Field["type"]>([
+  "text",
+  "number",
+  "select",
+  "url",
+  "phone",
+  "email",
+  "date",
+]);
+
+/** Whether a Base field supports inline quick editing inside an embedded Doc card. */
+export function isBaseFieldInlineEditable(field: Pick<Field, "type">): boolean {
+  return INLINE_EDITABLE_BASE_FIELD_TYPES.has(field.type);
+}
+
+export type BaseCellCoercionResult =
+  | { ok: true; value: Cell | null }
+  | { ok: false; error: string };
+
+/** Convert a raw string typed inside an embedded Base cell to the API payload value. */
+export function coerceBaseCellInput(
+  field: Pick<Field, "type" | "options">,
+  raw: string,
+): BaseCellCoercionResult {
+  if (field.type === "number") {
+    const trimmed = raw.trim();
+    if (!trimmed) return { ok: true, value: null };
+    const num = Number(trimmed);
+    if (!Number.isFinite(num)) return { ok: false, error: "请输入有效数字" };
+    return { ok: true, value: num };
+  }
+  if (field.type === "select") {
+    const trimmed = raw.trim();
+    if (!trimmed) return { ok: true, value: null };
+    if (field.options?.length && !field.options.includes(trimmed)) {
+      return { ok: false, error: "请选择有效选项" };
+    }
+    return { ok: true, value: trimmed };
+  }
+  if (!raw) return { ok: true, value: null };
+  return { ok: true, value: raw };
+}
+
+function makeEmbedMutationId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `emb-${crypto.randomUUID()}`;
+  }
+  return `emb-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** Commit an inline cell edit from an embedded Sheet card directly via `sheetsApi.writeCells`. */
+export async function commitEmbedSheetCellEdit(params: {
+  sheetId: number;
+  userId: number;
+  worksheetId: number;
+  rowId: number;
+  columnId: number;
+  expectedRevision: number;
+  raw: string;
+  mutationId?: string;
+}): Promise<SheetBatchResult> {
+  const result = await sheetsApi.writeCells(params.sheetId, params.userId, {
+    mutationId: params.mutationId ?? makeEmbedMutationId(),
+    worksheetId: params.worksheetId,
+    mergeMode: "auto",
+    cells: [
+      {
+        rowId: params.rowId,
+        columnId: params.columnId,
+        expectedRevision: params.expectedRevision,
+        raw: params.raw,
+      },
+    ],
+  });
+  if (result.conflicts?.length) {
+    throw new Error("单元格已被他人修改，已刷新最新内容");
+  }
+  return result;
+}
+
+/** Commit an inline cell edit from an embedded Base card directly via `baseApi.setCells`. */
+export async function commitEmbedBaseCellEdit(params: {
+  baseId: number;
+  recordId: number;
+  field: Pick<Field, "id" | "type" | "options">;
+  raw: string;
+}): Promise<BaseRecord> {
+  const parsed = coerceBaseCellInput(params.field, params.raw);
+  if (!parsed.ok) throw new Error(parsed.error);
+  return baseApi.setCells(params.baseId, params.recordId, {
+    [String(params.field.id)]: parsed.value,
+  });
+}
+
+/** Create a new record directly from an embedded Base card via `baseApi.addRecord`. */
+export async function createEmbedBaseRecord(params: {
+  baseId: number;
+  tableId?: number | null;
+  cells?: Record<string, Cell>;
+}): Promise<BaseRecord> {
+  return baseApi.addRecord(params.baseId, params.cells ?? {}, params.tableId);
+}
+
 function questionTypeLabel(type: string): string {
   switch (type) {
     case "single": return "单选";
@@ -149,7 +257,18 @@ function kindMeta(kind: EmbedResourceKind) {
 
 type LoadedPreview =
   | { kind: "sheet"; snapshot: SheetSnapshot }
-  | { kind: "base"; title: string; tableName: string; fields: Field[]; records: BaseRecord[]; tableCount: number }
+  | {
+      kind: "base";
+      baseId: number;
+      activeTableId?: number;
+      title: string;
+      tableName: string;
+      fields: Field[];
+      records: BaseRecord[];
+      tableCount: number;
+      role?: Role;
+      writeRestricted?: boolean;
+    }
   | { kind: "survey"; detail: SurveyDetailResponse }
   | { kind: "slides"; title: string; pages: SlidesPage[] };
 
@@ -215,26 +334,30 @@ export function EmbedResourceBlock({
     return () => { alive = false; };
   }, [picking, readOnly]);
 
-  const loadPreview = useCallback(async () => {
+  const loadPreview = useCallback(async (opts?: { silent?: boolean }) => {
     if (!hasResource || !isEmbedResourceKind(resourceKind)) return;
-    setStatus("loading");
+    if (!opts?.silent) setStatus("loading");
     setErrorMsg("");
     try {
       if (resourceKind === "sheet") {
         if (!userId) throw new Error("请先登录以查看电子表格预览");
         const snapshot = await sheetsApi.get(numericId, userId);
         setPreview({ kind: "sheet", snapshot });
-        setActiveSheetIdx(0);
+        if (!opts?.silent) setActiveSheetIdx(0);
       } else if (resourceKind === "base") {
         const snap = await baseApi.get(numericId);
         const activeTable = snap.tables?.find((t) => t.id === snap.activeTableId) ?? snap.tables?.[0];
         setPreview({
           kind: "base",
+          baseId: numericId,
+          activeTableId: activeTable?.id ?? snap.activeTableId,
           title: snap.base.title,
           tableName: activeTable?.name || "主数据表",
           fields: snap.fields ?? [],
           records: snap.records ?? [],
           tableCount: snap.tables?.length ?? 1,
+          role: snap.base.role,
+          writeRestricted: snap.writeRestricted,
         });
       } else if (resourceKind === "survey") {
         const detail = await surveysApi.get(numericId);
@@ -249,7 +372,7 @@ export function EmbedResourceBlock({
       }
       setStatus("idle");
     } catch (err) {
-      setPreview(null);
+      if (!opts?.silent) setPreview(null);
       if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         setStatus("forbidden");
         setErrorMsg(`无权查看该${embedKindLabel(resourceKind)}或资源已删除`);
@@ -514,9 +637,25 @@ export function EmbedResourceBlock({
         ) : status === "loading" && !preview ? (
           <div className="py-4 text-center text-[12px] text-muted-foreground">正在加载实时预览…</div>
         ) : preview?.kind === "sheet" ? (
-          <SheetEmbedPreview snapshot={preview.snapshot} activeIndex={activeSheetIdx} onSelectSheet={setActiveSheetIdx} />
+          <SheetEmbedPreview
+            snapshot={preview.snapshot}
+            activeIndex={activeSheetIdx}
+            onSelectSheet={setActiveSheetIdx}
+            readOnly={readOnly}
+            userId={userId}
+            onRefresh={() => loadPreview({ silent: true })}
+          />
         ) : preview?.kind === "base" ? (
-          <BaseEmbedPreview tableName={preview.tableName} tableCount={preview.tableCount} fields={preview.fields} records={preview.records} />
+          <BaseEmbedPreview
+            baseId={preview.baseId}
+            activeTableId={preview.activeTableId}
+            tableName={preview.tableName}
+            tableCount={preview.tableCount}
+            fields={preview.fields}
+            records={preview.records}
+            readOnly={readOnly || preview.role === "view" || !!preview.writeRestricted}
+            onRefresh={() => loadPreview({ silent: true })}
+          />
         ) : preview?.kind === "survey" ? (
           <SurveyEmbedPreview detail={preview.detail} />
         ) : preview?.kind === "slides" ? (
@@ -529,42 +668,144 @@ export function EmbedResourceBlock({
   );
 }
 
-function SheetEmbedPreview({
+export function SheetEmbedPreview({
   snapshot,
   activeIndex,
   onSelectSheet,
+  readOnly,
+  userId,
+  onRefresh,
 }: {
   snapshot: SheetSnapshot;
   activeIndex: number;
   onSelectSheet: (idx: number) => void;
+  readOnly?: boolean;
+  userId?: number;
+  onRefresh?: () => Promise<void> | void;
 }) {
   const sheets = snapshot.sheets ?? [];
   const ws = sheets[Math.min(activeIndex, Math.max(0, sheets.length - 1))];
+  const canEdit = !readOnly && !!userId && snapshot.role !== "view";
+
+  const [editing, setEditing] = useState<{
+    r: number;
+    c: number;
+    rowId: number;
+    columnId: number;
+    originalRaw: string;
+    revision: number;
+  } | null>(null);
+  const [draft, setDraft] = useState("");
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "synced" | "error">("idle");
+  const [syncError, setSyncError] = useState("");
+  const [localValues, setLocalValues] = useState<Record<string, string>>({});
+  const skipBlurRef = useRef(false);
+  const committingRef = useRef(false);
+
+  useEffect(() => {
+    setEditing(null);
+    setLocalValues({});
+  }, [ws?.id, snapshot.workbookRevision]);
+
+  useEffect(() => {
+    if (syncState !== "synced") return;
+    const timer = window.setTimeout(() => setSyncState("idle"), 2400);
+    return () => window.clearTimeout(timer);
+  }, [syncState]);
+
   if (!ws) return <p className="text-[12px] text-muted-foreground">暂无工作表</p>;
 
   const rowOrder = [...ws.rows].sort((a, b) => a.pos - b.pos);
   const colOrder = [...ws.columns].sort((a, b) => a.pos - b.pos);
-  const cellMap = new Map<string, string>();
+  const cellMap = new Map<string, { raw: string; revision: number }>();
   let maxRowIdx = -1;
   let maxColIdx = -1;
   const rowIndexById = new Map(rowOrder.map((r, i) => [r.id, i]));
   const colIndexById = new Map(colOrder.map((c, i) => [c.id, i]));
 
   for (const cell of ws.cells) {
-    if (!cell.raw) continue;
     const ri = rowIndexById.get(cell.rowId);
     const ci = colIndexById.get(cell.columnId);
     if (ri === undefined || ci === undefined) continue;
-    cellMap.set(`${ri}:${ci}`, cell.raw);
-    if (ri > maxRowIdx) maxRowIdx = ri;
-    if (ci > maxColIdx) maxColIdx = ci;
+    cellMap.set(`${ri}:${ci}`, { raw: cell.raw, revision: cell.revision });
+    if (cell.raw) {
+      if (ri > maxRowIdx) maxRowIdx = ri;
+      if (ci > maxColIdx) maxColIdx = ci;
+    }
   }
 
-  const displayRows = Math.min(Math.max(maxRowIdx + 1, 0), 6);
-  const displayCols = Math.min(Math.max(maxColIdx + 1, 0), 6);
+  const baseRows = Math.min(Math.max(maxRowIdx + 1, 0), 6);
+  const baseCols = Math.min(Math.max(maxColIdx + 1, 0), 6);
+  const displayRows = baseRows > 0 ? baseRows : canEdit ? Math.min(3, rowOrder.length) : 0;
+  const displayCols = baseCols > 0 ? baseCols : canEdit ? Math.min(3, colOrder.length) : 0;
+
+  const startCellEdit = (r: number, c: number) => {
+    if (!canEdit || syncState === "saving") return;
+    const row = rowOrder[r];
+    const col = colOrder[c];
+    if (!row || !col) return;
+    const key = `${r}:${c}`;
+    const existing = cellMap.get(key);
+    const currentRaw = Object.hasOwn(localValues, key) ? localValues[key] : (existing?.raw ?? "");
+    skipBlurRef.current = false;
+    setSyncError("");
+    setEditing({
+      r,
+      c,
+      rowId: row.id,
+      columnId: col.id,
+      originalRaw: currentRaw,
+      revision: existing?.revision ?? 0,
+    });
+    setDraft(currentRaw);
+  };
+
+  const cancelCellEdit = () => {
+    skipBlurRef.current = true;
+    setEditing(null);
+    setDraft("");
+  };
+
+  const commitCellEdit = async () => {
+    if (!editing || !userId || committingRef.current) return;
+    const target = editing;
+    const nextRaw = draft;
+    setEditing(null);
+    if (nextRaw === target.originalRaw) return;
+
+    committingRef.current = true;
+    const coordKey = `${target.r}:${target.c}`;
+    setLocalValues((prev) => ({ ...prev, [coordKey]: nextRaw }));
+    setSyncState("saving");
+    setSyncError("");
+    try {
+      await commitEmbedSheetCellEdit({
+        sheetId: snapshot.nodeId,
+        userId,
+        worksheetId: ws.id,
+        rowId: target.rowId,
+        columnId: target.columnId,
+        expectedRevision: target.revision,
+        raw: nextRaw,
+      });
+      setSyncState("synced");
+      await onRefresh?.();
+    } catch (err) {
+      setLocalValues((prev) => {
+        const next = { ...prev };
+        delete next[coordKey];
+        return next;
+      });
+      setSyncState("error");
+      setSyncError(err instanceof Error ? err.message : "同步单元格失败");
+      await onRefresh?.();
+    } finally {
+      committingRef.current = false;
+    }
+  };
 
   return (
-    <div data-embed-sheet-preview>
+    <div data-embed-sheet-preview data-embed-editable={canEdit ? "true" : undefined}>
       {sheets.length > 1 && (
         <div className="mb-2 flex flex-wrap gap-1">
           {sheets.map((s, idx) => (
@@ -592,49 +833,256 @@ function SheetEmbedPreview({
             <tbody>
               {Array.from({ length: displayRows }, (_, r) => (
                 <tr key={r} className={r === 0 ? "bg-muted/50 font-medium" : "border-t border-border/60"}>
-                  {Array.from({ length: displayCols }, (_, c) => (
-                    <td key={c} className="max-w-[160px] truncate border-r border-border/60 px-2.5 py-1.5 last:border-r-0">
-                      {cellMap.get(`${r}:${c}`) ?? ""}
-                    </td>
-                  ))}
+                  {Array.from({ length: displayCols }, (_, c) => {
+                    const key = `${r}:${c}`;
+                    const isEditing = editing?.r === r && editing?.c === c;
+                    const displayValue = Object.hasOwn(localValues, key)
+                      ? localValues[key]
+                      : (cellMap.get(key)?.raw ?? "");
+                    return (
+                      <td
+                        key={c}
+                        data-embed-sheet-cell={`${r}:${c}`}
+                        onClick={canEdit && !isEditing ? () => startCellEdit(r, c) : undefined}
+                        title={canEdit ? "点击编辑单元格" : undefined}
+                        className={cn(
+                          "max-w-[160px] border-r border-border/60 last:border-r-0",
+                          isEditing ? "p-0.5" : "truncate px-2.5 py-1.5",
+                          canEdit && !isEditing && "cursor-text hover:bg-emerald-50/70 dark:hover:bg-emerald-950/30",
+                        )}
+                      >
+                        {isEditing ? (
+                          <input
+                            autoFocus
+                            data-embed-sheet-input
+                            aria-label={`编辑第 ${r + 1} 行第 ${c + 1} 列单元格`}
+                            value={draft}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onBlur={() => {
+                              if (skipBlurRef.current) {
+                                skipBlurRef.current = false;
+                                return;
+                              }
+                              void commitCellEdit();
+                            }}
+                            onKeyDown={(e) => {
+                              e.stopPropagation();
+                              if (e.nativeEvent.isComposing) return;
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                skipBlurRef.current = true;
+                                void commitCellEdit();
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelCellEdit();
+                              }
+                            }}
+                            className="h-6 w-full min-w-[64px] rounded border border-[#3370ff] bg-surface px-1.5 text-[12px] text-foreground outline-none"
+                          />
+                        ) : (
+                          displayValue || (canEdit ? <span className="text-transparent select-none">·</span> : "")
+                        )}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
-      <div className="mt-1.5 flex items-center justify-between text-[11px] text-subtle">
-        <span>{sheets.length} 个工作表 · {ws.cells.filter((c) => c.raw).length} 个非空单元格</span>
-        {maxRowIdx + 1 > 6 && <span>仅预览前 6 行</span>}
+      {syncError && (
+        <p role="alert" className="mt-1.5 text-[11px] text-destructive" data-embed-sync-error>
+          {syncError}
+        </p>
+      )}
+      <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-subtle">
+        <span>
+          {sheets.length} 个工作表 · {ws.cells.filter((c) => c.raw).length} 个非空单元格
+          {canEdit && " · 点击单元格即可编辑"}
+        </span>
+        <span className="flex items-center gap-2">
+          {syncState === "saving" && <span className="text-primary">同步中…</span>}
+          {syncState === "synced" && (
+            <span
+              data-embed-sync-badge
+              className="inline-flex items-center gap-0.5 rounded bg-[#d9f7e6] px-1.5 py-0.5 font-medium text-[#0b6b3a]"
+            >
+              <Check size={11} />
+              已同步
+            </span>
+          )}
+          {maxRowIdx + 1 > 6 && <span>仅预览前 6 行</span>}
+        </span>
       </div>
     </div>
   );
 }
 
-function BaseEmbedPreview({
+export function BaseEmbedPreview({
+  baseId,
+  activeTableId,
   tableName,
   tableCount,
   fields,
   records,
+  readOnly,
+  onRefresh,
 }: {
+  baseId: number;
+  activeTableId?: number;
   tableName: string;
   tableCount: number;
   fields: Field[];
   records: BaseRecord[];
+  readOnly?: boolean;
+  onRefresh?: () => Promise<void> | void;
 }) {
+  const canEdit = !readOnly && baseId > 0;
   const visibleFields = fields.slice(0, 5);
+  const [editing, setEditing] = useState<{
+    recordId: number;
+    field: Field;
+    originalRaw: string;
+  } | null>(null);
+  const [draft, setDraft] = useState("");
+  const [justCreatedId, setJustCreatedId] = useState<number | null>(null);
+  const [addingRecord, setAddingRecord] = useState(false);
+  const [syncState, setSyncState] = useState<"idle" | "saving" | "synced" | "error">("idle");
+  const [syncError, setSyncError] = useState("");
+  const [localCells, setLocalCells] = useState<Record<string, string>>({});
+  const skipBlurRef = useRef(false);
+  const committingRef = useRef(false);
+
+  useEffect(() => {
+    setLocalCells({});
+  }, [records]);
+
+  useEffect(() => {
+    if (syncState !== "synced") return;
+    const timer = window.setTimeout(() => setSyncState("idle"), 2400);
+    return () => window.clearTimeout(timer);
+  }, [syncState]);
+
   const nonEmptyRecords = records.filter((rec) =>
     visibleFields.some((f) => formatBaseCell(rec.cells?.[String(f.id)]) !== ""),
   );
-  const visibleRecords = (nonEmptyRecords.length > 0 ? nonEmptyRecords : records).slice(0, 5);
+  const baseVisible =
+    records.length <= 6
+      ? records
+      : (nonEmptyRecords.length > 0 ? nonEmptyRecords : records).slice(0, 5);
+  const createdRec = justCreatedId !== null ? records.find((r) => r.id === justCreatedId) : undefined;
+  const visibleRecords =
+    createdRec && !baseVisible.some((r) => r.id === createdRec.id)
+      ? [...baseVisible, createdRec]
+      : baseVisible;
+
+  const startCellEdit = (rec: BaseRecord, field: Field) => {
+    if (!canEdit || !isBaseFieldInlineEditable(field) || syncState === "saving") return;
+    const cellKey = `${rec.id}:${field.id}`;
+    const rawVal = Object.hasOwn(localCells, cellKey)
+      ? localCells[cellKey]
+      : formatBaseCell(rec.cells?.[String(field.id)]);
+    skipBlurRef.current = false;
+    setSyncError("");
+    setEditing({ recordId: rec.id, field, originalRaw: rawVal });
+    setDraft(rawVal);
+  };
+
+  const cancelCellEdit = () => {
+    skipBlurRef.current = true;
+    setEditing(null);
+    setDraft("");
+  };
+
+  const commitCellEdit = async (overrideRaw?: string) => {
+    if (!editing || committingRef.current) return;
+    const target = editing;
+    const nextRaw = overrideRaw ?? draft;
+    setEditing(null);
+    if (nextRaw === target.originalRaw) return;
+
+    const checked = coerceBaseCellInput(target.field, nextRaw);
+    if (!checked.ok) {
+      setSyncState("error");
+      setSyncError(checked.error);
+      return;
+    }
+
+    committingRef.current = true;
+    const cellKey = `${target.recordId}:${target.field.id}`;
+    setLocalCells((prev) => ({ ...prev, [cellKey]: nextRaw }));
+    setSyncState("saving");
+    setSyncError("");
+    try {
+      await commitEmbedBaseCellEdit({
+        baseId,
+        recordId: target.recordId,
+        field: target.field,
+        raw: nextRaw,
+      });
+      setSyncState("synced");
+      await onRefresh?.();
+    } catch (err) {
+      setLocalCells((prev) => {
+        const next = { ...prev };
+        delete next[cellKey];
+        return next;
+      });
+      setSyncState("error");
+      setSyncError(err instanceof Error ? err.message : "更新记录失败");
+    } finally {
+      committingRef.current = false;
+    }
+  };
+
+  const handleAddRecord = async () => {
+    if (!canEdit || addingRecord) return;
+    setAddingRecord(true);
+    setSyncState("saving");
+    setSyncError("");
+    try {
+      const created = await createEmbedBaseRecord({
+        baseId,
+        tableId: activeTableId,
+      });
+      setJustCreatedId(created.id);
+      setSyncState("synced");
+      await onRefresh?.();
+      const firstEditable = visibleFields.find((f) => isBaseFieldInlineEditable(f));
+      if (firstEditable) {
+        setEditing({ recordId: created.id, field: firstEditable, originalRaw: "" });
+        setDraft("");
+      }
+    } catch (err) {
+      setSyncState("error");
+      setSyncError(err instanceof Error ? err.message : "新增记录失败");
+    } finally {
+      setAddingRecord(false);
+    }
+  };
 
   return (
-    <div data-embed-base-preview>
-      <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-        <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
-          {tableName}
+    <div data-embed-base-preview data-embed-editable={canEdit ? "true" : undefined}>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
+            {tableName}
+          </span>
+          <span>{tableCount} 张表 · {fields.length} 个字段 · {records.length} 条记录</span>
+        </div>
+        <span className="flex items-center gap-1.5">
+          {syncState === "saving" && <span className="text-primary">同步中…</span>}
+          {syncState === "synced" && (
+            <span
+              data-embed-sync-badge
+              className="inline-flex items-center gap-0.5 rounded bg-[#d9f7e6] px-1.5 py-0.5 font-medium text-[#0b6b3a]"
+            >
+              <Check size={11} />
+              已同步
+            </span>
+          )}
         </span>
-        <span>{tableCount} 张表 · {fields.length} 个字段 · {records.length} 条记录</span>
       </div>
       {visibleFields.length === 0 ? (
         <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">暂无字段定义</div>
@@ -657,17 +1105,103 @@ function BaseEmbedPreview({
                 </tr>
               ) : (
                 visibleRecords.map((rec) => (
-                  <tr key={rec.id} className="border-t border-border/60">
-                    {visibleFields.map((f) => (
-                      <td key={f.id} className="max-w-[160px] truncate border-r border-border/60 px-2.5 py-1.5 last:border-r-0">
-                        {formatBaseCell(rec.cells?.[String(f.id)])}
-                      </td>
-                    ))}
+                  <tr key={rec.id} data-embed-base-row={rec.id} className="border-t border-border/60">
+                    {visibleFields.map((f) => {
+                      const editable = canEdit && isBaseFieldInlineEditable(f);
+                      const isEditing = editing?.recordId === rec.id && editing?.field.id === f.id;
+                      const cellKey = `${rec.id}:${f.id}`;
+                      const cellText = Object.hasOwn(localCells, cellKey)
+                        ? localCells[cellKey]
+                        : formatBaseCell(rec.cells?.[String(f.id)]);
+                      return (
+                        <td
+                          key={f.id}
+                          data-embed-base-cell={`${rec.id}:${f.id}`}
+                          onClick={editable && !isEditing ? () => startCellEdit(rec, f) : undefined}
+                          title={editable ? `点击编辑「${f.name}」` : undefined}
+                          className={cn(
+                            "max-w-[160px] border-r border-border/60 last:border-r-0",
+                            isEditing ? "p-0.5" : "truncate px-2.5 py-1.5",
+                            editable && !isEditing && "cursor-text hover:bg-indigo-50/70 dark:hover:bg-indigo-950/30",
+                          )}
+                        >
+                          {isEditing ? (
+                            f.type === "select" && f.options?.length ? (
+                              <FeishuSelect
+                                ariaLabel={`选择 ${f.name}`}
+                                value={draft}
+                                options={[
+                                  { value: "", label: "（清空）" },
+                                  ...f.options.map((opt) => ({ value: opt, label: opt })),
+                                ]}
+                                onChange={(val) => {
+                                  setDraft(val);
+                                  void commitCellEdit(val);
+                                }}
+                                className="h-6 w-full min-w-[84px] border border-[#3370ff] px-1.5 text-[12px]"
+                                chevronSize={11}
+                                menuMinWidth={100}
+                              />
+                            ) : (
+                              <input
+                                autoFocus
+                                data-embed-base-input
+                                aria-label={`编辑 ${f.name}`}
+                                type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                                value={draft}
+                                onChange={(e) => setDraft(e.target.value)}
+                                onBlur={() => {
+                                  if (skipBlurRef.current) {
+                                    skipBlurRef.current = false;
+                                    return;
+                                  }
+                                  void commitCellEdit();
+                                }}
+                                onKeyDown={(e) => {
+                                  e.stopPropagation();
+                                  if (e.nativeEvent.isComposing) return;
+                                  if (e.key === "Enter") {
+                                    e.preventDefault();
+                                    skipBlurRef.current = true;
+                                    void commitCellEdit();
+                                  } else if (e.key === "Escape") {
+                                    e.preventDefault();
+                                    cancelCellEdit();
+                                  }
+                                }}
+                                className="h-6 w-full min-w-[72px] rounded border border-[#3370ff] bg-surface px-1.5 text-[12px] text-foreground outline-none"
+                              />
+                            )
+                          ) : (
+                            cellText || (editable ? <span className="text-transparent select-none">·</span> : "")
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))
               )}
             </tbody>
           </table>
+        </div>
+      )}
+      {syncError && (
+        <p role="alert" className="mt-1.5 text-[11px] text-destructive" data-embed-sync-error>
+          {syncError}
+        </p>
+      )}
+      {canEdit && visibleFields.length > 0 && (
+        <div className="mt-2 flex items-center justify-between">
+          <button
+            type="button"
+            disabled={addingRecord}
+            onClick={() => void handleAddRecord()}
+            data-embed-base-add-record
+            className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/60 px-2.5 text-[12px] font-medium text-indigo-700 transition-colors hover:bg-indigo-100/80 disabled:opacity-50 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300"
+          >
+            {addingRecord ? "新增中…" : "+ 新增记录"}
+          </button>
+          <span className="text-[11px] text-subtle">点击文本/数字/选项单元格可直接编辑</span>
         </div>
       )}
     </div>

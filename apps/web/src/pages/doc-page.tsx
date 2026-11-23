@@ -39,6 +39,7 @@ import { NotificationBell } from "./notification-bell";
 import { mentionNotificationHash } from "@/lib/mention-notification-link";
 import { navigateDocumentHash } from "@/editor/block-handle";
 import { Button } from "@/components/ui/button";
+import { FeishuSelect } from "@/components/feishu-select";
 import { ShareDialog } from "@/components/share-dialog";
 import { DocumentIconEditor } from "@/components/document-icon-editor";
 import { DocumentCover } from "@/components/document-cover";
@@ -1614,7 +1615,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         </div>}
         {recoveryKeys.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-[#F6F8FF] px-5 py-2 text-[13px] text-muted-foreground dark:bg-surface" data-recovery-drafts>
           <span>本机保留 {recoveryKeys.length} 份未合并草稿。</span>
-          {recoveryKeys.length > 1 && <select aria-label="选择本地草稿" value={recoveryState?.selected ?? ""} onChange={(event) => setRecoveryState((old) => old && old.user === me.user.id && old.doc === id ? { ...old, selected: event.target.value } : old)} className="max-w-36 rounded border bg-surface px-1 py-0.5">{recoveryKeys.map((key, index) => <option key={key} value={key}>草稿 {index + 1}</option>)}</select>}
+          {recoveryKeys.length > 1 && <FeishuSelect ariaLabel="选择本地草稿" value={recoveryState?.selected ?? ""} options={recoveryKeys.map((key, index) => ({ value: key, label: `草稿 ${index + 1}` }))} onChange={(val) => setRecoveryState((old) => old && old.user === me.user.id && old.doc === id ? { ...old, selected: val } : old)} className="h-7 max-w-36 border border-border bg-surface px-2 text-[12px]" chevronSize={11} menuMinWidth={112} />}
           <button type="button" onClick={showArchivedDraft} className="text-primary hover:underline">查看</button>
           <button type="button" onClick={downloadStoredDrafts} className="text-primary hover:underline">下载备份</button>
           <button type="button" onClick={() => void deleteArchivedDraft()} className="text-muted-foreground hover:text-destructive hover:underline" data-delete-recovery-draft>删除本地副本</button>

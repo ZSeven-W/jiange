@@ -1,6 +1,7 @@
 import type { FilterRule, User } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { FeishuSelect } from "@/components/feishu-select";
 import { personRuleIDs } from "./registry";
 import { Check } from "lucide-react";
 
@@ -13,20 +14,19 @@ export function MemberRuleValue({ rule, members, onChange }: { rule: FilterRule;
   if (!multi) {
     const current = personRuleIDs(rule.v)[0] ?? 0;
     return (
-      <select
-        className="h-7 min-w-0 flex-1 rounded border bg-surface px-1"
-        value={current || ""}
-        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : 0)}
-        data-person-filter
-        aria-label={t("选择成员")}
-      >
-        <option value="">—</option>
-        {members.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
+      <FeishuSelect
+        className="h-7 min-w-0 flex-1 border border-[#dee0e3] bg-surface px-1.5 text-[12px]"
+        chevronSize={11}
+        menuMinWidth={112}
+        value={current ? String(current) : ""}
+        options={[
+          { value: "", label: "—" },
+          ...members.map((m) => ({ value: String(m.id), label: m.name })),
+        ]}
+        onChange={(val) => onChange(val ? Number(val) : 0)}
+        ariaLabel={t("选择成员")}
+        dataAttr={{ "data-person-filter": true }}
+      />
     );
   }
   const picked = personRuleIDs(rule.v);

@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Check, ChevronDown, ChevronUp, HelpCircle, Link, MoreHorizontal, Plus, X } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, type DocView, type VersionEntry } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
-import { canDiffViews, diffViews, type DiffRow } from "./version-diff";
+import { canDiffViews, diffInlineTokens, diffViews, summarizeDiff, type DiffRow } from "./version-diff";
 import { formatEditTime } from "./doc-header-meta";
 import { ReadOnlyDoc } from "./read-only-doc";
 import { savedVersionLink, withVersionHash } from "@/lib/version-link";
@@ -256,48 +256,139 @@ export function VersionView({ view, disableFileDownloads = false, versionSeq }: 
 }
 
 
-/** 版本对比视图：老版本（红/删除线）vs 当前（绿底），changed 双列并排。 */
-function VersionDiffView({ oldView, newView }: { oldView: DocView; newView: DocView }) {
-  const rows = diffViews(oldView, newView);
-  const stats = {
-    added: rows.filter((r) => r.kind === "added").length,
-    removed: rows.filter((r) => r.kind === "removed").length,
-    changed: rows.filter((r) => r.kind === "changed").length,
+/** 版本对比视图：词/字级行内高亮 + 飞书风变更汇总与上/下一处跳转栏。 */
+export function VersionDiffView({ oldView, newView }: { oldView: DocView; newView: DocView }) {
+  const rows = useMemo(() => diffViews(oldView, newView), [oldView, newView]);
+  const summary = useMemo(() => summarizeDiff(rows), [rows]);
+  const [activeChange, setActiveChange] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setActiveChange(0);
+  }, [oldView, newView]);
+
+  const jumpToChange = (nextIdx: number) => {
+    if (summary.total <= 0) return;
+    const wrapped = ((nextIdx % summary.total) + summary.total) % summary.total;
+    setActiveChange(wrapped);
+    const target = containerRef.current?.querySelector<HTMLElement>(`[data-diff-change-idx="${wrapped}"]`);
+    target?.scrollIntoView({ behavior: "smooth", block: "center" });
   };
+
+  let changeCursor = 0;
+
   return (
-    <div data-version-diff>
-      <div className="mb-3 flex items-center gap-3 text-[12px] text-muted-foreground">
-        <span><span className="mr-1 inline-block size-2 rounded-full bg-[#00B42A]" />新增 {stats.added}</span>
-        <span><span className="mr-1 inline-block size-2 rounded-full bg-[#F54A45]" />删除 {stats.removed}</span>
-        <span><span className="mr-1 inline-block size-2 rounded-full bg-[#FF8800]" />修改 {stats.changed}</span>
+    <div ref={containerRef} data-version-diff>
+      <div
+        data-version-diff-bar
+        className="sticky top-0 z-10 mb-3 flex flex-wrap items-center justify-between gap-2 rounded-md border border-[#DEE0E3] bg-[#F5F6F7]/95 px-3 py-2 text-[12px] backdrop-blur-xs dark:border-border dark:bg-hover/95"
+      >
+        <div className="flex flex-wrap items-center gap-1.5 font-medium">
+          <span className="inline-flex items-center gap-1 rounded bg-[#d9f7e6] px-1.5 py-0.5 text-[#0b6b3a]">
+            +{summary.added} 新增
+          </span>
+          <span className="text-subtle">·</span>
+          <span className="inline-flex items-center gap-1 rounded bg-[#fff3e0] px-1.5 py-0.5 text-[#b85d00]">
+            ~{summary.changed} 修改
+          </span>
+          <span className="text-subtle">·</span>
+          <span className="inline-flex items-center gap-1 rounded bg-[#ffece8] px-1.5 py-0.5 text-[#cb2634]">
+            -{summary.removed} 删除
+          </span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="min-w-10 text-right text-muted-foreground" data-diff-counter>
+            {summary.total > 0 ? `${Math.min(activeChange + 1, summary.total)}/${summary.total}` : "无变更"}
+          </span>
+          <button
+            type="button"
+            data-diff-prev
+            disabled={summary.total === 0}
+            onClick={() => jumpToChange(activeChange - 1)}
+            className="inline-flex h-7 items-center gap-0.5 rounded border border-[#DEE0E3] bg-surface px-2 text-[12px] text-foreground hover:bg-hover disabled:opacity-40 dark:border-border"
+          >
+            <ChevronUp size={13} />
+            上一处
+          </button>
+          <button
+            type="button"
+            data-diff-next
+            disabled={summary.total === 0}
+            onClick={() => jumpToChange(activeChange + 1)}
+            className="inline-flex h-7 items-center gap-0.5 rounded border border-[#DEE0E3] bg-surface px-2 text-[12px] text-foreground hover:bg-hover disabled:opacity-40 dark:border-border"
+          >
+            <ChevronDown size={13} />
+            下一处
+          </button>
+        </div>
       </div>
-      <div className="space-y-1">
-        {rows.map((r, i) => (
-          <DiffRowView key={i} r={r} />
-        ))}
+      <div className="space-y-1.5 text-[14px] leading-relaxed">
+        {rows.map((r, i) => {
+          const changeIdx = r.kind !== "same" ? changeCursor++ : undefined;
+          const isActive = changeIdx !== undefined && changeIdx === activeChange;
+          return <DiffRowView key={i} r={r} changeIdx={changeIdx} active={isActive} />;
+        })}
       </div>
     </div>
   );
 }
 
-function DiffRowView({ r }: { r: DiffRow }) {
-  if (r.kind === "same") return <p className="text-foreground">{r.oldText}</p>;
+function DiffRowView({ r, changeIdx, active }: { r: DiffRow; changeIdx?: number; active?: boolean }) {
+  const activeCls = active ? "ring-2 ring-[#3370ff]/45" : "";
+  if (r.kind === "same") return <p className="px-2 py-0.5 text-foreground">{r.oldText}</p>;
   if (r.kind === "removed")
     return (
-      <p className="rounded bg-[#F54A45]/10 px-2 py-0.5 text-[#F54A45] line-through decoration-[#F54A45]/60">
+      <p
+        data-diff-change-idx={changeIdx}
+        data-diff-active={active ? "true" : undefined}
+        className={`rounded bg-[#ffece8] px-2 py-1 text-[#cb2634] line-through decoration-[#cb2634]/60 transition-shadow ${activeCls}`}
+      >
         − {r.oldText}
       </p>
     );
   if (r.kind === "added")
     return (
-      <p className="rounded bg-[#00B42A]/10 px-2 py-0.5 text-[#00B42A]">
+      <p
+        data-diff-change-idx={changeIdx}
+        data-diff-active={active ? "true" : undefined}
+        className={`rounded bg-[#d9f7e6] px-2 py-1 text-[#0b6b3a] transition-shadow ${activeCls}`}
+      >
         + {r.newText}
       </p>
     );
+  const tokens = diffInlineTokens(r.oldText ?? "", r.newText ?? "");
   return (
-    <div className="rounded bg-[#FF8800]/8 px-2 py-0.5">
-      <p className="text-[#F54A45] line-through decoration-[#F54A45]/60">− {r.oldText}</p>
-      <p className="text-[#00B42A]">+ {r.newText}</p>
-    </div>
+    <p
+      data-diff-change-idx={changeIdx}
+      data-diff-active={active ? "true" : undefined}
+      data-diff-inline-row
+      className={`rounded border border-[#ffe2bd]/80 bg-[#fffaf2] px-2.5 py-1 text-foreground transition-shadow dark:border-amber-900/50 dark:bg-amber-950/20 ${activeCls}`}
+    >
+      {tokens.map((tok, idx) => {
+        if (tok.kind === "added") {
+          return (
+            <ins
+              key={idx}
+              data-diff-token="added"
+              className="rounded-xs bg-[#d9f7e6] px-0.5 text-[#0b6b3a] no-underline"
+            >
+              {tok.text}
+            </ins>
+          );
+        }
+        if (tok.kind === "removed") {
+          return (
+            <del
+              key={idx}
+              data-diff-token="removed"
+              className="rounded-xs bg-[#ffece8] px-0.5 text-[#cb2634] line-through"
+            >
+              {tok.text}
+            </del>
+          );
+        }
+        return <span key={idx}>{tok.text}</span>;
+      })}
+    </p>
   );
 }

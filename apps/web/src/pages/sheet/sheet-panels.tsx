@@ -16,10 +16,17 @@ import { FeishuSelect } from "@/components/feishu-select";
 import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
 import { BarChart3, Check, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, TableProperties, Trash2, X, ListChecks } from "lucide-react";
 import {
+  buildColorScaleRule,
+  buildDataBarRule,
+  COLOR_SCALE_PRESETS,
   COND_FMT_OPS,
   COND_FMT_PRESETS,
+  DATA_BAR_PRESETS,
   formatSheetRectA1,
   makeRuleId,
+  parseVisualCondFormat,
+  type ColorScalePresetId,
+  type DataBarPresetId,
   type SheetRect,
 } from "./sheet-rules";
 import type { EvaluatedSheetMap } from "./workbook-engine";
@@ -130,11 +137,14 @@ export function SheetSidePanel({
   const [valFormError, setValFormError] = useState("");
 
   // Conditional Format form state
+  const [cfMode, setCfMode] = useState<"highlight" | "dataBar" | "colorScale">("highlight");
   const [cfOp, setCfOp] = useState<SheetCondFormatOp>("gt");
   const [cfVal1, setCfVal1] = useState("100");
   const [cfVal2, setCfVal2] = useState("");
   const [cfPresetId, setCfPresetId] = useState("green");
   const [cfBold, setCfBold] = useState(true);
+  const [cfDataBarPreset, setCfDataBarPreset] = useState<DataBarPresetId>("blue");
+  const [cfColorScalePreset, setCfColorScalePreset] = useState<ColorScalePresetId>("gyr");
   const [cfFormError, setCfFormError] = useState("");
 
   // Protected Range form state
@@ -234,29 +244,36 @@ export function SheetSidePanel({
   const handleAddCondFormat = async (e: React.FormEvent) => {
     e.preventDefault();
     setCfFormError("");
-    const opMeta = COND_FMT_OPS.find((item) => item.op === cfOp);
-    if (opMeta?.needsValue1 && !cfVal1.trim()) {
-      setCfFormError(t("请输入条件比较值"));
-      return;
+    let rule: SheetConditionalFormat;
+    if (cfMode === "dataBar") {
+      rule = buildDataBarRule(selectionBoundsRect, cfDataBarPreset);
+    } else if (cfMode === "colorScale") {
+      rule = buildColorScaleRule(selectionBoundsRect, cfColorScalePreset);
+    } else {
+      const opMeta = COND_FMT_OPS.find((item) => item.op === cfOp);
+      if (opMeta?.needsValue1 && !cfVal1.trim()) {
+        setCfFormError(t("请输入条件比较值"));
+        return;
+      }
+      if (opMeta?.needsValue2 && !cfVal2.trim()) {
+        setCfFormError(t("请输入区间上限值"));
+        return;
+      }
+      const preset = COND_FMT_PRESETS.find((p) => p.id === cfPresetId) ?? COND_FMT_PRESETS[0];
+      rule = {
+        id: makeRuleId("cf"),
+        top: selectionBoundsRect.top,
+        left: selectionBoundsRect.left,
+        bottom: selectionBoundsRect.bottom,
+        right: selectionBoundsRect.right,
+        op: cfOp,
+        value1: opMeta?.needsValue1 ? cfVal1.trim() : undefined,
+        value2: opMeta?.needsValue2 ? cfVal2.trim() : undefined,
+        bg: preset.bg,
+        color: preset.color,
+        bold: cfBold,
+      };
     }
-    if (opMeta?.needsValue2 && !cfVal2.trim()) {
-      setCfFormError(t("请输入区间上限值"));
-      return;
-    }
-    const preset = COND_FMT_PRESETS.find((p) => p.id === cfPresetId) ?? COND_FMT_PRESETS[0];
-    const rule: SheetConditionalFormat = {
-      id: makeRuleId("cf"),
-      top: selectionBoundsRect.top,
-      left: selectionBoundsRect.left,
-      bottom: selectionBoundsRect.bottom,
-      right: selectionBoundsRect.right,
-      op: cfOp,
-      value1: opMeta?.needsValue1 ? cfVal1.trim() : undefined,
-      value2: opMeta?.needsValue2 ? cfVal2.trim() : undefined,
-      bg: preset.bg,
-      color: preset.color,
-      bold: cfBold,
-    };
     setSubmitting(true);
     try {
       await onUpdateCondFormats([...condFormats, rule]);
@@ -532,74 +549,169 @@ export function SheetSidePanel({
 
             {canEdit && (
               <form onSubmit={(e) => void handleAddCondFormat(e)} className="space-y-2.5 rounded-lg border border-[#e5e6eb] bg-[#fafbfc] p-3">
-                <div className="grid gap-1">
-                  <span className="text-[11px] text-[#646a73]">{t("满足条件")}</span>
-                  <FeishuSelect
-                    ariaLabel={t("满足条件")}
-                    dataAttr={{ "data-sheet-cf-op": true }}
-                    value={cfOp}
-                    options={COND_FMT_OPS.map((item) => ({ value: item.op, label: t(item.label) }))}
-                    onChange={(val) => {
-                      setCfOp(val as SheetCondFormatOp);
-                      setCfFormError("");
-                    }}
-                    className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
-                    menuMinWidth={180}
-                  />
+                <div className="grid grid-cols-3 gap-1 rounded-md bg-[#eff0f1] p-0.5 text-[11px]">
+                  {(
+                    [
+                      { id: "highlight", label: t("规则高亮") },
+                      { id: "dataBar", label: t("数据条") },
+                      { id: "colorScale", label: t("色阶") },
+                    ] as const
+                  ).map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      data-sheet-cf-mode={item.id}
+                      onClick={() => {
+                        setCfMode(item.id);
+                        setCfFormError("");
+                      }}
+                      className={`h-7 rounded font-medium transition-colors ${
+                        cfMode === item.id
+                          ? "bg-white text-[#3370ff] shadow-sm"
+                          : "text-[#646a73] hover:text-[#1f2329]"
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
                 </div>
 
-                {opMeta?.needsValue1 && (
-                  <div className={opMeta.needsValue2 ? "grid grid-cols-2 gap-2" : ""}>
-                    <input
-                      data-sheet-cf-val1
-                      value={cfVal1}
-                      onChange={(e) => setCfVal1(e.target.value)}
-                      placeholder={opMeta.needsValue2 ? t("下限值") : t("比较值，例如 100")}
-                      className="h-8 w-full rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
-                    />
-                    {opMeta.needsValue2 && (
-                      <input
-                        data-sheet-cf-val2
-                        value={cfVal2}
-                        onChange={(e) => setCfVal2(e.target.value)}
-                        placeholder={t("上限值")}
-                        className="h-8 w-full rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
+                {cfMode === "highlight" && (
+                  <>
+                    <div className="grid gap-1">
+                      <span className="text-[11px] text-[#646a73]">{t("满足条件")}</span>
+                      <FeishuSelect
+                        ariaLabel={t("满足条件")}
+                        dataAttr={{ "data-sheet-cf-op": true }}
+                        value={cfOp}
+                        options={COND_FMT_OPS.map((item) => ({ value: item.op, label: t(item.label) }))}
+                        onChange={(val) => {
+                          setCfOp(val as SheetCondFormatOp);
+                          setCfFormError("");
+                        }}
+                        className="h-8 w-full border border-[#dee0e3] bg-white px-2 text-[12px]"
+                        menuMinWidth={180}
                       />
+                    </div>
+
+                    {opMeta?.needsValue1 && (
+                      <div className={opMeta.needsValue2 ? "grid grid-cols-2 gap-2" : ""}>
+                        <input
+                          data-sheet-cf-val1
+                          value={cfVal1}
+                          onChange={(e) => setCfVal1(e.target.value)}
+                          placeholder={opMeta.needsValue2 ? t("下限值") : t("比较值，例如 100")}
+                          className="h-8 w-full rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
+                        />
+                        {opMeta.needsValue2 && (
+                          <input
+                            data-sheet-cf-val2
+                            value={cfVal2}
+                            onChange={(e) => setCfVal2(e.target.value)}
+                            placeholder={t("上限值")}
+                            className="h-8 w-full rounded border border-[#dee0e3] bg-white px-2 text-[12px] outline-none focus:border-[#3370ff]"
+                          />
+                        )}
+                      </div>
                     )}
+
+                    <div className="space-y-1.5">
+                      <span className="block text-[11px] text-[#646a73]">{t("高亮样式")}</span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {COND_FMT_PRESETS.map((preset) => (
+                          <button
+                            key={preset.id}
+                            type="button"
+                            data-sheet-cf-preset={preset.id}
+                            onClick={() => {
+                              setCfPresetId(preset.id);
+                              setCfBold(!!preset.bold);
+                            }}
+                            style={{ backgroundColor: preset.bg, color: preset.color }}
+                            className={`rounded border px-2 py-1 text-[11px] font-medium ${
+                              cfPresetId === preset.id ? "ring-2 ring-[#3370ff] ring-offset-1" : "border-black/10"
+                            }`}
+                          >
+                            {t(preset.label)}
+                          </button>
+                        ))}
+                      </div>
+                      <label className="flex cursor-pointer items-center gap-2 pt-1 text-[12px] text-[#1f2329]">
+                        <input
+                          type="checkbox"
+                          checked={cfBold}
+                          onChange={(e) => setCfBold(e.target.checked)}
+                          className="rounded border-[#c9cdd4]"
+                        />
+                        <span>{t("文字加粗")}</span>
+                      </label>
+                    </div>
+                  </>
+                )}
+
+                {cfMode === "dataBar" && (
+                  <div className="space-y-2">
+                    <span className="block text-[11px] text-[#646a73]">{t("数据条配色")}</span>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {DATA_BAR_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          data-sheet-cf-databar-preset={preset.id}
+                          onClick={() => setCfDataBarPreset(preset.id)}
+                          className={`flex flex-col gap-1 rounded-md border bg-white p-2 text-left transition-colors ${
+                            cfDataBarPreset === preset.id
+                              ? "border-[#3370ff] ring-2 ring-[#3370ff]/25"
+                              : "border-[#dee0e3] hover:border-[#bbbfc4]"
+                          }`}
+                        >
+                          <div className="flex h-3.5 w-full items-center overflow-hidden rounded-[2px] bg-[#f5f6f7]">
+                            <span
+                              className="h-full rounded-[2px]"
+                              style={{
+                                width: "72%",
+                                backgroundColor: preset.fillColor,
+                                borderLeft: `2px solid ${preset.barColor}`,
+                              }}
+                            />
+                          </div>
+                          <span className="text-[11px] text-[#1f2329]">{t(preset.label)}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-[#8f959e]">{t("按所选区域内数值比例自动绘制横向数据条")}</p>
                   </div>
                 )}
 
-                <div className="space-y-1.5">
-                  <span className="block text-[11px] text-[#646a73]">{t("高亮样式")}</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {COND_FMT_PRESETS.map((preset) => (
-                      <button
-                        key={preset.id}
-                        type="button"
-                        data-sheet-cf-preset={preset.id}
-                        onClick={() => {
-                          setCfPresetId(preset.id);
-                          setCfBold(!!preset.bold);
-                        }}
-                        style={{ backgroundColor: preset.bg, color: preset.color }}
-                        className={`rounded border px-2 py-1 text-[11px] font-medium ${
-                          cfPresetId === preset.id ? "ring-2 ring-[#3370ff] ring-offset-1" : "border-black/10"
-                        }`}
-                      >
-                        {t(preset.label)}
-                      </button>
-                    ))}
+                {cfMode === "colorScale" && (
+                  <div className="space-y-2">
+                    <span className="block text-[11px] text-[#646a73]">{t("色阶方案")}</span>
+                    <div className="space-y-1.5">
+                      {COLOR_SCALE_PRESETS.map((preset) => (
+                        <button
+                          key={preset.id}
+                          type="button"
+                          data-sheet-cf-scale-preset={preset.id}
+                          onClick={() => setCfColorScalePreset(preset.id)}
+                          className={`flex w-full items-center justify-between gap-2 rounded-md border bg-white px-2.5 py-2 text-left transition-colors ${
+                            cfColorScalePreset === preset.id
+                              ? "border-[#3370ff] ring-2 ring-[#3370ff]/25"
+                              : "border-[#dee0e3] hover:border-[#bbbfc4]"
+                          }`}
+                        >
+                          <span className="text-[11.5px] text-[#1f2329]">{t(preset.label)}</span>
+                          <span
+                            className="h-3.5 w-24 shrink-0 rounded border border-black/10"
+                            style={{
+                              background: `linear-gradient(90deg, ${preset.low}, ${preset.mid}, ${preset.high})`,
+                            }}
+                          />
+                        </button>
+                      ))}
+                    </div>
+                    <p className="text-[11px] text-[#8f959e]">{t("按所选区域内数值高低自动渲染渐变背景色")}</p>
                   </div>
-                  <label className="flex cursor-pointer items-center gap-2 pt-1 text-[12px] text-[#1f2329]">
-                    <input
-                      type="checkbox"
-                      checked={cfBold}
-                      onChange={(e) => setCfBold(e.target.checked)}
-                      className="rounded border-[#c9cdd4]"
-                    />
-                    <span>{t("文字加粗")}</span>
-                  </label>
-                </div>
+                )}
 
                 {cfFormError && <p className="text-[11px] text-[#d83931]">{cfFormError}</p>}
 
@@ -619,42 +731,77 @@ export function SheetSidePanel({
               {condFormats.length === 0 ? (
                 <p className="rounded border border-dashed border-[#dee0e3] py-6 text-center text-[#8f959e]">{t("暂无条件格式规则")}</p>
               ) : (
-                condFormats.map((r) => (
-                  <div key={r.id} data-sheet-condfmt-item={r.id} className="rounded-md border border-[#e5e6eb] p-2.5">
-                    <div className="flex items-center justify-between gap-2">
-                      <button
-                        type="button"
-                        onClick={() => onSelectRange(r)}
-                        className="rounded bg-[#eef3ff] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3370ff] hover:bg-[#dce7ff]"
-                      >
-                        {formatSheetRectA1(r)}
-                      </button>
-                      <div className="flex items-center gap-1.5">
-                        <span
-                          className="rounded border border-black/10 px-1.5 py-0.5 text-[11px]"
-                          style={{ backgroundColor: r.bg || "#ffffff", color: r.color || "#1f2329", fontWeight: r.bold ? 600 : 400 }}
+                condFormats.map((r) => {
+                  const visual = parseVisualCondFormat(r);
+                  return (
+                    <div key={r.id} data-sheet-condfmt-item={r.id} className="rounded-md border border-[#e5e6eb] p-2.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <button
+                          type="button"
+                          onClick={() => onSelectRange(r)}
+                          className="rounded bg-[#eef3ff] px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3370ff] hover:bg-[#dce7ff]"
                         >
-                          Aa
-                        </span>
-                        {canEdit && (
-                          <button
-                            type="button"
-                            aria-label={t("删除规则")}
-                            onClick={() => void onUpdateCondFormats(condFormats.filter((item) => item.id !== r.id))}
-                            className="grid size-6 place-items-center rounded text-[#8f959e] hover:bg-[#fff2f0] hover:text-[#d83931]"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                          {formatSheetRectA1(r)}
+                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {visual?.kind === "dataBar" ? (
+                            <span
+                              className="inline-flex h-4 w-10 items-center overflow-hidden rounded-[2px] border border-[#dee0e3] bg-[#f5f6f7]"
+                              title={t(visual.preset.label)}
+                            >
+                              <span
+                                className="h-full"
+                                style={{
+                                  width: "70%",
+                                  backgroundColor: visual.preset.fillColor,
+                                  borderLeft: `2px solid ${visual.preset.barColor}`,
+                                }}
+                              />
+                            </span>
+                          ) : visual?.kind === "colorScale" ? (
+                            <span
+                              className="inline-block h-4 w-10 rounded-[2px] border border-black/10"
+                              title={t(visual.preset.label)}
+                              style={{
+                                background: `linear-gradient(90deg, ${visual.preset.low}, ${visual.preset.mid}, ${visual.preset.high})`,
+                              }}
+                            />
+                          ) : (
+                            <span
+                              className="rounded border border-black/10 px-1.5 py-0.5 text-[11px]"
+                              style={{ backgroundColor: r.bg || "#ffffff", color: r.color || "#1f2329", fontWeight: r.bold ? 600 : 400 }}
+                            >
+                              Aa
+                            </span>
+                          )}
+                          {canEdit && (
+                            <button
+                              type="button"
+                              aria-label={t("删除规则")}
+                              onClick={() => void onUpdateCondFormats(condFormats.filter((item) => item.id !== r.id))}
+                              className="grid size-6 place-items-center rounded text-[#8f959e] hover:bg-[#fff2f0] hover:text-[#d83931]"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      <div className="mt-1.5 text-[12px] text-[#4b5058]">
+                        {visual?.kind === "dataBar"
+                          ? `${t("数据条")} · ${t(visual.preset.label)}`
+                          : visual?.kind === "colorScale"
+                            ? `${t("色阶")} · ${t(visual.preset.label)}`
+                            : (
+                              <>
+                                {formatCondOpLabel(r.op)}
+                                {r.value1 ? ` ${r.value1}` : ""}
+                                {r.op === "between" && r.value2 ? ` ~ ${r.value2}` : ""}
+                              </>
+                            )}
                       </div>
                     </div>
-                    <div className="mt-1.5 text-[12px] text-[#4b5058]">
-                      {formatCondOpLabel(r.op)}
-                      {r.value1 ? ` ${r.value1}` : ""}
-                      {r.op === "between" && r.value2 ? ` ~ ${r.value2}` : ""}
-                    </div>
-                  </div>
-                ))
+                  );
+                })
               )}
             </div>
           </div>

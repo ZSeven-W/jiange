@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { baseApi, type Automation, type Field, type FilterRule, type User } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { ask } from "@/components/ui/ask";
+import { FeishuSelect } from "@/components/feishu-select";
 import { MemberRuleValue, personRuleValue } from "./member-rule-value";
 import { t, useI18n } from "@/lib/i18n";
 
@@ -177,27 +178,31 @@ function AutomationForm({
         className="h-8 w-full rounded-md border px-2 outline-none focus:border-primary"
         data-auto-name
       />
-      <select
-        className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary"
+      <FeishuSelect
+        ariaLabel={t("触发方式")}
+        className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
         value={trigger}
-        onChange={(e) => setTrigger(e.target.value as Automation["triggerKind"])}
-        data-auto-trigger
-      >
-        <option value="record_matches">{t("当记录满足条件时")}</option>
-        <option value="form_submit">{t("当表单被提交时")}</option>
-        <option value="schedule">{t("定时触发")}</option>
-      </select>
+        options={[
+          { value: "record_matches", label: t("当记录满足条件时") },
+          { value: "form_submit", label: t("当表单被提交时") },
+          { value: "schedule", label: t("定时触发") },
+        ]}
+        onChange={(val) => setTrigger(val as Automation["triggerKind"])}
+        dataAttr={{ "data-auto-trigger": true }}
+      />
       {trigger === "schedule" && (
-        <select
-          className="h-8 w-full rounded-md border bg-surface px-2 outline-none focus:border-primary"
+        <FeishuSelect
+          ariaLabel={t("定时触发")}
+          className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
           value={cfg.schedule?.every ?? "1d"}
-          onChange={(e) => setCfg({ ...cfg, schedule: { every: e.target.value } })}
-          data-auto-every
-        >
-          <option value="1h">{t("每小时")}</option>
-          <option value="1d">{t("每天")}</option>
-          <option value="1w">{t("每周")}</option>
-        </select>
+          options={[
+            { value: "1h", label: t("每小时") },
+            { value: "1d", label: t("每天") },
+            { value: "1w", label: t("每周") },
+          ]}
+          onChange={(val) => setCfg({ ...cfg, schedule: { every: val } })}
+          dataAttr={{ "data-auto-every": true }}
+        />
       )}
       {trigger === "record_matches" && (
         <div className="space-y-1.5 rounded-md border p-2" data-auto-rules>
@@ -207,33 +212,33 @@ function AutomationForm({
             const noValue = rule.op === "empty" || rule.op === "not_empty" || rule.op === "checked" || rule.op === "unchecked";
             return (
               <div key={i} className="flex items-center gap-1">
-                <select
-                  className="h-7 w-20 rounded border bg-surface px-1"
-                  value={rule.f}
-                  onChange={(e) => {
-                    const nf = fields.find((x) => x.id === Number(e.target.value));
+                <FeishuSelect
+                  ariaLabel={t("筛选字段")}
+                  className="h-7 w-20 border border-[#dee0e3] bg-surface px-1 text-[12px]"
+                  chevronSize={11}
+                  menuMinWidth={112}
+                  value={String(rule.f)}
+                  options={fields.map((x) => ({ value: String(x.id), label: x.name }))}
+                  onChange={(val) => {
+                    const nf = fields.find((x) => x.id === Number(val));
                     const rules2 = [...rules];
-                    rules2[i] = normalized(nf, { ...rule, f: Number(e.target.value) });
+                    rules2[i] = normalized(nf, { ...rule, f: Number(val) });
                     setCfg({ ...cfg, rules: rules2 });
                   }}
-                >
-                  {fields.map((x) => (
-                    <option key={x.id} value={x.id}>{x.name}</option>
-                  ))}
-                </select>
-                <select
-                  className="h-7 w-20 rounded border bg-surface px-1"
+                />
+                <FeishuSelect
+                  ariaLabel={t("筛选条件")}
+                  className="h-7 w-20 border border-[#dee0e3] bg-surface px-1 text-[12px]"
+                  chevronSize={11}
+                  menuMinWidth={108}
                   value={rule.op}
-                  onChange={(e) => {
+                  options={opsFor(f?.type ?? "text").map((op) => ({ value: op, label: t(OP_LABEL[op]) }))}
+                  onChange={(val) => {
                     const rules2 = [...rules];
-                    rules2[i] = normalized(f, { ...rule, op: e.target.value });
+                    rules2[i] = normalized(f, { ...rule, op: val });
                     setCfg({ ...cfg, rules: rules2 });
                   }}
-                >
-                  {opsFor(f?.type ?? "text").map((op) => (
-                    <option key={op} value={op}>{t(OP_LABEL[op])}</option>
-                  ))}
-                </select>
+                />
                 {!noValue && (f?.type === "person" ? (
                   <MemberRuleValue rule={rule} members={members} onChange={(v) => { const rules2 = [...rules]; rules2[i] = { ...rule, v }; setCfg({ ...cfg, rules: rules2 }); }} />
                 ) : (
@@ -287,18 +292,20 @@ function AutomationForm({
           data-auto-message
         />
         <p className="mb-1.5 mt-2 text-[12px] text-subtle">{t("推送到 IM 群机器人（企微/钉钉/飞书/自建，可选）")}</p>
-        <select
-          className="h-8 w-full rounded border bg-surface px-2 outline-none focus:border-primary"
+        <FeishuSelect
+          ariaLabel={t("推送到 IM 群机器人（企微/钉钉/飞书/自建，可选）")}
+          className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
           value={cfg.webhook?.kind ?? ""}
-          onChange={(e) => setCfg({ ...cfg, webhook: { ...cfg.webhook, kind: e.target.value } })}
-          data-auto-hook-kind
-        >
-          <option value="">{t("不推送")}</option>
-          <option value="wecom">{t("企业微信")}</option>
-          <option value="dingtalk">{t("钉钉")}</option>
-          <option value="feishu">{t("飞书")}</option>
-          <option value="generic">{t("自建（通用 JSON）")}</option>
-        </select>
+          options={[
+            { value: "", label: t("不推送") },
+            { value: "wecom", label: t("企业微信") },
+            { value: "dingtalk", label: t("钉钉") },
+            { value: "feishu", label: t("飞书") },
+            { value: "generic", label: t("自建（通用 JSON）") },
+          ]}
+          onChange={(val) => setCfg({ ...cfg, webhook: { ...cfg.webhook, kind: val } })}
+          dataAttr={{ "data-auto-hook-kind": true }}
+        />
         {cfg.webhook?.kind && (
           <>
             <input

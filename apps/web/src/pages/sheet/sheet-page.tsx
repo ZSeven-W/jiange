@@ -8,12 +8,14 @@ import {
   sheetsApi,
   type DocMeta,
   type Me,
+  type SheetBorders,
   type SheetCell,
   type SheetCellConflict,
   type SheetCellRevision,
   type SheetCellStyle,
   type SheetCellWrite,
   type SheetChart,
+  type SheetColumnFilter,
   type SheetComment,
   type SheetConditionalFormat,
   type SheetDataValidation,
@@ -34,7 +36,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { ResourceTypeNotice } from "@/pages/resource-type-notice";
 import { ResourceReferencesButton } from "@/pages/resource-references-button";
 import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
-import { ChevronRight, Home, Lock, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
+import { ChevronRight, Filter, Home, Lock, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
 import { FenwickVirtualizer } from "@jiange/render-gpu";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
 import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
@@ -54,7 +56,7 @@ import {
 } from "./workbook-engine";
 import { exportWorkbookToXlsx, parseXlsxForWorkbook } from "./workbook-xlsx";
 import { FORMULA_QUICK_LIST, formatSheetRefPrefix, SHEET_STARTER_TEMPLATES, type SheetStarterTemplate } from "./workbook-templates";
-import { SheetTabsBar, SheetToolbar } from "./sheet-toolbar";
+import { SheetTabsBar, SheetToolbar, type SheetBorderPreset } from "./sheet-toolbar";
 import { SheetSidePanel, type SheetPanelMode } from "./sheet-panels";
 import { computePivotTable, pivotResultToCellMatrix } from "./sheet-analytics";
 import { SheetChartOverlay } from "./sheet-chart-overlay";
@@ -62,11 +64,22 @@ import { SheetGpuGridLayer } from "./sheet-gpu-layer";
 import { computeSheetSelectionStats } from "./sheet-selection-stats";
 import { SheetSelectionStatsBar } from "./sheet-selection-stats-bar";
 import {
+  computeVisualCondFormatBounds,
   evaluateSheetConditionalFormat,
   evaluateSheetValidation,
+  evaluateSheetVisualCondFormat,
   findSheetDropdown,
   isSheetCellProtected,
 } from "./sheet-rules";
+import { applyFormulaCompletion, inspectFormulaCaret } from "./sheet-formula-autocomplete";
+import { SheetFormulaBarAutocomplete, type FormulaPopoverAnchorRect } from "./sheet-formula-bar-autocomplete";
+import {
+  buildNextColumnFilterConfig,
+  collectColumnFilterOptions,
+  isColumnFilterActive,
+  SheetColumnFilterPopover,
+  type SheetColumnFilterAnchor,
+} from "./sheet-column-filter";
 import {
   applyRemoteCellDelta,
   buildConflictResolutionWrite,
@@ -254,8 +267,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [shareOpen, setShareOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [fxMenuOpen, setFxMenuOpen] = useState(false);
-  const [filterCol, setFilterCol] = useState<number | null>(null);
-  const [filterInput, setFilterInput] = useState("");
+  const [filterPopover, setFilterPopover] = useState<{ col: number; anchorRect: SheetColumnFilterAnchor } | null>(null);
+  const [localFilterRules, setLocalFilterRules] = useState<Record<string, SheetColumnFilter> | null>(null);
+  const [formulaCaret, setFormulaCaret] = useState(0);
+  const [formulaAutoIdx, setFormulaAutoIdx] = useState(0);
+  const [formulaDismissed, setFormulaDismissed] = useState(false);
+  const [formulaAnchorRect, setFormulaAnchorRect] = useState<FormulaPopoverAnchorRect | null>(null);
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [replaceText, setReplaceText] = useState("");
@@ -273,6 +290,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     setCellConflicts([]);
     setMergeConflict(null);
     setSelectedChartId(null);
+    setFilterPopover(null);
+    setLocalFilterRules(null);
+    setFormulaDismissed(false);
   }, [sheetId, activeSheetId]);
   const [pendingImport, setPendingImport] = useState<{ filename: string; sheets: ReturnType<typeof parseXlsxForWorkbook> extends Promise<infer R> ? R : never } | null>(null);
   const [importing, setImporting] = useState(false);
@@ -287,6 +307,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const gridRef = useRef<HTMLDivElement>(null);
   const cellInputRef = useRef<HTMLInputElement>(null);
   const formulaInputRef = useRef<HTMLInputElement>(null);
+  const formulaBarWrapRef = useRef<HTMLDivElement>(null);
+  const colHeaderRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const fileInputRef = useRef<HTMLInputElement>(null);
   const selectingRef = useRef(false);
   const fillingRef = useRef(false);
@@ -461,7 +483,14 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     [activeSheet, allComments],
   );
   const mergeLookup = useMemo(() => buildMergeLookup(activeSheet?.merges ?? []), [activeSheet?.merges]);
-  const visibleRows = useMemo(() => (activeSheet ? getVisibleRowIndices(activeSheet, activeEvalMap) : []), [activeSheet, activeEvalMap]);
+  const effectiveFilter = useMemo(
+    () => (activeSheet ? (localFilterRules ? { ...activeSheet.filter, enabled: true, rules: localFilterRules } : activeSheet.filter) : undefined),
+    [activeSheet, localFilterRules],
+  );
+  const visibleRows = useMemo(
+    () => (activeSheet ? getVisibleRowIndices({ ...activeSheet, filter: effectiveFilter ?? {} }, activeEvalMap) : []),
+    [activeSheet, effectiveFilter, activeEvalMap],
+  );
 
   const colWidths = useMemo(() => (activeSheet?.columns ?? []).map((c) => c.size || DEFAULT_COL_WIDTH), [activeSheet?.columns]);
   const rowHeights = useMemo(() => (activeSheet?.rows ?? []).map((r) => r.size || DEFAULT_ROW_HEIGHT), [activeSheet?.rows]);
@@ -520,6 +549,42 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const focusedCell = activeSheet ? gridMap.cellByKey.get(pointKey(selection.focus)) : undefined;
   const focusedStyle: SheetCellStyle = focusedCell?.style ?? {};
   const displayedFormulaValue = editing ? editing.value : focusedCell?.raw ?? "";
+
+  const visualCondBounds = useMemo(
+    () => computeVisualCondFormatBounds(activeSheet?.conditionalFormats, gridMap.cellByKey, activeEvalMap),
+    [activeSheet?.conditionalFormats, gridMap.cellByKey, activeEvalMap],
+  );
+
+  const formulaInspection = useMemo(
+    () => (editing && !formulaDismissed ? inspectFormulaCaret(editing.value, formulaCaret) : ({ mode: "none" } as const)),
+    [editing, formulaCaret, formulaDismissed],
+  );
+
+  const formulaCompletePrefix = formulaInspection.mode === "complete" ? formulaInspection.prefix : "";
+  useEffect(() => {
+    setFormulaAutoIdx(0);
+  }, [formulaCompletePrefix]);
+
+  useEffect(() => {
+    if (!editing || !editing.value.startsWith("=")) {
+      setFormulaAnchorRect(null);
+      return;
+    }
+    const updateAnchor = () => {
+      const targetEl = editing.source === "cell" ? cellInputRef.current : formulaBarWrapRef.current;
+      if (!targetEl) return;
+      const r = targetEl.getBoundingClientRect();
+      setFormulaAnchorRect({ left: r.left, bottom: r.bottom, width: r.width });
+    };
+    updateAnchor();
+    window.addEventListener("resize", updateAnchor);
+    return () => window.removeEventListener("resize", updateAnchor);
+  }, [editing?.source, editing?.sheetId, editing?.point.row, editing?.point.col, editing?.value.startsWith("=")]);
+
+  const activeFilterOptions = useMemo(
+    () => (activeSheet && filterPopover ? collectColumnFilterOptions(activeSheet, activeEvalMap, filterPopover.col) : []),
+    [activeSheet, activeEvalMap, filterPopover],
+  );
 
   const formulaHighlights = useMemo(() => {
     if (!activeSheet) return [];
@@ -836,11 +901,15 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     }
     setDropdownCell(null);
     const curCell = gridMap.cellByKey.get(pointKey(snapped));
+    const initValue = initialValue !== undefined ? initialValue : (curCell?.raw ?? "");
     setSelection({ anchor: snapped, focus: snapped });
+    setFormulaCaret(initValue.length);
+    setFormulaAutoIdx(0);
+    setFormulaDismissed(false);
     setEditing({
       sheetId: activeSheet.id,
       point: snapped,
-      value: initialValue !== undefined ? initialValue : (curCell?.raw ?? ""),
+      value: initValue,
       source,
       baseRevision: curCell?.revision ?? 0,
     });
@@ -885,12 +954,60 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     await commitCellEdits(edits);
   };
 
+  const handleApplyBorderPreset = async (preset: SheetBorderPreset, color = "#8f959e") => {
+    if (!canEdit || !activeSheet) return;
+    const b = selectionBounds(selection);
+    const edits: { row: number; col: number; style: SheetCellStyle; stylePatch: SheetStylePatch }[] = [];
+    for (let r = b.top; r <= b.bottom; r++) {
+      for (let c = b.left; c <= b.right; c++) {
+        const curStyle = gridMap.cellByKey.get(`${r}:${c}`)?.style ?? {};
+        let nextBorders: SheetBorders | undefined;
+        if (preset === "all") {
+          nextBorders = { top: true, right: true, bottom: true, left: true, color };
+        } else if (preset === "outer") {
+          const top = r === b.top;
+          const bottom = r === b.bottom;
+          const left = c === b.left;
+          const right = c === b.right;
+          if (top || right || bottom || left) {
+            nextBorders = {
+              ...(top ? { top: true } : {}),
+              ...(right ? { right: true } : {}),
+              ...(bottom ? { bottom: true } : {}),
+              ...(left ? { left: true } : {}),
+              color,
+            };
+          }
+        } else if (preset === "bottom") {
+          if (r === b.bottom) nextBorders = { bottom: true, color };
+        } else if (preset === "topBottom") {
+          const top = r === b.top;
+          const bottom = r === b.bottom;
+          if (top || bottom) {
+            nextBorders = {
+              ...(top ? { top: true } : {}),
+              ...(bottom ? { bottom: true } : {}),
+              color,
+            };
+          }
+        } else {
+          nextBorders = undefined;
+        }
+        if (JSON.stringify(curStyle.borders ?? null) === JSON.stringify(nextBorders ?? null)) continue;
+        const nextStyle: SheetCellStyle = { ...curStyle };
+        if (nextBorders) nextStyle.borders = nextBorders;
+        else delete nextStyle.borders;
+        const stylePatch: SheetStylePatch = nextBorders ? { borders: nextBorders } : { clearBorders: true };
+        edits.push({ row: r, col: c, style: nextStyle, stylePatch });
+      }
+    }
+    if (edits.length > 0) await commitCellEdits(edits);
+  };
+
   const handleToggleBorder = async () => {
     if (!canEdit || !activeSheet) return;
     const hasBorders = !!focusedStyle.borders;
-    await handleStylePatch({
-      borders: hasBorders ? undefined : { top: true, right: true, bottom: true, left: true, color: "#c9cdd4" },
-    });
+    await handleApplyBorderPreset(hasBorders ? "none" : "all");
   };
 
   const handleClearFormat = async () => {
@@ -1227,13 +1344,14 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     }
   };
 
-  const handleSort = async (ascending: boolean) => {
+  const handleSort = async (ascending: boolean, colOverride?: number) => {
     if (!canEdit || !activeSheet) return;
     if (activeSheet.merges.length > 0) {
       setStatusMessage(t("当前工作表包含合并单元格，请取消合并后再排序"));
       return;
     }
-    const writes = computeSortedRowWrites(activeSheet, activeEvalMap, selection.focus.col, ascending, activeSheet.filter?.headerRow ?? 0);
+    const targetCol = colOverride ?? selection.focus.col;
+    const writes = computeSortedRowWrites(activeSheet, activeEvalMap, targetCol, ascending, activeSheet.filter?.headerRow ?? 0);
     if (writes.length === 0) {
       setStatusMessage(t("当前列数据无需调整顺序"));
       return;
@@ -1665,9 +1783,92 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     const targetSheetTitle = activeSheet.title;
     const prefix = editing.sheetId === activeSheet.id ? "" : formatSheetRefPrefix(targetSheetTitle);
     const refText = `${prefix}${sheetAddress(targetPoint)}`;
-    setEditing({ ...editing, value: editing.value + refText });
-    requestAnimationFrame(() => formulaInputRef.current?.focus());
+    const nextVal = editing.value + refText;
+    setEditing({ ...editing, value: nextVal });
+    setFormulaCaret(nextVal.length);
+    setFormulaDismissed(false);
+    requestAnimationFrame(() => {
+      const input = editing.source === "cell" ? cellInputRef.current : formulaInputRef.current;
+      if (input) {
+        input.focus();
+        input.setSelectionRange(nextVal.length, nextVal.length);
+      }
+    });
     return true;
+  };
+
+  const syncFormulaCaretFromInput = (el: HTMLInputElement | null, source: "cell" | "formula", fallbackPos?: number) => {
+    const pos = el?.selectionStart ?? fallbackPos ?? 0;
+    setFormulaCaret(pos);
+    const anchorEl = source === "cell" ? el : formulaBarWrapRef.current;
+    if (anchorEl) {
+      const r = anchorEl.getBoundingClientRect();
+      setFormulaAnchorRect({ left: r.left, bottom: r.bottom, width: r.width });
+    }
+  };
+
+  const handleAcceptFormulaCompletion = (fnName: string) => {
+    if (!editing || formulaInspection.mode !== "complete") return;
+    const { nextValue, nextCaret } = applyFormulaCompletion(editing.value, formulaInspection, fnName);
+    setEditing({ ...editing, value: nextValue });
+    setFormulaCaret(nextCaret);
+    setFormulaAutoIdx(0);
+    setFormulaDismissed(false);
+    requestAnimationFrame(() => {
+      const input = editing.source === "cell" ? cellInputRef.current : formulaInputRef.current;
+      if (input) {
+        input.focus();
+        input.setSelectionRange(nextCaret, nextCaret);
+      }
+    });
+  };
+
+  const handleFormulaPopupKeyDown = (e: React.KeyboardEvent): boolean => {
+    if (formulaInspection.mode !== "complete") return false;
+    const count = formulaInspection.matches.length;
+    if (count === 0) return false;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setFormulaAutoIdx((i) => (i + 1) % count);
+      return true;
+    }
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setFormulaAutoIdx((i) => (i - 1 + count) % count);
+      return true;
+    }
+    if (e.key === "Tab" || e.key === "Enter") {
+      e.preventDefault();
+      const safeIdx = Math.max(0, Math.min(formulaAutoIdx, count - 1));
+      handleAcceptFormulaCompletion(formulaInspection.matches[safeIdx].name);
+      return true;
+    }
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setFormulaDismissed(true);
+      return true;
+    }
+    return false;
+  };
+
+  const openColumnFilter = (colIdx: number, rect?: DOMRect) => {
+    const measured = rect ?? colHeaderRefs.current.get(colIdx)?.getBoundingClientRect();
+    const anchorRect: SheetColumnFilterAnchor = measured
+      ? { left: measured.left, top: measured.top, bottom: measured.bottom, right: measured.right, width: measured.width }
+      : { left: 100, top: 140, bottom: 164, right: 205, width: 105 };
+    setFilterPopover((cur) => (cur?.col === colIdx ? null : { col: colIdx, anchorRect }));
+  };
+
+  const handleApplyColumnFilter = (colIdx: number, selectedValues: string[] | null) => {
+    if (!activeSheet) return;
+    const options = collectColumnFilterOptions(activeSheet, activeEvalMap, colIdx);
+    const nextFilter = buildNextColumnFilterConfig(effectiveFilter, colIdx, selectedValues, options.length);
+    if (canEdit) {
+      setLocalFilterRules(null);
+      void handleWorksheetPatch(activeSheet.id, { filter: nextFilter });
+    } else {
+      setLocalFilterRules(nextFilter.rules ?? {});
+    }
   };
 
   const handleFindReplaceAll = async () => {
@@ -1839,6 +2040,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         onClearFormat={() => void handleClearFormat()}
         onStylePatch={(p) => void handleStylePatch(p)}
         onToggleBorder={() => void handleToggleBorder()}
+        onApplyBorderPreset={(preset, color) => void handleApplyBorderPreset(preset, color)}
         onToggleMerge={() => void handleToggleMerge()}
         onInsertRowAbove={() => void handleAxisOp({ op: "insert_row", index: selection.focus.row, count: 1 })}
         onInsertRowBelow={() => void handleAxisOp({ op: "insert_row", index: selection.focus.row + 1, count: 1 })}
@@ -1847,11 +2049,15 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         onDeleteRow={() => void handleAxisOp({ op: "delete_row", index: selection.focus.row, count: 1 })}
         onDeleteCol={() => void handleAxisOp({ op: "delete_col", index: selection.focus.col, count: 1 })}
         onFreezeRows={(rows, cols = activeSheet.frozenCols) => void handleWorksheetPatch(activeSheet.id, { frozenRows: rows, frozenCols: cols })}
-        onToggleFilter={() =>
-          void handleWorksheetPatch(activeSheet.id, {
-            filter: activeSheet.filter?.enabled ? { enabled: false, headerRow: 0 } : { enabled: true, headerRow: 0, rules: {} },
-          })
-        }
+        onToggleFilter={() => {
+          if (activeSheet.filter?.enabled) {
+            setFilterPopover(null);
+            void handleWorksheetPatch(activeSheet.id, { filter: { enabled: false, headerRow: 0 } });
+          } else {
+            void handleWorksheetPatch(activeSheet.id, { filter: { enabled: true, headerRow: 0, rules: {} } });
+            openColumnFilter(selection.focus.col);
+          }
+        }}
         onSortCol={(asc) => void handleSort(asc)}
         onOpenFind={() => setFindOpen(true)}
         activePanel={activePanel}
@@ -1908,7 +2114,16 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   onClick={() => {
                     setFxMenuOpen(false);
                     beginEdit(selection.focus, fn.snippet, "formula");
-                    requestAnimationFrame(() => formulaInputRef.current?.focus());
+                    const openIdx = fn.snippet.indexOf("(");
+                    const caretPos = openIdx >= 0 ? openIdx + 1 : fn.snippet.length;
+                    setFormulaCaret(caretPos);
+                    requestAnimationFrame(() => {
+                      const input = formulaInputRef.current;
+                      if (input) {
+                        input.focus();
+                        input.setSelectionRange(caretPos, caretPos);
+                      }
+                    });
                   }}
                   className="flex w-full flex-col px-3 py-1.5 text-left hover:bg-[#f2f3f5]"
                 >
@@ -1919,7 +2134,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             </div>
           )}
         </div>
-        <div className="relative flex h-full min-w-0 flex-1 items-center">
+        <div ref={formulaBarWrapRef} className="relative flex h-full min-w-0 flex-1 items-center">
           {displayedFormulaValue.startsWith("=") && formulaHighlights.length > 0 && (
             <div
               aria-hidden="true"
@@ -1938,20 +2153,28 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             onCopy={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
             onCut={(e) => { if (!canCopy) { e.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
             value={displayedFormulaValue}
-            onFocus={() => {
+            onFocus={(e) => {
               if (canEdit && !editing) {
                 beginEdit(selection.focus, focusedCell?.raw ?? "", "formula");
               }
+              syncFormulaCaretFromInput(e.currentTarget, "formula", e.currentTarget.value.length);
             }}
             onChange={(e) => {
+              const nextVal = e.target.value;
+              setFormulaDismissed(false);
               if (!editing) {
-                beginEdit(selection.focus, e.target.value, "formula");
+                beginEdit(selection.focus, nextVal, "formula");
               } else {
-                setEditing({ ...editing, value: e.target.value });
+                setEditing({ ...editing, value: nextVal });
               }
+              syncFormulaCaretFromInput(e.currentTarget, "formula", nextVal.length);
             }}
+            onClick={(e) => syncFormulaCaretFromInput(e.currentTarget, "formula")}
+            onSelect={(e) => syncFormulaCaretFromInput(e.currentTarget, "formula")}
+            onKeyUp={(e) => syncFormulaCaretFromInput(e.currentTarget, "formula")}
             onKeyDown={(e) => {
               if (e.nativeEvent.isComposing || !editing) return;
+              if (handleFormulaPopupKeyDown(e)) return;
               if (e.key === "Escape") {
                 e.preventDefault();
                 setEditing(null);
@@ -1979,6 +2202,16 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           />
         </div>
       </div>
+
+      {editing && formulaInspection.mode !== "none" && (
+        <SheetFormulaBarAutocomplete
+          inspection={formulaInspection}
+          anchorRect={formulaAnchorRect}
+          selectedIndex={formulaAutoIdx}
+          onHoverIndex={setFormulaAutoIdx}
+          onSelectFunction={handleAcceptFormulaCompletion}
+        />
+      )}
 
       <SheetConflictBar
         cellConflicts={cellConflicts}
@@ -2058,35 +2291,49 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               const w = colWidths[cIdx];
               const isFrozenCol = cIdx < activeSheet.frozenCols;
               const activeCol = selection.focus.col === cIdx;
-              const colFilterRule = activeSheet.filter?.rules?.[String(cIdx)];
+              const colFilterRule = effectiveFilter?.rules?.[String(cIdx)];
+              const colFiltered = isColumnFilterActive(colFilterRule);
+              const filterOpenHere = filterPopover?.col === cIdx;
               return (
                 <div
                   key={col.id}
+                  ref={(el) => {
+                    if (el) colHeaderRefs.current.set(cIdx, el);
+                    else colHeaderRefs.current.delete(cIdx);
+                  }}
                   role="columnheader"
                   style={{
                     width: w,
                     height: COL_HEADER_HEIGHT,
                     ...(isFrozenCol ? { position: "sticky", left: colLeftOffsets[cIdx], zIndex: 35 } : {}),
                   }}
-                  className={`relative flex shrink-0 items-center justify-center border-b border-r border-[#dfe2e6] text-[11px] ${
+                  className={`group/col relative flex shrink-0 items-center justify-center border-b border-r border-[#dfe2e6] text-[11px] ${
                     activeCol
                       ? "bg-[#eaedf1] font-medium text-[#1f2329] shadow-[inset_0_-2px_0_#3370ff]"
                       : "bg-[#f5f6f7] text-[#646a73]"
                   } ${cIdx === activeSheet.frozenCols - 1 ? "border-r-2 border-r-[#9eb7f5]" : ""}`}
                 >
                   <span>{columnName(cIdx)}</span>
-                  {activeSheet.filter?.enabled && (
+                  {(activeSheet.filter?.enabled || canEdit) && (
                     <button
                       type="button"
+                      data-sheet-col-filter-btn={cIdx}
                       aria-label={t("筛选列 {col}", { col: columnName(cIdx) })}
+                      aria-expanded={filterOpenHere}
                       onClick={(e) => {
                         e.stopPropagation();
-                        setFilterCol((cur) => (cur === cIdx ? null : cIdx));
-                        setFilterInput(colFilterRule?.query ?? "");
+                        const headerRect = colHeaderRefs.current.get(cIdx)?.getBoundingClientRect() ?? e.currentTarget.getBoundingClientRect();
+                        openColumnFilter(cIdx, headerRect);
                       }}
-                      className={`absolute right-2 grid size-4 place-items-center rounded text-[10px] hover:bg-[#dfe5f5] ${colFilterRule?.query ? "text-[#3370ff]" : "text-[#8f959e]"}`}
+                      className={`absolute right-1.5 grid size-4 place-items-center rounded transition-opacity hover:bg-[#dfe5f5] ${
+                        colFiltered || filterOpenHere
+                          ? "bg-[#e1eaff] text-[#3370ff] opacity-100"
+                          : activeSheet.filter?.enabled
+                            ? "text-[#8f959e] opacity-100 hover:text-[#3370ff]"
+                            : "text-[#8f959e] opacity-0 group-hover/col:opacity-100 hover:text-[#3370ff]"
+                      }`}
                     >
-                      ▾
+                      <Filter size={10} />
                     </button>
                   )}
                   <span
@@ -2103,49 +2350,26 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             })}
           </div>
 
-          {/* Filter Popover */}
-          {filterCol !== null && activeSheet.filter?.enabled && (
-            <div className="fixed left-1/2 top-44 z-50 w-64 -translate-x-1/2 rounded-md border border-[#dee0e3] bg-white p-3 shadow-xl">
-              <div className="flex items-center justify-between text-[12px] font-medium">
-                <span>{t("按列筛选")} ({columnName(filterCol)})</span>
-                <button type="button" onClick={() => setFilterCol(null)}><X size={14} /></button>
-              </div>
-              <input
-                autoFocus
-                placeholder={t("包含关键字…")}
-                value={filterInput}
-                onChange={(e) => setFilterInput(e.target.value)}
-                className="mt-2 h-8 w-full rounded border px-2 text-[12px] outline-none focus:border-[#3370ff]"
+          {/* Feishu Column Header Value-Checklist Filter Popover */}
+          {filterPopover !== null && (() => {
+            const hdrRow = Math.max(0, activeSheet.filter?.headerRow ?? 0);
+            const headerCell = gridMap.cellByKey.get(`${hdrRow}:${filterPopover.col}`);
+            const headerText = formatCellDisplay(headerCell?.raw ?? "", activeEvalMap[`${hdrRow}:${filterPopover.col}`], headerCell?.style).trim();
+            const colLabel = headerText ? `${columnName(filterPopover.col)} · ${headerText}` : `${t("列")} ${columnName(filterPopover.col)}`;
+            return (
+              <SheetColumnFilterPopover
+                col={filterPopover.col}
+                colLabel={colLabel}
+                options={activeFilterOptions}
+                activeRule={effectiveFilter?.rules?.[String(filterPopover.col)]}
+                anchorRect={filterPopover.anchorRect}
+                canSort={canEdit}
+                onSort={(asc) => void handleSort(asc, filterPopover.col)}
+                onApply={(vals) => handleApplyColumnFilter(filterPopover.col, vals)}
+                onClose={() => setFilterPopover(null)}
               />
-              <div className="mt-2 flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextRules = { ...(activeSheet.filter.rules ?? {}) };
-                    delete nextRules[String(filterCol)];
-                    void handleWorksheetPatch(activeSheet.id, { filter: { ...activeSheet.filter, rules: nextRules } });
-                    setFilterCol(null);
-                  }}
-                  className="rounded border px-2 py-1 text-[12px]"
-                >
-                  {t("清除")}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const nextRules = { ...(activeSheet.filter.rules ?? {}) };
-                    if (filterInput.trim()) nextRules[String(filterCol)] = { query: filterInput.trim() };
-                    else delete nextRules[String(filterCol)];
-                    void handleWorksheetPatch(activeSheet.id, { filter: { ...activeSheet.filter, rules: nextRules } });
-                    setFilterCol(null);
-                  }}
-                  className="rounded bg-[#3370ff] px-2.5 py-1 text-[12px] text-white"
-                >
-                  {t("应用")}
-                </button>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Visible Rows (Fenwick-virtualized for large sheets; sticky frozen rows stay mounted) */}
           {(() => {
@@ -2226,6 +2450,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   const style = cell?.style ?? {};
                   const ev = activeEvalMap[key];
                   const condStyle = evaluateSheetConditionalFormat(cell?.raw ?? "", ev, activeSheet.conditionalFormats, rowIdx, colIdx);
+                  const visualCond = evaluateSheetVisualCondFormat(cell?.raw ?? "", ev, activeSheet.conditionalFormats, rowIdx, colIdx, visualCondBounds);
                   const dropdownRule = canEdit ? findSheetDropdown(activeSheet.validations, rowIdx, colIdx) : null;
                   const valState = evaluateSheetValidation(cell?.raw ?? "", activeSheet.validations, rowIdx, colIdx);
                   const protState = isSheetCellProtected(activeSheet.protectedRanges, rowIdx, colIdx, userId, role);
@@ -2282,7 +2507,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                       aria-label={sheetAddress(point)}
                       aria-selected={isSel}
                       data-sheet-cell={key}
-                      data-sheet-cond-bg={condStyle?.bg || undefined}
+                      data-sheet-cond-bg={condStyle?.bg || visualCond?.colorScaleBg || undefined}
                       data-sheet-protected={protState.protected ? (protState.blocked ? "blocked" : "allowed") : undefined}
                       style={{
                         width: cw,
@@ -2362,6 +2587,26 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                             }}
                           />
                         )}
+                        {visualCond?.colorScaleBg && !isEditingCell && !(isSel && !isFocus) && !refHighlight && (
+                          <span
+                            aria-hidden="true"
+                            data-sheet-cond-colorscale={visualCond.colorScaleBg}
+                            className={`pointer-events-none absolute z-0 ${isFocus ? "inset-[2px]" : "inset-[1px]"}`}
+                            style={{ backgroundColor: visualCond.colorScaleBg }}
+                          />
+                        )}
+                        {visualCond?.dataBar && visualCond.dataBar.percent > 0 && !isEditingCell && (
+                          <span
+                            aria-hidden="true"
+                            data-sheet-cond-databar={String(visualCond.dataBar.percent)}
+                            className="pointer-events-none absolute bottom-[3px] left-[2px] top-[3px] z-0 rounded-[2px]"
+                            style={{
+                              width: `calc(${visualCond.dataBar.percent}% - 4px)`,
+                              backgroundColor: visualCond.dataBar.fillColor,
+                              borderLeft: `2px solid ${visualCond.dataBar.barColor}`,
+                            }}
+                          />
+                        )}
                         {isEditingCell ? (
                           <input
                             ref={cellInputRef}
@@ -2369,10 +2614,18 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                             value={editing.value}
                             onCopy={(evCopy) => { if (!canCopy) { evCopy.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
                             onCut={(evCut) => { if (!canCopy) { evCut.preventDefault(); setStatusMessage(t("该表格已禁止复制内容")); } }}
-                            onChange={(evChange) => setEditing({ ...editing, value: evChange.target.value })}
+                            onChange={(evChange) => {
+                              setFormulaDismissed(false);
+                              setEditing({ ...editing, value: evChange.target.value });
+                              syncFormulaCaretFromInput(evChange.currentTarget, "cell", evChange.target.value.length);
+                            }}
+                            onClick={(evClick) => syncFormulaCaretFromInput(evClick.currentTarget, "cell")}
+                            onSelect={(evSel) => syncFormulaCaretFromInput(evSel.currentTarget, "cell")}
+                            onKeyUp={(evUp) => syncFormulaCaretFromInput(evUp.currentTarget, "cell")}
                             onKeyDown={(evKey) => {
                               evKey.stopPropagation();
                               if (evKey.nativeEvent.isComposing) return;
+                              if (handleFormulaPopupKeyDown(evKey)) return;
                               if (evKey.key === "Escape") {
                                 evKey.preventDefault();
                                 setEditing(null);
@@ -2390,11 +2643,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                             onBlur={() => {
                               if (editing?.source === "cell") void commitActiveEdit();
                             }}
-                            className="absolute inset-0 h-full w-full select-text border-2 border-[#3370ff] bg-white px-1 text-[12px] text-[#1f2329] outline-none"
+                            className="absolute inset-0 z-[2] h-full w-full select-text border-2 border-[#3370ff] bg-white px-1 text-[12px] text-[#1f2329] outline-none"
                           />
                         ) : (
                           <span
-                            className={`block w-full ${dropdownRule && !protState.blocked ? "pr-4" : ""} ${style.wrap ? "whitespace-normal break-words leading-tight" : "truncate"} ${alignClass} ${ev?.kind === "error" ? "text-[#d83931]" : ""}`}
+                            className={`relative z-[1] block w-full ${dropdownRule && !protState.blocked ? "pr-4" : ""} ${style.wrap ? "whitespace-normal break-words leading-tight" : "truncate"} ${alignClass} ${ev?.kind === "error" ? "text-[#d83931]" : ""}`}
                           >
                             {displayValue}
                           </span>

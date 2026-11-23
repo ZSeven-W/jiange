@@ -1,8 +1,13 @@
-import { layoutMindTopics, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, mindDescriptionTextWidth, mindTitleHeight, type MindDescriptions, type MindDescriptionStyles, type MindPaint, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic } from "./mindmap";
+import { mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, mindDescriptionTextWidth, mindTitleHeight, type MindDescriptions, type MindDescriptionStyles, type MindPaint, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic, type PositionedTopic } from "./mindmap";
+import { layoutMindTopicsWithStructure, mindRelationCurvePath, mindRelationLabelPoint, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
 import type { MindDrop } from "./mindmap-move";
 
-export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {}, descriptions = {}, descriptionStyles = {}, collapsed = new Set(), selected, editing, descriptionEditing, dragPreview, gpuBacked = false, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onEditDescription, onDescriptionDraft, onDescriptionFinish, onDescriptionCancel, onFold, onAddChild }: {
+export function MindMapSvg({ topics, structure = "logic", relations = [], relationFromId = null, onRemoveRelation, styles = {}, paints = {}, textFormats = {}, descriptions = {}, descriptionStyles = {}, collapsed = new Set(), selected, editing, descriptionEditing, dragPreview, gpuBacked = false, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onEditDescription, onDescriptionDraft, onDescriptionFinish, onDescriptionCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
+  structure?: MindLayoutKind;
+  relations?: readonly MindRelation[];
+  relationFromId?: string | null;
+  onRemoveRelation?: (id: string) => void;
   styles?: MindStyles;
   paints?: MindPaints;
   textFormats?: MindTextFormats;
@@ -28,20 +33,110 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
   onAddChild?: (id: string) => void;
 }) {
   const displayDescriptions = descriptionEditing ? { ...descriptions, [descriptionEditing.id]: descriptionEditing.value || " " } : descriptions;
-  const nodes = layoutMindTopics(topics, collapsed, styles, displayDescriptions, descriptionStyles), byId = new Map(nodes.map((node) => [node.topic.id, node]));
+  const nodes = layoutMindTopicsWithStructure(topics, structure, collapsed, styles, displayDescriptions, descriptionStyles), byId = new Map(nodes.map((node) => [node.topic.id, node]));
+  const topicById = new Map(topics.map((topic) => [topic.id, topic]));
   const children = new Map<string, string[]>();
   for (const topic of topics) if (topic.parent) children.set(topic.parent, [...(children.get(topic.parent) ?? []), topic.id]);
   const descendants = (id: string): number => { const pending = [...(children.get(id) ?? [])], seen = new Set<string>(); while (pending.length) { const next = pending.pop()!; if (seen.has(next)) continue; seen.add(next); pending.push(...(children.get(next) ?? [])); } return seen.size; };
+  const topBranchOf = (id: string): { root: PositionedTopic; branch: PositionedTopic } | null => {
+    let cur = topicById.get(id), branchId = id, guard = 0;
+    while (cur && cur.parent !== null && guard++ < 34) {
+      const parent = topicById.get(cur.parent);
+      if (!parent) return null;
+      if (parent.parent === null) {
+        const rootPos = byId.get(parent.id), branchPos = byId.get(branchId);
+        return rootPos && branchPos ? { root: rootPos, branch: branchPos } : null;
+      }
+      branchId = parent.id;
+      cur = parent;
+    }
+    return null;
+  };
+  const fishboneAttachX = (rootPos: PositionedTopic, branchPos: PositionedTopic): number => {
+    const spineY = rootPos.y + rootPos.h / 2;
+    const above = branchPos.y + branchPos.h / 2 < spineY;
+    const tipY = above ? branchPos.y + branchPos.h : branchPos.y;
+    return Math.round(branchPos.x + branchPos.w / 2 + Math.abs(spineY - tipY) * 0.36);
+  };
   const lineProps = (paint?: MindPaint) => ({ fill: "none", stroke: gpuBacked ? "transparent" : paint?.stroke ?? "#5b7ff1", strokeWidth: paint?.width ?? 2, strokeOpacity: (paint?.opacity ?? 100) / 100, strokeDasharray: paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined, pointerEvents: "none" as const });
-  return <g data-mindmap>
+  const visibleRelations = relations.filter((rel) => byId.has(rel.fromId) && byId.has(rel.toId));
+  return <g data-mindmap data-mind-structure={structure}>
+    {visibleRelations.length > 0 && (
+      <defs>
+        <marker id="mind-rel-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto">
+          <path d="M0,1 L9,5 L0,9 z" fill="#7b56d9" />
+        </marker>
+      </defs>
+    )}
+    {structure === "fishbone" && nodes.filter((node) => node.topic.parent === null).map((rootPos) => {
+      const branches = nodes.filter((n) => n.topic.parent === rootPos.topic.id);
+      if (!branches.length) return null;
+      const spineY = rootPos.y + rootPos.h / 2;
+      const tailX = Math.min(...branches.map((b) => fishboneAttachX(rootPos, b))) - 28;
+      return <line key={`fish-spine-${rootPos.topic.id}`} data-mind-fishbone-spine={rootPos.topic.id} x1={tailX} y1={spineY} x2={rootPos.x} y2={spineY} stroke={paints[rootPos.topic.id]?.stroke ?? "#5b7ff1"} strokeWidth={2.5} strokeLinecap="round" pointerEvents="none"/>;
+    })}
+    {structure === "timeline" && nodes.filter((node) => node.topic.parent === null).map((rootPos) => {
+      const milestones = nodes.filter((n) => n.topic.parent === rootPos.topic.id);
+      if (!milestones.length) return null;
+      const axisY = rootPos.y + rootPos.h / 2;
+      const endX = Math.max(...milestones.map((m) => m.x + m.w / 2)) + 24;
+      return <g key={`tl-spine-${rootPos.topic.id}`} data-mind-timeline-spine={rootPos.topic.id} pointerEvents="none">
+        <line x1={rootPos.x + rootPos.w} y1={axisY} x2={endX} y2={axisY} stroke={paints[rootPos.topic.id]?.stroke ?? "#5b7ff1"} strokeWidth={2.5} strokeLinecap="round"/>
+        {milestones.map((m) => <circle key={`tl-dot-${m.topic.id}`} cx={m.x + m.w / 2} cy={axisY} r={4.5} fill={paints[m.topic.id]?.stroke ?? "#3370ff"} stroke="#ffffff" strokeWidth={1.5}/>)}
+      </g>;
+    })}
     {nodes.map((node) => {
       const parent = node.topic.parent ? byId.get(node.topic.parent) : null;
       if (!parent) return null;
+      if (structure === "org") {
+        const px = parent.x + parent.w / 2, py = parent.y + parent.h, cx = node.x + node.w / 2, midY = (py + node.y) / 2;
+        return <g key={`edge-${node.topic.id}`}>
+          <path d={`M${px},${py} V${midY} H${cx}`} {...lineProps(paints[parent.topic.id])}/>
+          <path data-mind-branch={node.topic.id} d={`M${cx},${midY} V${node.y}`} {...lineProps(paints[node.topic.id])}/>
+        </g>;
+      }
+      if (structure === "fishbone") {
+        if (parent.topic.parent === null) {
+          const spineY = parent.y + parent.h / 2;
+          const above = node.y + node.h / 2 < spineY;
+          const tipY = above ? node.y + node.h : node.y;
+          const tipX = node.x + node.w / 2;
+          const attachX = fishboneAttachX(parent, node);
+          return <g key={`edge-${node.topic.id}`}>
+            <path data-mind-branch={node.topic.id} d={`M${attachX},${spineY} L${tipX},${tipY}`} {...lineProps(paints[node.topic.id] ?? paints[parent.topic.id])}/>
+          </g>;
+        }
+        const ctx = topBranchOf(node.topic.id);
+        const cy = node.y + node.h / 2;
+        if (ctx) {
+          const spineY = ctx.root.y + ctx.root.h / 2;
+          const attachX = fishboneAttachX(ctx.root, ctx.branch);
+          const ribX = Math.round(attachX - Math.abs(cy - spineY) * 0.36);
+          return <g key={`edge-${node.topic.id}`}>
+            <path data-mind-branch={node.topic.id} d={`M${ribX},${cy} H${node.x + node.w}`} {...lineProps(paints[node.topic.id] ?? paints[parent.topic.id])}/>
+          </g>;
+        }
+      }
+      if (structure === "timeline") {
+        if (parent.topic.parent === null) {
+          const axisY = parent.y + parent.h / 2;
+          const cx = node.x + node.w / 2;
+          const endY = node.y + node.h / 2 < axisY ? node.y + node.h : node.y;
+          return <g key={`edge-${node.topic.id}`}>
+            <path data-mind-branch={node.topic.id} d={`M${cx},${axisY} V${endY}`} {...lineProps(paints[node.topic.id] ?? paints[parent.topic.id])}/>
+          </g>;
+        }
+        const sx = parent.x + 10, cy = node.y + node.h / 2;
+        const sy = node.y < parent.y ? parent.y : parent.y + parent.h;
+        return <g key={`edge-${node.topic.id}`}>
+          <path data-mind-branch={node.topic.id} d={`M${sx},${sy} V${cy} H${node.x}`} {...lineProps(paints[node.topic.id] ?? paints[parent.topic.id])}/>
+        </g>;
+      }
       const startX = parent.x + parent.w, startY = parent.y + parent.h / 2, endY = node.y + node.h / 2, mid = startX + 30;
       return <g key={`edge-${node.topic.id}`}><path d={`M${startX},${startY} H${mid} V${endY}`} {...lineProps(paints[parent.topic.id])}/><path data-mind-branch={node.topic.id} d={`M${mid},${endY} H${node.x}`} {...lineProps(paints[node.topic.id])}/></g>;
     })}
     {nodes.map((node) => {
-      const root = node.topic.parent === null, active = selected === node.topic.id, isEditing = editing?.id === node.topic.id, isEditingDescription = descriptionEditing?.id === node.topic.id, description = mindDescriptionAt(descriptions, node.topic.id), descriptionStyle = mindDescriptionStyleAt(descriptionStyles, node.topic.id), descriptionSize = descriptionStyle?.size ?? 12, descriptionLineHeight = Math.ceil(descriptionSize * 1.35), descriptionLines = description ? mindDescriptionLines(description, descriptionSize) : [], style = styles[node.topic.id], paint = paints[node.topic.id], format = textFormats[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), align = format?.align ?? (root || shape !== "text" ? "center" : "left"), titleHeight = mindTitleHeight(node.topic, styles), titleCenter = node.y + titleHeight / 2;
+      const root = node.topic.parent === null, active = selected === node.topic.id, relSource = relationFromId === node.topic.id, isEditing = editing?.id === node.topic.id, isEditingDescription = descriptionEditing?.id === node.topic.id, description = mindDescriptionAt(descriptions, node.topic.id), descriptionStyle = mindDescriptionStyleAt(descriptionStyles, node.topic.id), descriptionSize = descriptionStyle?.size ?? 12, descriptionLineHeight = Math.ceil(descriptionSize * 1.35), descriptionLines = description ? mindDescriptionLines(description, descriptionSize) : [], style = styles[node.topic.id], paint = paints[node.topic.id], format = textFormats[node.topic.id], size = style?.size ?? (root ? 16 : 14), shape = style?.shape ?? (root ? "rect" : "text"), align = format?.align ?? (root || shape !== "text" ? "center" : "left"), titleHeight = mindTitleHeight(node.topic, styles), titleCenter = node.y + titleHeight / 2;
       const chars = [...node.topic.text], limit = Math.max(1, Math.floor((node.w - 32) / size)), label = chars.length > limit ? chars.slice(0, limit).join("") + "…" : node.topic.text;
       const textX = align === "center" ? node.x + node.w / 2 : align === "right" ? node.x + node.w - 8 : node.x + 8, anchor = align === "center" ? "middle" : align === "right" ? "end" : "start";
       const labelWidth = [...label].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? size : size * 0.58), 0), highlightX = align === "center" ? textX - labelWidth / 2 : align === "right" ? textX - labelWidth : textX;
@@ -49,7 +144,7 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
       return <g key={node.topic.id} pointerEvents={onSelect ? undefined : "none"} data-mind-topic={node.topic.id} onPointerDown={onSelect ? (event) => { event.stopPropagation(); onSelect(node.topic, event); } : undefined} onContextMenu={onContextMenu ? (event) => { event.preventDefault(); event.stopPropagation(); onContextMenu(node.topic, event); } : undefined} onDoubleClick={onEdit ? (event) => { event.stopPropagation(); onEdit(node.topic); } : undefined} style={{ cursor: onSelect ? "pointer" : undefined }}>
         <title>{node.topic.text}</title>
         <rect x={node.x} y={node.y} width={node.w} height={node.h} rx={shape === "oval" ? node.h / 2 : shape === "rect" ? 6 : 0} fill={gpuBacked || shape === "text" ? "transparent" : paint?.fill ?? (root ? "#5b7ff1" : "none")} fillOpacity={(paint?.fillOpacity ?? 100) / 100} stroke={!gpuBacked && shape !== "text" && (!root || paint?.stroke) ? paint?.stroke ?? "#5b7ff1" : "transparent"} strokeWidth={paint?.width ?? 2} strokeOpacity={(paint?.opacity ?? 100) / 100} strokeDasharray={paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined}/>
-        <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={!gpuBacked && active ? "#3370ff" : "transparent"} strokeWidth={2}/>
+        <rect data-mind-outline x={node.x} y={node.y} width={node.w} height={node.h} fill="none" stroke={relSource ? "#7b56d9" : !gpuBacked && active ? "#3370ff" : "transparent"} strokeWidth={2} strokeDasharray={relSource ? "4 3" : undefined}/>
         {!isEditing && !!label && format?.highlight && <rect x={highlightX - 2} y={titleCenter - size * 0.6} width={labelWidth + 4} height={size * 1.2} fill={format.highlight} pointerEvents="none"/>}
         {!isEditing && <text data-mind-placeholder={!node.topic.text ? "true" : undefined} x={textX} y={titleCenter} dominantBaseline="central" textAnchor={anchor} fill={node.topic.text ? style?.color ?? mindDefaultTextColor(root, shape, paint) : (mindDefaultTextColor(root, shape, paint) === "#ffffff" ? "rgba(255,255,255,0.78)" : "#a3a8af")} fontSize={size} fontWeight={format?.bold ? 700 : undefined} fontStyle={format?.italic ? "italic" : undefined} textDecoration={decoration || undefined}>{label || (onSelect ? "输入文本" : "")}</text>}
         {isEditing && <foreignObject x={node.x} y={node.y} width={node.w} height={titleHeight}>
@@ -62,17 +157,33 @@ export function MindMapSvg({ topics, styles = {}, paints = {}, textFormats = {},
         </foreignObject>}
       </g>;
     })}
+    {visibleRelations.map((rel) => {
+      const fromPos = byId.get(rel.fromId)!, toPos = byId.get(rel.toId)!;
+      const d = mindRelationCurvePath(fromPos, toPos);
+      const mid = mindRelationLabelPoint(fromPos, toPos);
+      const pillW = rel.label ? Math.max(36, [...rel.label].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? 11 : 6.5), 0) + 14) : 0;
+      return <g key={`rel-${rel.id}`} data-mind-relation={rel.id} data-mind-relation-from={rel.fromId} data-mind-relation-to={rel.toId}>
+        {onRemoveRelation && <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ cursor: "pointer" }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); onRemoveRelation(rel.id); }}><title>双击删除关联线</title></path>}
+        <path d={d} fill="none" stroke="#7b56d9" strokeWidth={2} strokeDasharray="6 4" markerEnd="url(#mind-rel-arrow)" pointerEvents="none"/>
+        {rel.label && <g pointerEvents="none">
+          <rect x={mid.x - pillW / 2} y={mid.y - 10} width={pillW} height={20} rx={10} fill="#f3eeff" stroke="#7b56d9" strokeWidth={1}/>
+          <text x={mid.x} y={mid.y} textAnchor="middle" dominantBaseline="central" fontSize={11} fontWeight={500} fill="#5b35b5">{rel.label}</text>
+        </g>}
+      </g>;
+    })}
     {nodes.map((node) => {
       const count = descendants(node.topic.id), folded = collapsed.has(node.topic.id);
       if (!count || (!folded && (!onFold || (onSelect && selected !== node.topic.id)))) return null;
-      const x = node.x + node.w + 10, y = node.y + node.h / 2;
+      const x = structure === "org" ? node.x + node.w / 2 : node.x + node.w + 10;
+      const y = structure === "org" ? node.y + node.h + 10 : node.y + node.h / 2;
       return <g key={`fold-${node.topic.id}`} data-mind-fold={node.topic.id} data-mind-fold-expanded={!folded ? "true" : undefined} role={onFold ? "button" : undefined} tabIndex={onFold ? 0 : undefined} aria-label={onFold ? `${folded ? "展开" : "折叠"}「${node.topic.text || "节点"}」` : undefined} aria-expanded={onFold ? !folded : undefined} pointerEvents={onFold ? undefined : "none"} style={{ cursor: onFold ? "pointer" : undefined }} onPointerDown={onFold ? (event) => event.stopPropagation() : undefined} onClick={onFold ? (event) => { event.stopPropagation(); onFold(node.topic.id); } : undefined} onKeyDown={onFold ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onFold(node.topic.id); } } : undefined}>
         <circle cx={x} cy={y} r={folded && count > 9 ? 10 : 8} fill="#fff" stroke="#3370ff"/>
         <text x={x} y={y} textAnchor="middle" dominantBaseline="central" fontSize={folded ? 10 : 16} fill="#3370ff">{folded ? count > 99 ? "99+" : count : "‹"}</text>
       </g>;
     })}
     {onAddChild && !editing && !descriptionEditing && nodes.filter((node) => node.topic.id === selected).map((node) => {
-      const x = node.x + node.w + (descendants(node.topic.id) ? 38 : 18), y = node.y + node.h / 2;
+      const x = structure === "org" ? node.x + node.w / 2 + (descendants(node.topic.id) ? 24 : 0) : node.x + node.w + (descendants(node.topic.id) ? 38 : 18);
+      const y = structure === "org" ? node.y + node.h + (descendants(node.topic.id) ? 10 : 18) : node.y + node.h / 2;
       return <g key={`add-${node.topic.id}`} data-mind-add={node.topic.id} role="button" tabIndex={0} aria-label={`为「${node.topic.text || "节点"}」添加子节点`} style={{ cursor: "pointer" }} onPointerDown={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); onAddChild(node.topic.id); }} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onAddChild(node.topic.id); } }}>
         <circle cx={x} cy={y} r={10} fill="#3370ff"/><path d={`M${x - 4},${y}h8 M${x},${y - 4}v8`} fill="none" stroke="#fff" strokeWidth={1.5} strokeLinecap="round" pointerEvents="none"/>
       </g>;

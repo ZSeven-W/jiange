@@ -12,6 +12,7 @@ import {
   type WikiVisibility,
 } from "@/lib/api";
 import { ask } from "@/components/ui/ask";
+import { FeishuSelect } from "@/components/feishu-select";
 import { useI18n } from "@/lib/i18n";
 
 export function WikiSpaceSettingsDialog({
@@ -204,42 +205,46 @@ export function WikiSpaceSettingsDialog({
             <p className="text-[12px] text-subtle">{t("按成员、部门（自动覆盖下级部门）或用户组授予知识库级权限。")}</p>
 
             <div className="flex flex-wrap gap-2">
-              <select
-                aria-label={t("授权对象类型")}
+              <FeishuSelect
+                ariaLabel={t("授权对象类型")}
                 value={subjectType}
-                onChange={(e) => setSubjectType(e.target.value as WikiGrantSubjectType)}
-                className="h-9 rounded-md border bg-surface px-2.5 text-[13px]"
-                data-wiki-grant-type
-              >
-                <option value="department">{t("部门")}</option>
-                <option value="group">{t("用户组")}</option>
-                <option value="user">{t("成员")}</option>
-              </select>
-              <select
-                aria-label={t("选择授权对象")}
-                value={effectiveSubjectId}
-                onChange={(e) => setSubjectId(Number(e.target.value))}
+                options={[
+                  { value: "department", label: t("部门") },
+                  { value: "group", label: t("用户组") },
+                  { value: "user", label: t("成员") },
+                ]}
+                onChange={(val) => setSubjectType(val as WikiGrantSubjectType)}
+                dataAttr={{ "data-wiki-grant-type": true }}
+                className="h-9 border bg-surface px-2.5 text-[13px]"
+                menuMinWidth={100}
+              />
+              <FeishuSelect
+                ariaLabel={t("选择授权对象")}
+                value={String(effectiveSubjectId)}
+                options={
+                  options.length === 0
+                    ? [{ value: "0", label: t("暂无可授权对象") }]
+                    : options.map((o) => ({ value: String(o.id), label: o.label }))
+                }
+                onChange={(val) => setSubjectId(Number(val))}
                 disabled={options.length === 0}
-                className="h-9 min-w-[160px] flex-1 rounded-md border bg-surface px-2.5 text-[13px]"
-                data-wiki-grant-subject
-              >
-                {options.length === 0 ? (
-                  <option value={0}>{t("暂无可授权对象")}</option>
-                ) : (
-                  options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)
-                )}
-              </select>
-              <select
-                aria-label={t("空间角色")}
+                dataAttr={{ "data-wiki-grant-subject": true }}
+                className="h-9 min-w-[160px] shrink flex-1 border bg-surface px-2.5 text-[13px] disabled:opacity-60"
+                menuMinWidth={180}
+              />
+              <FeishuSelect
+                ariaLabel={t("空间角色")}
                 value={grantRole}
-                onChange={(e) => setGrantRole(e.target.value as Role)}
-                className="h-9 rounded-md border bg-surface px-2.5 text-[13px]"
-                data-wiki-grant-role
-              >
-                <option value="view">{t("可阅读")}</option>
-                <option value="edit">{t("可编辑")}</option>
-                <option value="manage">{t("可管理")}</option>
-              </select>
+                options={[
+                  { value: "view", label: t("可阅读") },
+                  { value: "edit", label: t("可编辑") },
+                  { value: "manage", label: t("可管理") },
+                ]}
+                onChange={(val) => setGrantRole(val as Role)}
+                dataAttr={{ "data-wiki-grant-role": true }}
+                className="h-9 border bg-surface px-2.5 text-[13px]"
+                menuMinWidth={100}
+              />
               <button
                 type="button"
                 disabled={busy || effectiveSubjectId <= 0}
@@ -277,17 +282,21 @@ export function WikiSpaceSettingsDialog({
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
-                      <select
-                        aria-label={t("调整{name}的权限", { name: g.name })}
+                      <FeishuSelect
+                        ariaLabel={t("调整{name}的权限", { name: g.name })}
                         value={g.role}
                         disabled={busy}
-                        onChange={(e) => void upsertGrant(g.subjectType, g.subjectId, e.target.value as Role)}
-                        className="h-8 rounded-md border bg-surface px-2 text-[12px]"
-                      >
-                        <option value="view">{t("可阅读")}</option>
-                        <option value="edit">{t("可编辑")}</option>
-                        <option value="manage">{t("可管理")}</option>
-                      </select>
+                        options={[
+                          { value: "view", label: t("可阅读") },
+                          { value: "edit", label: t("可编辑") },
+                          { value: "manage", label: t("可管理") },
+                        ]}
+                        onChange={(val) => {
+                          if (val !== g.role) void upsertGrant(g.subjectType, g.subjectId, val as Role);
+                        }}
+                        className="h-8 border bg-surface px-2 text-[12px]"
+                        menuMinWidth={96}
+                      />
                       <button
                         type="button"
                         disabled={busy}

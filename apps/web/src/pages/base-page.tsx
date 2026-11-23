@@ -27,6 +27,14 @@ import { ViewTabs } from "./base/view-tabs";
 import { createdViewSelectionResult, isCreatedView, NewViewMenu, type CreatedViewSelection } from "./base/new-view-menu";
 import { ViewGlyph } from "./base/view-glyph";
 import { ViewConfigActions } from "./base/view-config-actions";
+import {
+  applyViewPermissions,
+  DEFAULT_VIEW_PERMISSIONS,
+  loadViewPermissions,
+  saveViewPermissions,
+  ViewPermissionsPanel,
+  type ViewPermissionsConfig,
+} from "./base/view-permissions-panel";
 import { CsvImport } from "./base/csv-import";
 import { AddRecordMenu } from "./base/add-record-menu";
 import { AiPasteDialog } from "./base/ai-paste-dialog";
@@ -146,6 +154,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const shareAnchor = useRef<HTMLButtonElement>(null);
   const [cfg, setCfgState] = useState<ViewConfig>(EMPTY_CONFIG);
   const configDrafts = useRef(new Map<string, ViewConfig>());
+  const [viewPerms, setViewPerms] = useState<ViewPermissionsConfig>(DEFAULT_VIEW_PERMISSIONS);
   const [filter, setFilter] = useState("");
   const [pane, setPane] = useState<"table" | "dashboard">("table");
   const refresh = () => {
@@ -174,6 +183,13 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     setCfgState(current ? configDrafts.current.get(`${id}:${current.id}`) ?? current.config ?? EMPTY_CONFIG : EMPTY_CONFIG);
   }, [id, current?.id, current?.config, current && JSON.stringify(current.config)]);
   // ^ load a view's saved config when switching views; JSON dep covers server updates
+  useEffect(() => {
+    setViewPerms(loadViewPermissions(id, current?.id));
+  }, [id, current?.id]);
+  const updateViewPerms = (next: ViewPermissionsConfig) => {
+    setViewPerms(next);
+    saveViewPermissions(id, current?.id, next);
+  };
 
   const filtersActive = (cfg.filters?.rules?.length ?? 0) > 0;
   const sortsActive = (cfg.sorts?.length ?? 0) > 0;
@@ -232,10 +248,31 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   // link/lookup 展开值写进展示缓存（cells），真值在 bt_links
   const canEdit = (base.role === "edit" || base.role === "manage") && !q.data.writeRestricted;
   const hidden = new Set(cfg.hidden ?? []);
-  const visibleFields = fields.filter((f) => !hidden.has(f.id));
+  const baseVisibleFields = fields.filter((f) => !hidden.has(f.id));
   const queryRecords = queryActive ? recordsForAuthorizedQuery(q.data.records, serverQuery.data?.records, q.isFetching, serverQuery.isSuccess) : [];
   const source = foldExpansions(q.data.fields, queryActive ? queryRecords : q.data.records, q.data.expansions ?? {});
-  const records = view(source, visibleFields, members, null, filter);
+  const permProjection = current?.type !== "form"
+    ? applyViewPermissions(baseVisibleFields, source, viewPerms, userId)
+    : { visibleFields: baseVisibleFields, readonlyFieldIds: new Set<number>(), hiddenFieldIds: new Set<number>(), records: source };
+  const visibleFields = permProjection.visibleFields;
+  const readonlyFieldIds = permProjection.readonlyFieldIds;
+  const allVisibleReadonly = visibleFields.length > 0 && visibleFields.every((f) => readonlyFieldIds.has(f.id));
+  const viewCanEdit = canEdit && !allVisibleReadonly;
+  const records = view(permProjection.records, visibleFields, members, null, filter);
+  const isReadonlyCellTarget = (target: EventTarget | null): boolean => {
+    if (readonlyFieldIds.size === 0 || !(target instanceof Element)) return false;
+    const cell = target.closest<HTMLElement>("[data-cell]");
+    if (!cell?.dataset.cell) return false;
+    const fid = Number(cell.dataset.cell.split(":")[1]);
+    return readonlyFieldIds.has(fid);
+  };
+  const isReadonlyCursor = (container: HTMLElement): boolean => {
+    if (readonlyFieldIds.size === 0) return false;
+    const cursor = container.querySelector<HTMLElement>("[data-cell].bg-sel-cursor");
+    if (!cursor?.dataset.cell) return false;
+    const fid = Number(cursor.dataset.cell.split(":")[1]);
+    return readonlyFieldIds.has(fid);
+  };
   const directDetailOpen = !q.isFetching && detailRecord !== null && q.data.records.some((record) => record.id === detailRecord);
   const dirty = current ? JSON.stringify(cfg) !== JSON.stringify(current.config ?? EMPTY_CONFIG) : false;
 
@@ -483,6 +520,13 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
         <span className="ml-auto" aria-hidden />
+        {current && current.type !== "form" && (
+          <ViewPermissionsPanel
+            fields={fields}
+            value={viewPerms}
+            onChange={updateViewPerms}
+          />
+        )}
         {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} configLocked={!!cfg.configLocked} isPersonal={current.ownerId != null} canManage={base.role === "manage"} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onConfigLockedChange={(configLocked) => setCfg({ ...cfg, configLocked: configLocked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
       </div>
       {/* 第二行：工具栏 */}
@@ -586,7 +630,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       {current?.type === "gallery" && (
         <Gallery
           baseId={id}
-          canEdit={canEdit}
+          canEdit={viewCanEdit}
           fields={visibleFields}
           records={records}
           members={members}
@@ -598,7 +642,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         <CalendarView
           baseId={id}
           tableId={activeTableId}
-          canEdit={canEdit}
+          canEdit={viewCanEdit}
           fields={visibleFields}
           records={records}
           members={members}
@@ -612,7 +656,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       {current?.type === "gantt" && (
         <Gantt
           baseId={id}
-          canEdit={canEdit}
+          canEdit={viewCanEdit}
           fields={visibleFields}
           records={records}
           members={members}
@@ -626,13 +670,16 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);
         const at = records.findIndex((r) => r.id === detailRecord);
+        const detailFields = current?.type !== "form"
+          ? applyViewPermissions(fields, [], viewPerms, userId).visibleFields
+          : fields;
         return rec ? (
           <RecordDetail
             baseId={id}
             userId={userId}
-            canEdit={canEdit}
+            canEdit={viewCanEdit}
             preventCopy={preventCopy}
-            fields={fields}
+            fields={detailFields}
             record={rec}
             members={members}
             onClose={() => setDetailRecord(null)}
@@ -643,11 +690,11 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           />
         ) : null;
       })()}
-      {current?.type === "form" && <FormSetup config={cfg} fields={fields} canEdit={base.role === "manage" && canEdit} saving={savingView} dirty={dirty} error={formSaveError?.viewId === current.id ? formSaveError.message : null} onChange={setCfg} onSave={() => void save()} onReset={() => { setCfg(current.config ?? EMPTY_CONFIG); setFormSaveError(null); }} />}
+      {current?.type === "form" && <FormSetup baseId={id} viewId={current.id} config={cfg} fields={fields} canEdit={base.role === "manage" && canEdit} saving={savingView} dirty={dirty} error={formSaveError?.viewId === current.id ? formSaveError.message : null} onChange={setCfg} onSave={() => void save()} onReset={() => { setCfg(current.config ?? EMPTY_CONFIG); setFormSaveError(null); }} />}
       {current?.type === "kanban" ? (
         <Kanban
           baseId={id}
-          canEdit={canEdit}
+          canEdit={viewCanEdit}
           fields={visibleFields}
           records={records}
           members={members}
@@ -657,7 +704,45 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           onMutate={refresh}
         />
       ) : current?.type === "grid" ? (
-        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={canEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={canEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <div
+          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          data-readonly-fields={readonlyFieldIds.size > 0 ? [...readonlyFieldIds].join(",") : undefined}
+          onDoubleClickCapture={(e) => {
+            if (isReadonlyCellTarget(e.target)) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          onClickCapture={(e) => {
+            if (
+              isReadonlyCellTarget(e.target) &&
+              e.target instanceof Element &&
+              e.target.closest('input[type="checkbox"], [data-touch-edit], button')
+            ) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          onPasteCapture={(e) => {
+            if (isReadonlyCursor(e.currentTarget)) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+          onKeyDownCapture={(e) => {
+            if (
+              isReadonlyCursor(e.currentTarget) &&
+              (e.key === "Enter" ||
+                e.key === "Backspace" ||
+                e.key === "Delete" ||
+                (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey))
+            ) {
+              e.preventDefault();
+              e.stopPropagation();
+            }
+          }}
+        >
+        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={viewCanEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={viewCanEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
           else if (action === "group") setCfg({ ...cfg, group: field.id });
           else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });
@@ -668,6 +753,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
             setCfg({ ...cfg, filters: { ...filters, rules: [...filters.rules, { f: field.id, op: opsFor(field.type)[0], v: "" }] } });
           }
         }} />
+        </div>
       ) : null}
           </div>
         </div>
@@ -694,7 +780,14 @@ function Popover({ label, active, width = 320, icon, children }: { label: string
       setPosition(popupPosition(rect, window.innerWidth, window.innerHeight, width));
     };
     const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node) && !body.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (
+        !ref.current?.contains(target) &&
+        !body.current?.contains(target) &&
+        !(target instanceof Element && target.closest('[role="listbox"]'))
+      ) {
+        setOpen(false);
+      }
     };
     place();
     document.addEventListener("mousedown", close);

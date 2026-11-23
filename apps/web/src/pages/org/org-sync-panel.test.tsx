@@ -1,5 +1,7 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { parseOrgDirectoryCsv, SAMPLE_ORG_DIRECTORY_CSV } from "./org-sync-panel";
+import { OrgSyncPanel, parseOrgDirectoryCsv, SAMPLE_ORG_DIRECTORY_CSV } from "./org-sync-panel";
 
 describe("parseOrgDirectoryCsv", () => {
   it("builds nested department trees, groups, roles, and leader flags from sample CSV", () => {
@@ -78,5 +80,19 @@ describe("parseOrgDirectoryCsv", () => {
   it("rejects empty CSV and invalid emails", () => {
     expect(() => parseOrgDirectoryCsv("   \n# comment")).toThrow("CSV 内容为空");
     expect(() => parseOrgDirectoryCsv("部门路径,姓名,邮箱\n研发,张三,not-an-email")).toThrow("邮箱格式无效");
+  });
+
+  it("renders FeishuSelect for sync provider without native select elements", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["workspace-org-sync", 10, 1], { sources: [], runs: [] });
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <OrgSyncPanel workspaceId={10} userId={1} canAdmin={true} />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("data-sync-provider-select");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('data-select-value="scim"');
+    expect(html).toContain("data-select-options");
   });
 });

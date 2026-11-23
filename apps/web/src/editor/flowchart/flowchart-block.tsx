@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Bold, Brush, ChevronDown, ChevronLeft, Circle, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, Italic, LayoutTemplate, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Strikethrough, Trash2, Type, Underline, Undo2, Workflow, X } from "lucide-react";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Bold, Brush, ChevronDown, ChevronLeft, Circle, Copy, Diamond, Download, Eraser, FileUp, Frame, Hand, ImageIcon, Italic, LayoutTemplate, Link2, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Strikethrough, Trash2, Type, Underline, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FeishuSelect } from "@/components/feishu-select";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
@@ -14,7 +14,9 @@ import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
 import { GPU_NATIVE_BOARD_SHAPES, WhiteboardGpuLayer } from "./whiteboard-gpu-layer";
 import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
-import { canonicalMindDescription, layoutMindTopics, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
+import { canonicalMindDescription, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
+import { layoutMindTopicsWithStructure, loadMindLayoutConfig, MIND_LAYOUT_OPTIONS, saveMindLayoutConfig, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
+import { createBoardFrame, exportFrameToSvg, loadBoardFrames, moveFrameWithContents, saveBoardFrames, type BoardFrame } from "./board-frames";
 import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
@@ -122,9 +124,50 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+function boardContentBounds(
+  graph: FlowGraph,
+  mindStructure: MindLayoutKind = "logic",
+  frames: readonly BoardFrame[] = [],
+  mindCollapsed?: ReadonlySet<string>,
+): { x: number; y: number; w: number; h: number } {
+  const boxes: Array<{ x: number; y: number; w: number; h: number }> = [];
+  if (graph.nodes.length || graph.strokes?.length || (graph.mind?.length && mindStructure === "logic")) {
+    boxes.push(flowBounds(graph));
+  }
+  if (graph.mind?.length && mindStructure !== "logic") {
+    const collapsed = mindCollapsed ?? new Set(graph.mindCollapsed ?? []);
+    const placed = layoutMindTopicsWithStructure(
+      graph.mind,
+      mindStructure,
+      collapsed,
+      graph.mindStyles,
+      graph.mindDescriptions,
+      graph.mindDescriptionStyles,
+    );
+    for (const p of placed) boxes.push({ x: p.x, y: p.y, w: p.w, h: p.h });
+  }
+  for (const f of frames) {
+    boxes.push({ x: f.x, y: f.y - 32, w: f.w, h: f.h + 32 });
+  }
+  if (!boxes.length) return flowBounds(graph);
+  const x0 = Math.min(...boxes.map((b) => b.x));
+  const y0 = Math.min(...boxes.map((b) => b.y));
+  const x1 = Math.max(...boxes.map((b) => b.x + b.w));
+  const y1 = Math.max(...boxes.map((b) => b.y + b.h));
+  return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+}
+
+export function FlowSvg({ graph, width, height, viewBox, selected, editing, frames, selectedFrameId, editingFrameId, onFrameHeaderDown, onFrameResizeDown, onFrameTitleDoubleClick, onFrameExport, onFrameDelete, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, mindStructure = "logic", mindRelations, mindRelationFrom, onRemoveMindRelation, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
   selected?: Set<string>; editing?: string | null;
+  frames?: readonly BoardFrame[];
+  selectedFrameId?: string | null;
+  editingFrameId?: string | null;
+  onFrameHeaderDown?: (e: React.PointerEvent, frame: BoardFrame) => void;
+  onFrameResizeDown?: (e: React.PointerEvent, frame: BoardFrame) => void;
+  onFrameTitleDoubleClick?: (frame: BoardFrame) => void;
+  onFrameExport?: (frame: BoardFrame) => void;
+  onFrameDelete?: (frame: BoardFrame) => void;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
   onEdgeDown?: (e: React.PointerEvent, edge: FlowEdge) => void;
   onStrokeDown?: (e: React.PointerEvent, stroke: FlowStroke) => void;
@@ -142,6 +185,10 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
   mindSelected?: string | null;
   mindCollapsed?: ReadonlySet<string>;
   mindDragPreview?: { id: string; x: number; y: number; drop: MindDrop | null } | null;
+  mindStructure?: MindLayoutKind;
+  mindRelations?: readonly MindRelation[];
+  mindRelationFrom?: string | null;
+  onRemoveMindRelation?: (id: string) => void;
   onMindFold?: (id: string) => void;
   onMindAddChild?: (id: string) => void;
   mindEditing?: { id: string; value: string } | null;
@@ -183,7 +230,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
 }) {
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const b = flowBounds(graph);
+  const b = boardContentBounds(graph, mindStructure, frames, mindCollapsed);
   const vb = viewBox ?? `${b.x - 40} ${b.y - 40} ${Math.max(200, b.w + 80)} ${Math.max(120, b.h + 80)}`;
   const filter = theme.sketch ? `url(#${idPrefix}-sketch)` : theme.shadow ? `url(#${idPrefix}-shadow)` : undefined;
   return (
@@ -193,6 +240,133 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
         <filter id={`${idPrefix}-sketch`} filterUnits="userSpaceOnUse" x="-20000" y="-20000" width="60000" height="60000"><feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="3" /><feDisplacementMap in="SourceGraphic" scale="2.2" /></filter>
         <filter id={`${idPrefix}-shadow`} x="-10%" y="-10%" width="130%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor="#1F2329" floodOpacity="0.12" /></filter>
       </defs>
+      {frames?.map((frame) => {
+        const isSel = selectedFrameId === frame.id;
+        const isEditingTitle = editingFrameId === frame.id;
+        const pillW = Math.max(74, Math.min(220, measureLabel(frame.title || "Frame", 64)));
+        const headerY = frame.y - 30;
+        return (
+          <g key={frame.id} data-board-frame={frame.id}>
+            <rect
+              x={frame.x}
+              y={frame.y}
+              width={frame.w}
+              height={frame.h}
+              rx={10}
+              fill={frame.bg ?? "#F8FAFF"}
+              fillOpacity={0.62}
+              stroke={isSel ? "#3370FF" : "#9AA5B8"}
+              strokeWidth={isSel ? 2 : 1.5}
+              strokeDasharray={isSel ? undefined : "6 4"}
+              pointerEvents="none"
+            />
+            <g
+              data-board-frame-header={frame.id}
+              style={{ cursor: onFrameHeaderDown ? "move" : undefined }}
+              onPointerDown={onFrameHeaderDown ? (e) => { e.stopPropagation(); onFrameHeaderDown(e, frame); } : undefined}
+              onDoubleClick={onFrameTitleDoubleClick ? (e) => { e.stopPropagation(); onFrameTitleDoubleClick(frame); } : undefined}
+            >
+              <rect
+                x={frame.x}
+                y={headerY}
+                width={pillW}
+                height={24}
+                rx={6}
+                fill={isSel ? "#3370FF" : "#EEF2FF"}
+                stroke={isSel ? "#3370FF" : "#C9D7FF"}
+                strokeWidth={1}
+              />
+              {!isEditingTitle && (
+                <text
+                  x={frame.x + 10}
+                  y={headerY + 12}
+                  dominantBaseline="central"
+                  fontSize={12}
+                  fontWeight={500}
+                  fill={isSel ? "#FFFFFF" : "#1F2329"}
+                  pointerEvents="none"
+                >
+                  {frame.title || "Frame"}
+                </text>
+              )}
+            </g>
+            {onFrameExport && (
+              <g
+                data-board-frame-export={frame.id}
+                role="button"
+                aria-label={`导出分区 ${frame.title}`}
+                style={{ cursor: "pointer" }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onFrameExport(frame); }}
+              >
+                <rect
+                  x={frame.x + pillW + 6}
+                  y={headerY}
+                  width={62}
+                  height={24}
+                  rx={6}
+                  fill="#FFFFFF"
+                  stroke="#DEE0E3"
+                  strokeWidth={1}
+                />
+                <text
+                  x={frame.x + pillW + 37}
+                  y={headerY + 12}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={11}
+                  fill="#1F2329"
+                  pointerEvents="none"
+                >
+                  导出分区
+                </text>
+              </g>
+            )}
+            {onFrameDelete && (
+              <g
+                data-board-frame-delete={frame.id}
+                role="button"
+                aria-label={`删除分区 ${frame.title}`}
+                style={{ cursor: "pointer" }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onFrameDelete(frame); }}
+              >
+                <rect
+                  x={frame.x + pillW + 72}
+                  y={headerY}
+                  width={22}
+                  height={24}
+                  rx={6}
+                  fill="#FFFFFF"
+                  stroke="#DEE0E3"
+                  strokeWidth={1}
+                />
+                <text
+                  x={frame.x + pillW + 83}
+                  y={headerY + 12}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  fontSize={13}
+                  fill="#646A73"
+                  pointerEvents="none"
+                >
+                  ×
+                </text>
+              </g>
+            )}
+            {isSel && onFrameResizeDown && (
+              <g
+                data-board-frame-resize={frame.id}
+                style={{ cursor: "nwse-resize" }}
+                onPointerDown={(e) => { e.stopPropagation(); onFrameResizeDown(e, frame); }}
+              >
+                <rect x={frame.x + frame.w - 10} y={frame.y + frame.h - 10} width={16} height={16} fill="transparent" />
+                <rect x={frame.x + frame.w - 5} y={frame.y + frame.h - 5} width={10} height={10} rx={2} fill="#3370FF" stroke="#FFFFFF" strokeWidth={1.5} pointerEvents="none" />
+              </g>
+            )}
+          </g>
+        );
+      })}
       {[...(graph.strokes ?? []), ...(draftStroke ? [draftStroke] : [])].map((stroke) => {
         const d = stroke.points.map((point, index) => `${index ? "L" : "M"}${point.x},${point.y}`).join(" ") + (stroke.points.length === 1 ? " l0.01,0.01" : "");
         return <g key={stroke.id} data-flow-stroke={stroke.id} opacity={erasing?.has(stroke.id) ? 0.2 : undefined}>
@@ -201,7 +375,7 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, onNo
           {!gpuBacked && <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>}
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} gpuBacked={gpuBacked} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} structure={mindStructure} relations={mindRelations} relationFromId={mindRelationFrom} onRemoveRelation={onRemoveMindRelation} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} gpuBacked={gpuBacked && mindStructure === "logic"} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -309,15 +483,19 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
   canCopy?: boolean;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
+  const [previewTick, setPreviewTick] = useState(0);
+  const boardKey = assets?.docId ? `doc-${assets.docId}` : "default";
+  const previewFrames = useMemo(() => loadBoardFrames(boardKey), [boardKey, previewTick]);
+  const previewMindCfg = useMemo(() => loadMindLayoutConfig(boardKey), [boardKey, previewTick]);
   const previewPins = useMemo(() => resolveBoardCommentPins(comments, graph), [comments, graph]);
   return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
-    {graph.nodes.length || graph.strokes?.length || graph.mind?.length ? <FlowSvg graph={graph} width="100%" height="100%" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
+    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} width="100%" height="100%" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       {previewPins.length > 0 && <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border border-[#FFD591] bg-[#FFF7E6] px-2 text-[12px] font-medium text-[#B25900] shadow-sm hover:bg-[#FFECCC]" data-flow-preview-pins><MessageSquare size={12} />{previewPins.length}</button>}
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
     {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
-    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} />}
+    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); setPreviewTick((t) => t + 1); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} />}
   </div>;
 }
 
@@ -326,6 +504,8 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
 type Drag =
   | { kind: "mind"; id: string; pointerId: number; startX: number; startY: number; currentX: number; currentY: number; base: FlowGraph }
   | { kind: "move"; ids: string[]; startX: number; startY: number; origin: Map<string, { x: number; y: number }>; strokeOrigin: Map<string, FlowStroke> }
+  | { kind: "frame-move"; frameId: string; startX: number; startY: number; frameOrigin: BoardFrame; baseGraph: FlowGraph; framesOrigin: BoardFrame[] }
+  | { kind: "frame-resize"; frameId: string; startX: number; startY: number; frameOrigin: BoardFrame; framesOrigin: BoardFrame[] }
   | { kind: "resize"; id: string; startX: number; startY: number; w: number; h: number }
   | { kind: "ink-resize"; id: string; startX: number; startY: number; stroke: FlowStroke }
   | { kind: "group-scale"; startX: number; startY: number; box: SelectionBox; nodes: FlowNode[]; strokes: FlowStroke[]; scale: number }
@@ -403,6 +583,16 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [gpuActive, setGpuActive] = useState(false);
+  const boardKey = assets?.docId ? `doc-${assets.docId}` : "default";
+  const [frames, setFrames] = useState<BoardFrame[]>(() => loadBoardFrames(boardKey));
+  const framesRef = useRef(frames); framesRef.current = frames;
+  const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
+  const [editingFrame, setEditingFrame] = useState<{ id: string; value: string } | null>(null);
+  const [mindStructure, setMindStructure] = useState<MindLayoutKind>(() => loadMindLayoutConfig(boardKey).structure);
+  const [mindRelations, setMindRelations] = useState<MindRelation[]>(() => loadMindLayoutConfig(boardKey).relations);
+  const [mindRelationFrom, setMindRelationFrom] = useState<string | null>(null);
+  const updateFrames = (next: BoardFrame[]) => { setFrames(next); framesRef.current = next; saveBoardFrames(boardKey, next); };
+  const persistMindLayout = (nextStructure: MindLayoutKind, nextRelations: MindRelation[]) => { setMindStructure(nextStructure); setMindRelations(nextRelations); saveMindLayoutConfig(boardKey, { structure: nextStructure, relations: nextRelations }); };
   const [mindSelected, setMindSelected] = useState<string | null>(null);
   // Scoped to this editor instance; do not retain a copied document across sessions.
   const recentMindClipboard = useRef<MindClip | null>(null);
@@ -453,8 +643,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [view, setView] = useState(() => { const b = flowBounds(initial); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [menu, setMenu] = useState<"theme" | "import" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | null>(null);
-  useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") setMindSelected(null); }, [tool, menu]);
-  useEffect(() => { if (mindSelected && !mindEditing && !layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).some((item) => item.topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, graph.mindCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles, mindSelected, mindEditing, readOnly, viewFoldOverrides]);
+  useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") { setMindSelected(null); setMindRelationFrom(null); } }, [tool, menu]);
+  useEffect(() => { if (mindSelected && !mindEditing && !layoutMindTopicsWithStructure(graph.mind ?? [], mindStructure, effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).some((item) => item.topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, graph.mindCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles, mindStructure, mindSelected, mindEditing, readOnly, viewFoldOverrides]);
   const [hand, setHand] = useState(false);
   const [guides, setGuides] = useState<Guide[]>([]);
   const [edgeKind, setEdgeKind] = useState<EdgeKind>("orthogonal");
@@ -572,7 +762,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const fitMindNodeIfClipped = (value: FlowGraph, id: string) => {
     if (!compact) return null;
-    const node = layoutMindTopics(value.mind ?? [], new Set(value.mindCollapsed ?? []), value.mindStyles, value.mindDescriptions, value.mindDescriptionStyles).find((item) => item.topic.id === id);
+    const node = layoutMindTopicsWithStructure(value.mind ?? [], mindStructure, new Set(value.mindCollapsed ?? []), value.mindStyles, value.mindDescriptions, value.mindDescriptionStyles).find((item) => item.topic.id === id);
     return node && ((node.x - view.x) * view.zoom < 12 || (node.x + node.w + 50 - view.x) * view.zoom > size.w - 12) ? requestAnimationFrame(() => fit(value, size, 40)) : null;
   };
   const updateMindDescriptionStyle = (change: Partial<MindDescriptionStyle>) => {
@@ -754,7 +944,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const openMindMenu = (x: number, y: number) => {
     const rect = svgWrap.current?.getBoundingClientRect();
-    const obstacles = rect ? layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).map((node) => ({ x: rect.left + (node.x - view.x) * view.zoom, y: rect.top + (node.y - view.y) * view.zoom, w: node.w * view.zoom, h: node.h * view.zoom })).filter((box) => box.x + box.w > 0 && box.y + box.h > 0 && box.x < window.innerWidth && box.y < window.innerHeight) : [];
+    const obstacles = rect ? layoutMindTopicsWithStructure(graph.mind ?? [], mindStructure, effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).map((node) => ({ x: rect.left + (node.x - view.x) * view.zoom, y: rect.top + (node.y - view.y) * view.zoom, w: node.w * view.zoom, h: node.h * view.zoom })).filter((box) => box.x + box.w > 0 && box.y + box.h > 0 && box.x < window.innerWidth && box.y < window.innerHeight) : [];
     const toolbar = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-mind-toolbar]")?.getBoundingClientRect();
     if (toolbar) obstacles.push({ x: toolbar.left, y: toolbar.top, w: toolbar.width, h: toolbar.height });
     const globalTools = svgWrap.current?.closest<HTMLElement>("[data-flow-editor]")?.querySelector<HTMLElement>("[data-flow-global-tools]")?.getBoundingClientRect();
@@ -814,14 +1004,51 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     erase.current = state; setErasePreview(new Set()); setSelected(new Set()); setMenu(null); setShowStarter(false); markErased(state, point);
     svgWrap.current?.setPointerCapture(event.pointerId);
   };
-  const fit = (g = graph, viewport = size, extraRight = 0) => {
+  const fit = (g = graph, viewport = size, extraRight = 0, structureOverride?: MindLayoutKind) => {
     autoFit.current = true;
-    const b = flowBounds(readOnly && g === graph ? { ...g, mindCollapsed: [...effectiveCollapsed] } : g);
+    const b = boardContentBounds(
+      readOnly && g === graph ? { ...g, mindCollapsed: [...effectiveCollapsed] } : g,
+      structureOverride ?? mindStructure,
+      framesRef.current,
+      readOnly && g === graph ? effectiveCollapsed : undefined,
+    );
     // 左侧留出竖向工具条，上下留出浮动栏。
     const padL = compact ? 24 : readOnly ? 40 : 90, padR = (compact ? 24 : 40) + extraRight, usableW = Math.max(100, viewport.w - padL - padR), usableH = Math.max(100, viewport.h - (compact ? 56 : 160));
     const zoom = Math.min(mindBoard ? 1 : 1.5, Math.max(0.2, Math.min(usableW / Math.max(1, b.w), usableH / Math.max(1, b.h))));
     const offsetY = compact ? 28 + (usableH - b.h * zoom) / 2 : (viewport.h - b.h * zoom) / 2;
     setView({ zoom, x: b.x - (padL + (usableW - b.w * zoom) / 2) / zoom, y: b.y - offsetY / zoom });
+  };
+  const addBoardFrame = () => {
+    if (readOnly) return;
+    const center = { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
+    const created = createBoardFrame(framesRef.current, center);
+    updateFrames([...framesRef.current, created]);
+    setSelectedFrameId(created.id);
+    setSelected(new Set());
+    setMindSelected(null);
+    setTool("select");
+    setHand(false);
+    setShowStarter(false);
+    setNotice({ ok: true, text: `已插入分区画框「${created.title}」，拖动标题栏可联动移动内部图形` });
+  };
+  const finishFrameTitleEdit = () => {
+    if (!editingFrame) return;
+    const trimmed = editingFrame.value.trim().slice(0, 120) || "Frame";
+    updateFrames(framesRef.current.map((f) => (f.id === editingFrame.id ? { ...f, title: trimmed } : f)));
+    setEditingFrame(null);
+  };
+  const deleteBoardFrame = (frame: BoardFrame) => {
+    if (readOnly) return;
+    updateFrames(framesRef.current.filter((f) => f.id !== frame.id));
+    if (selectedFrameId === frame.id) setSelectedFrameId(null);
+    if (editingFrame?.id === frame.id) setEditingFrame(null);
+  };
+  const exportSingleFrame = (frame: BoardFrame) => {
+    if (!canCopy) { setNotice({ ok: false, text: "当前文档权限不允许导出。" }); return; }
+    const svg = exportFrameToSvg(frame, graph.nodes, graph.edges, themeOf(graph.theme));
+    const safeName = (frame.title || "Frame").replace(/[\\/:*?"<>|]+/g, "_");
+    download(`${safeName}.svg`, new Blob([svg], { type: "image/svg+xml" }));
+    setNotice({ ok: true, text: `已导出分区「${frame.title}」为 SVG` });
   };
   useEffect(() => {
     if (!compact || !mindSelected || drag || mindEditing || mindDescriptionEditing) return;
@@ -898,8 +1125,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (recoveryOpen || editing || mindEditing || mindDescriptionEditing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
-      if (e.key === "Escape") { e.preventDefault(); if (drag?.kind === "mind") setDrag(null); else if (commentDraft) setCommentDraft(null); else if (openPinId !== null) setOpenPinId(null); else if (tool === "comment") setTool("select"); else if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
+      if (recoveryOpen || editing || editingFrame || mindEditing || mindDescriptionEditing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
+      if (e.key === "Escape") { e.preventDefault(); if (drag?.kind === "mind") setDrag(null); else if (mindRelationFrom) setMindRelationFrom(null); else if (commentDraft) setCommentDraft(null); else if (openPinId !== null) setOpenPinId(null); else if (tool === "comment") setTool("select"); else if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selectedFrameId) setSelectedFrameId(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); if (mindSelected) removeMindTopic(); else removeSelected(); }
       const onButton = e.target instanceof HTMLElement && !!e.target.closest("button");
       if (mindSelected && !readOnly && !onButton && e.key === "Tab") { if (e.shiftKey && !graph.mind?.find((topic) => topic.id === mindSelected)?.parent) return; e.preventDefault(); if (e.shiftKey) addMindParent(); else addMindTopic(false); }
@@ -1089,7 +1316,25 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       return;
     }
     let dx = (e.clientX - drag.startX) / view.zoom, dy = (e.clientY - drag.startY) / view.zoom;
-    if ((drag.kind === "move" || drag.kind === "resize") && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) autoFit.current = false;
+    if ((drag.kind === "move" || drag.kind === "resize" || drag.kind === "frame-move" || drag.kind === "frame-resize") && (Math.abs(dx) > 1 || Math.abs(dy) > 1)) autoFit.current = false;
+    if (drag.kind === "frame-move") {
+      const moved = moveFrameWithContents(drag.frameOrigin, drag.baseGraph.nodes, dx, dy);
+      const nextFrames = drag.framesOrigin.map((f) => (f.id === drag.frameId ? moved.frame : f));
+      setFrames(nextFrames);
+      framesRef.current = nextFrames;
+      if (moved.movedNodeIds.length > 0) {
+        setGraph((g) => ({ ...g, nodes: moved.nodes }));
+      }
+      return;
+    }
+    if (drag.kind === "frame-resize") {
+      const nextW = Math.max(160, Math.round(drag.frameOrigin.w + dx));
+      const nextH = Math.max(120, Math.round(drag.frameOrigin.h + dy));
+      const nextFrames = drag.framesOrigin.map((f) => (f.id === drag.frameId ? { ...f, w: nextW, h: nextH } : f));
+      setFrames(nextFrames);
+      framesRef.current = nextFrames;
+      return;
+    }
     if (drag.kind === "move") {
       // 对齐吸附：移动对象的左/中/右、上/中/下与其他图形对齐时吸附并显示参考线（按住 Alt 关闭）。
       const lines: Guide[] = [];
@@ -1155,9 +1400,22 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         commitMind(d.base, { ...d.base, mind: d.base.mind.map((item) => item.id === d.id ? { ...item, x, y } : item) });
         return;
       }
-      const drop = mindDropAt(d.base.mind, layoutMindTopics(d.base.mind, new Set(d.base.mindCollapsed ?? []), d.base.mindStyles, d.base.mindDescriptions, d.base.mindDescriptionStyles), d.id, toWorld(e.clientX, e.clientY));
+      const drop = mindDropAt(d.base.mind, layoutMindTopicsWithStructure(d.base.mind, mindStructure, new Set(d.base.mindCollapsed ?? []), d.base.mindStyles, d.base.mindDescriptions, d.base.mindDescriptionStyles), d.id, toWorld(e.clientX, e.clientY));
       const moved = drop && moveMindTopic(d.base.mind, d.id, drop); if (!moved || !drop) return;
       commitMind(d.base, { ...d.base, mind: moved, ...(drop.kind === "child" ? { mindCollapsed: (d.base.mindCollapsed ?? []).filter((id) => id !== drop.target) } : {}) });
+      return;
+    }
+    if (d.kind === "frame-move") {
+      saveBoardFrames(boardKey, framesRef.current);
+      if (JSON.stringify(d.baseGraph.nodes) !== JSON.stringify(graph.nodes)) {
+        const result = submit(d.baseGraph, graph);
+        const step = appliedFlowHistory(d.baseGraph, result.graph, result.appliedKeys);
+        if (result.applied && step) { setUndo((u) => [...u.slice(-99), step]); setRedo([]); }
+      }
+      return;
+    }
+    if (d.kind === "frame-resize") {
+      saveBoardFrames(boardKey, framesRef.current);
       return;
     }
     if (d.kind === "marquee") {
@@ -1233,7 +1491,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     if (editing.kind === "edge" && editEdge && (editEdge.label ?? "") !== editing.value) save({ ...graph, edges: graph.edges.map((x) => (x.id === editing.id ? { ...x, label: editing.value.slice(0, 200) || undefined } : x)) });
     setEditing(null);
   };
-  const requestClose = () => { finishEdit(); finishMindEdit(); finishMindDescription(); if (mindDescriptionEditingRef.current) return; if (recoveryRef.current.length) setRecoveryOpen(true); else onClose(); };
+  const requestClose = () => { finishEdit(); finishFrameTitleEdit(); finishMindEdit(); finishMindDescription(); if (mindDescriptionEditingRef.current) return; if (recoveryRef.current.length) setRecoveryOpen(true); else onClose(); };
 
   const importDrawio = async (file: File) => importDrawioText(await file.text());
   const importXmind = async (file: File) => {
@@ -1388,7 +1646,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const obstacles = [...graph.nodes.map((node) => ({ x: node.x, y: node.y, w: node.w, h: node.h })), ...(graph.strokes ?? []).map((stroke) => flowBounds({ nodes: [], edges: [], strokes: [stroke], theme: graph.theme }))].map((box) => ({ x: (box.x - view.x) * view.zoom - obstaclePadding, y: (box.y - view.y) * view.zoom - obstaclePadding, w: box.w * view.zoom + 2 * obstaclePadding, h: box.h * view.zoom + 2 * obstaclePadding }));
   const barPos = anchorBox ? placeSelectionToolbar({ x: (anchorBox.x - view.x - 16) * view.zoom, y: (anchorBox.y - view.y - 16) * view.zoom, w: (anchorBox.w + 32) * view.zoom, h: (anchorBox.h + 32) * view.zoom }, size, styleBarSize, obstacles) : null;
   const reserveStyleBar = compact && !readOnly && (selectedNodes.length > 0 || selectedEdges.length > 0 || selectedStrokes.length > 0);
-  const mindPositions = layoutMindTopics(graph.mind ?? [], effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
+  const mindPositions = layoutMindTopicsWithStructure(graph.mind ?? [], mindStructure, effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles), mindAnchor = mindSelected ? mindPositions.find((item) => item.topic.id === mindSelected) : null;
   const mindDefaultColor = mindDefaultTextColor(mindAnchor?.topic.parent === null, graph.mindStyles?.[mindSelected!]?.shape ?? "rect", graph.mindPaints?.[mindSelected!]);
   const currentPaint = graph.mindPaints?.[mindSelected!] ?? {};
   const currentTextFormat = graph.mindTextFormats?.[mindSelected!] ?? {};
@@ -1402,14 +1660,14 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const treeBottom = mindViewport && sameTree.length ? mindViewport.top + (Math.max(...sameTree.map((item) => item.y + item.h)) - view.y) * view.zoom : 0;
   const windowHeight = typeof window === "undefined" ? 720 : window.innerHeight;
   const toolbarTop = treeTop - 50 >= 64 ? treeTop - 50 : treeBottom + 8 <= windowHeight - 52 ? treeBottom + 8 : 64;
-  const mindToolbarHalf = typeof window === "undefined" ? 210 : Math.min(210, Math.max(0, window.innerWidth / 2 - 12));
+  const mindToolbarHalf = typeof window === "undefined" ? 280 : Math.min(280, Math.max(0, window.innerWidth / 2 - 12));
   const mindToolbarStyle = !compact && mindAnchor && mindViewport ? { left: Math.max(mindToolbarHalf, Math.min(window.innerWidth - mindToolbarHalf, mindViewport.left + (mindAnchor.x + mindAnchor.w / 2 - view.x) * view.zoom)), top: toolbarTop } : undefined;
   const movingMind = drag?.kind === "mind" && Math.hypot(drag.currentX - drag.startX, drag.currentY - drag.startY) > 6 ? drag : null;
   const movingTopic = movingMind?.base.mind?.find((topic) => topic.id === movingMind.id);
   const rootPreview = movingMind && movingTopic?.parent === null ? { x: Math.round(Math.max(-20000, Math.min(20000, movingTopic.x! + (movingMind.currentX - movingMind.startX) / view.zoom))), y: Math.round(Math.max(-20000, Math.min(20000, movingTopic.y! + (movingMind.currentY - movingMind.startY) / view.zoom))) } : null;
   const renderedGraph = rootPreview && movingMind ? { ...graph, mind: graph.mind?.map((topic) => topic.id === movingMind.id ? { ...topic, ...rootPreview } : topic) } : graph;
   const dragPoint = movingMind && !rootPreview && svgWrap.current ? toWorld(movingMind.currentX, movingMind.currentY) : null;
-  const mindDragPreview = dragPoint && movingMind?.base.mind ? { id: movingMind.id, ...dragPoint, drop: mindDropAt(movingMind.base.mind, layoutMindTopics(movingMind.base.mind, new Set(movingMind.base.mindCollapsed ?? []), movingMind.base.mindStyles, movingMind.base.mindDescriptions, movingMind.base.mindDescriptionStyles), movingMind.id, dragPoint) } : null;
+  const mindDragPreview = dragPoint && movingMind?.base.mind ? { id: movingMind.id, ...dragPoint, drop: mindDropAt(movingMind.base.mind, layoutMindTopicsWithStructure(movingMind.base.mind, mindStructure, new Set(movingMind.base.mindCollapsed ?? []), movingMind.base.mindStyles, movingMind.base.mindDescriptions, movingMind.base.mindDescriptionStyles), movingMind.id, dragPoint) } : null;
   const groupBox = !readOnly && tool === "select" && selectedNodes.length + selectedStrokes.length >= 2 && !selectedEdges.length ? selectionBounds(selectedNodes, selectedStrokes) : null;
   const boardPins = resolveBoardCommentPins(comments, renderedGraph, effectiveCollapsed);
   const openPin = openPinId !== null ? boardPins.find((p) => p.root.id === openPinId) ?? null : null;
@@ -1436,7 +1694,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     }
   };
 
-  return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag && !["mind", "pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
+  return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag?.kind === "frame-move" || drag?.kind === "frame-resize") { setFrames(drag.framesOrigin); framesRef.current = drag.framesOrigin; } if (drag && !["mind", "pan", "marquee", "connect", "reconnect", "frame-resize"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
     {/* 画布 */}
     <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: recovery.length ? 72 + Math.max(48, recoveryBannerHeight) : compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: mindBoard ? "none" : `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
       onTouchStart={(e) => {
@@ -1465,8 +1723,28 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
       onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { autoFit.current = false; if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
-      <WhiteboardGpuLayer graph={renderedGraph} view={view} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindCollapsed={effectiveCollapsed} mindSelected={mindSelected} mindDescriptionEditing={mindDescriptionEditing} mindBoard={mindBoard} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
-      <FlowSvg graph={renderedGraph} width="100%" height="100%" viewBox={viewBox} selected={selected} gpuBacked={gpuActive} draftStroke={inkPreview} erasing={erasePreview} mindSelected={mindSelected} mindEditing={mindEditing} mindDescriptionEditing={mindDescriptionEditing} mindCollapsed={effectiveCollapsed} mindDragPreview={mindDragPreview} onMindFold={!movingMind && !mindEditing && !mindDescriptionEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!movingMind && !readOnly && tool === "select" && !mindEditing && !mindDescriptionEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={tool === "pen" || tool === "eraser" ? undefined : (topic, event) => {
+      <WhiteboardGpuLayer graph={mindStructure === "logic" ? renderedGraph : { ...renderedGraph, mind: undefined }} view={view} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindCollapsed={effectiveCollapsed} mindSelected={mindSelected} mindDescriptionEditing={mindDescriptionEditing} mindBoard={mindBoard} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
+      <FlowSvg graph={renderedGraph} width="100%" height="100%" viewBox={viewBox} selected={selected} gpuBacked={gpuActive} draftStroke={inkPreview} erasing={erasePreview} frames={frames} selectedFrameId={selectedFrameId} editingFrameId={editingFrame?.id ?? null}
+        onFrameHeaderDown={readOnly ? undefined : (e, frame) => {
+          if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
+          finishEdit(); finishFrameTitleEdit();
+          setSelectedFrameId(frame.id); setSelected(new Set()); setMindSelected(null); setMenu(null);
+          lastInitial.current = graph;
+          setDrag({ kind: "frame-move", frameId: frame.id, startX: e.clientX, startY: e.clientY, frameOrigin: frame, baseGraph: graph, framesOrigin: framesRef.current });
+          svgWrap.current?.setPointerCapture(e.pointerId);
+        }}
+        onFrameResizeDown={readOnly ? undefined : (e, frame) => {
+          if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
+          setSelectedFrameId(frame.id);
+          setDrag({ kind: "frame-resize", frameId: frame.id, startX: e.clientX, startY: e.clientY, frameOrigin: frame, framesOrigin: framesRef.current });
+          svgWrap.current?.setPointerCapture(e.pointerId);
+        }}
+        onFrameTitleDoubleClick={readOnly ? undefined : (frame) => { setSelectedFrameId(frame.id); setEditingFrame({ id: frame.id, value: frame.title }); }}
+        onFrameExport={exportSingleFrame}
+        onFrameDelete={readOnly ? undefined : deleteBoardFrame}
+        mindStructure={mindStructure} mindRelations={mindRelations} mindRelationFrom={mindRelationFrom}
+        onRemoveMindRelation={readOnly ? undefined : (relId) => { persistMindLayout(mindStructure, mindRelations.filter((r) => r.id !== relId)); setNotice({ ok: true, text: "已删除跨分支关联线" }); }}
+        mindSelected={mindSelected} mindEditing={mindEditing} mindDescriptionEditing={mindDescriptionEditing} mindCollapsed={effectiveCollapsed} mindDragPreview={mindDragPreview} onMindFold={!movingMind && !mindEditing && !mindDescriptionEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!movingMind && !readOnly && tool === "select" && !mindEditing && !mindDescriptionEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={tool === "pen" || tool === "eraser" ? undefined : (topic, event) => {
         if (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current)) return;
         if (tool === "comment" && commentActions) {
           event.stopPropagation();
@@ -1477,10 +1755,26 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           return;
         }
         if (readOnly) return;
+        if (mindRelationFrom) {
+          if (topic.id === mindRelationFrom) {
+            setMindRelationFrom(null);
+            return;
+          }
+          const exists = mindRelations.some((r) => r.fromId === mindRelationFrom && r.toId === topic.id);
+          if (!exists) {
+            const relId = `mr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+            persistMindLayout(mindStructure, [...mindRelations, { id: relId, fromId: mindRelationFrom, toId: topic.id, label: "关联" }]);
+          }
+          setMindRelationFrom(null);
+          setMindSelected(topic.id);
+          setSelected(new Set());
+          setNotice({ ok: true, text: exists ? "这两个主题之间已存在关联线" : "已创建跨分支关联线（双击关联线可删除）" });
+          return;
+        }
         if (hand || space.current || event.button === 1) { setDrag({ kind: "pan", startX: event.clientX, startY: event.clientY, vx: view.x, vy: view.y }); return; }
         if (event.button !== 0) return;
         const wasEditing = !!mindEditing || !!mindDescriptionEditing; if (mindEditing) finishMindEdit(); if (mindDescriptionEditing) finishMindDescription(); if (mindDescriptionEditingRef.current) return; setMindMenu(null);
-        setMindSelected(topic.id); setSelected(new Set()); setTool("select"); setHand(false);
+        setMindSelected(topic.id); setSelected(new Set()); setSelectedFrameId(null); setTool("select"); setHand(false);
         if (!wasEditing) { try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointer may have ended */ } setDrag({ kind: "mind", id: topic.id, pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, currentX: event.clientX, currentY: event.clientY, base: graph }); }
       }} onMindContextMenu={readOnly || tool === "pen" || tool === "eraser" || tool === "comment" ? undefined : (topic, event) => { if (mindEditing) finishMindEdit(); if (mindDescriptionEditing) finishMindDescription(); if (mindDescriptionEditingRef.current) return; setMindSelected(topic.id); setSelected(new Set()); setDrag(null); setMindPaintMenu(null); openMindMenu(event.clientX, event.clientY); }} onMindEdit={readOnly || tool === "pen" || tool === "eraser" || tool === "comment" ? undefined : (topic) => { if (mindDescriptionEditingRef.current) return; setMindMenu(null); setDrag(null); startMindEdit(topic); }} onMindDraft={(value) => { const edit = mindEditingRef.current; if (edit) { const next = { ...edit, value }; mindEditingRef.current = next; setMindEditing(next); } }} onMindFinish={finishMindEdit} onMindCancel={cancelMindEdit} onMindEditDescription={readOnly ? undefined : startMindDescription} onMindDescriptionDraft={(value) => { const edit = mindDescriptionEditingRef.current; if (edit) { const next = { ...edit, value }; mindDescriptionEditingRef.current = next; setMindDescriptionEditing(next); } }} onMindDescriptionFinish={finishMindDescription} onMindDescriptionCancel={cancelMindDescription} resizeStroke={!readOnly && tool === "select" && selectedStrokes.length === 1 && !selectedNodes.length && !selectedEdges.length ? selectedStrokes[0].id : null} groupBox={groupBox} groupScalePct={drag?.kind === "group-scale" ? Math.round(drag.scale * 100) : null} onGroupScale={readOnly || !groupBox ? undefined : (event) => {
         if (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current)) return;
@@ -1492,7 +1786,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (e.target !== e.currentTarget && !(e.target instanceof SVGSVGElement)) return;
           if (mindDescriptionEditingRef.current) { finishMindDescription(); if (mindDescriptionEditingRef.current) return; }
-          setMenu(null); setMindMenu(null); setMindSelected(null); setOpenPinId(null);
+          finishFrameTitleEdit();
+          setMenu(null); setMindMenu(null); setMindSelected(null); setMindRelationFrom(null); setSelectedFrameId(null); setOpenPinId(null);
           if (tool === "comment" && commentActions) {
             const p = toWorld(e.clientX, e.clientY);
             const wx = Math.round(Math.max(-20000, Math.min(20000, p.x)));
@@ -1517,7 +1812,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           setSelected(base);
           setDrag({ kind: "marquee", x0: p.x, y0: p.y, x1: p.x, y1: p.y, base });
         }}
-        onNodeDown={(e, n) => { setMindSelected(null);
+        onNodeDown={(e, n) => { setMindSelected(null); setMindRelationFrom(null); setSelectedFrameId(null);
           e.stopPropagation(); setMenu(null); setOpenPinId(null);
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           if (tool === "comment" && commentActions) {
@@ -1618,7 +1913,36 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         return <textarea autoFocus value={editing.value} placeholder="输入文本" onChange={(e) => setEditing({ ...editing, value: e.target.value })} onBlur={finishEdit} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); finishEdit(); } if (e.key === "Escape") setEditing(null); }}
           className={cn("absolute select-text resize-none rounded border-2 border-primary bg-surface p-1 text-center outline-none", compact ? "text-[16px]" : "text-[14px]")} style={{ left: (anchor.x - view.x) * view.zoom, top: (anchor.y - view.y) * view.zoom, width: anchor.w * view.zoom, height: Math.max(32, anchor.h * view.zoom) }} data-flow-text-editor />;
       })()}
-      {!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 grid place-items-center">
+      {editingFrame && (() => {
+        const frame = frames.find((f) => f.id === editingFrame.id);
+        if (!frame) return null;
+        return (
+          <input
+            autoFocus
+            data-board-frame-title-input
+            aria-label="编辑分区标题"
+            maxLength={120}
+            value={editingFrame.value}
+            onPointerDown={(e) => e.stopPropagation()}
+            onChange={(e) => setEditingFrame({ ...editingFrame, value: e.target.value })}
+            onBlur={finishFrameTitleEdit}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.nativeEvent.isComposing) return;
+              if (e.key === "Enter") { e.preventDefault(); finishFrameTitleEdit(); }
+              if (e.key === "Escape") { e.preventDefault(); setEditingFrame(null); }
+            }}
+            style={{
+              left: (frame.x - view.x) * view.zoom,
+              top: (frame.y - 30 - view.y) * view.zoom,
+              width: Math.max(110, 140 * view.zoom),
+              height: Math.max(24, 24 * view.zoom),
+            }}
+            className="absolute z-30 select-text rounded border-2 border-[#3370FF] bg-surface px-2 text-[12px] font-medium text-foreground outline-none"
+          />
+        );
+      })()}
+      {!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !frames.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 grid place-items-center">
         <div className={cn("pointer-events-auto w-[min(560px,calc(100%-32px))] overflow-y-auto rounded-xl border border-[#DEE0E3] bg-surface p-4 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "max-h-[calc(100%-24px)]" : "max-h-[calc(100%-190px)]")} style={{ touchAction: "pan-y" }} onPointerDown={(e) => e.stopPropagation()} data-flow-template-picker>
           <div className="mb-3 flex items-center text-[14px] font-medium">从模板创建<button type="button" aria-label="关闭模板" onClick={() => setShowStarter(false)} className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover"><X size={16}/></button></div>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-5">{FLOW_TEMPLATES.map((t) => <button key={t.id} type="button" onClick={() => applyTemplate(t)} className="rounded-lg border border-[#DEE0E3] p-2 text-left hover:border-primary dark:border-border" data-flow-template={t.id}><div className="text-[13px] font-medium">{t.label}</div><div className="mt-1 text-[11px] leading-4 text-subtle">{t.desc}</div></button>)}</div>
@@ -1733,6 +2057,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <button type="button" className={cn(railBtn, tool === "select" && !hand && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => { setTool("select"); setHand(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
       <button type="button" className={cn(railBtn, (tool === "pen" || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title="画笔" aria-label="画笔" aria-pressed={tool === "pen" || tool === "eraser"} onClick={() => { setTool("pen"); setHand(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
       <button type="button" className={railBtn} aria-label="插入思维导图" title="插入思维导图" onClick={addMindMap} data-flow-mindmap-tool><ListTree size={18}/></button>
+      <button type="button" className={railBtn} aria-label="分区画框" title="分区画框 (Frame)" onClick={addBoardFrame} data-board-frame-tool><Frame size={18}/></button>
       <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => { setTool("round"); setHand(false); setShowStarter(false); }}><Square size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => { setTool("text"); setHand(false); setShowStarter(false); }}><Type size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => { setTool("diamond"); setHand(false); setShowStarter(false); }}><Diamond size={18} /></button>
@@ -1746,6 +2071,41 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     </div>}
 
     {!readOnly && mindSelected && !mindEditing && !mindDescriptionEditing && !movingMind && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
+      <FeishuSelect
+        ariaLabel="导图结构"
+        title="切换思维导图结构"
+        value={mindStructure}
+        options={MIND_LAYOUT_OPTIONS}
+        onChange={(val) => {
+          const next = val as MindLayoutKind;
+          persistMindLayout(next, mindRelations);
+          requestAnimationFrame(() => fit(graph, size, 0, next));
+        }}
+        className="h-8 min-w-[82px] border border-[#DEE0E3] px-2 text-[12px]"
+        chevronSize={11}
+        menuMinWidth={104}
+        dataAttr={{ "data-mind-structure-select": "true" }}
+      />
+      <button
+        type="button"
+        data-mind-relation-btn
+        aria-label="跨分支关联线"
+        aria-pressed={mindRelationFrom === mindSelected}
+        title="点击目标主题创建跨分支虚线关联"
+        className={cn(barBtn, mindRelationFrom === mindSelected && "bg-[#F3EEFF] text-[#7B56D9]")}
+        onClick={() => {
+          if (mindRelationFrom === mindSelected) {
+            setMindRelationFrom(null);
+          } else {
+            setMindRelationFrom(mindSelected);
+            setNotice({ ok: true, text: "请点击目标主题以创建跨分支关联线（Esc 取消）" });
+          }
+        }}
+      >
+        <Link2 size={14} />
+        <span>关联线</span>
+      </button>
+      <span className="mx-0.5 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
       <button type="button" data-mind-paint-trigger aria-label="节点形状" aria-expanded={mindPaintMenu?.kind === "shape"} title="更改图形" className={barBtn} onClick={(event) => openMindPaintMenu("shape", event.currentTarget)}>{selectedShape === "text" ? <Type size={17}/> : selectedShape === "oval" ? <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="9" cy="9" rx="7" ry="5"/></svg> : <Square size={17}/>}<ChevronDown size={11}/></button>
       {selectedShape !== "text" && <button type="button" data-mind-paint-trigger aria-label="节点填充" aria-expanded={mindPaintMenu?.kind === "fill"} title="节点填充" className={barBtn} onClick={(event) => openMindPaintMenu("fill", event.currentTarget)}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: currentPaint.fill === "none" ? "linear-gradient(135deg, transparent 46%, #c7cbd1 48%, #c7cbd1 52%, transparent 54%)" : currentPaint.fill ?? (mindAnchor?.topic.parent === null ? "#5b7ff1" : "#fff") }}/><ChevronDown size={11}/></button>}
       <button type="button" data-mind-paint-trigger aria-label="节点连线样式" aria-expanded={mindPaintMenu?.kind === "line"} title="节点连线样式" className={barBtn} onClick={(event) => openMindPaintMenu("line", event.currentTarget)}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: currentPaint.stroke ?? "#5b7ff1" }}/><ChevronDown size={11}/></button>
@@ -1974,6 +2334,7 @@ export function svgMarkup(graph: FlowGraph): string {
   clone.setAttribute("width", String(b.w + 80));
   clone.setAttribute("height", String(b.h + 80));
   clone.querySelectorAll("[data-flow-port],[data-flow-resize]").forEach((el) => el.remove());
+  clone.querySelectorAll("[data-board-frame-export],[data-board-frame-delete],[data-board-frame-resize]").forEach((el) => el.remove());
   clone.querySelectorAll("[data-ink-selection]").forEach((el) => el.remove());
   clone.querySelectorAll("[data-ink-resize]").forEach((el) => el.remove());
   clone.querySelectorAll("rect[stroke-dasharray='4 3']").forEach((el) => el.remove());

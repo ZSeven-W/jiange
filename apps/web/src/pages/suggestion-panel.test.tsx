@@ -42,6 +42,10 @@ describe("SuggestionPanel", () => {
     );
     expect(html).toContain("data-suggestion-panel");
     expect(html).toContain("data-suggestion-composer");
+    expect(html).toContain("data-suggestion-block-select");
+    expect(html).toContain('role="combobox"');
+    expect(html).toContain('data-select-value="1:2"');
+    expect(html).toContain("data-select-options");
     expect(html).toContain("data-accept-all-suggestions");
     expect(html).toContain("data-reject-all-suggestions");
     expect(html).toContain("原方案将在周五上线");
