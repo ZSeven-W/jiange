@@ -10,6 +10,7 @@ import { BaseColorIcon, DocColorIcon, SheetColorIcon, SlidesColorIcon, Whiteboar
 import { NewDocGlyph, TemplateGlyph } from "@/components/drive-action-icons";
 import { HomeUpload } from "@/components/home-upload";
 import { ShareDialog } from "@/components/share-dialog";
+import { FeishuSelect } from "@/components/feishu-select";
 import { HomeDocumentActions } from "./home-document-actions";
 import { canDuplicateHomeDocument, sameTrashSnapshot } from "./home-file-actions";
 import type { DriveUploadManager } from "./drive-upload";
@@ -396,7 +397,26 @@ function HomeViewToggle({ view, onChange }: { view: HomeView; onChange: (view: H
   return <div role="group" aria-label={t("展示方式")} className="mb-2 flex h-8 items-center rounded-md bg-[#f5f6f7] p-0.5"><button type="button" title={t("列表视图")} aria-label={t("列表视图")} aria-pressed={view === "list"} onClick={() => onChange("list")} className={`grid size-7 place-items-center rounded ${view === "list" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><List size={16}/></button><button type="button" title={t("卡片视图")} aria-label={t("卡片视图")} aria-pressed={view === "grid"} onClick={() => onChange("grid")} className={`grid size-7 place-items-center rounded ${view === "grid" ? "bg-white text-[#3370ff] shadow-sm" : "text-[#646a73] hover:bg-white/70"}`}><Grid2X2 size={15}/></button></div>;
 }
 function TypeFilter({ kind, onChange }: { kind: string; onChange: (kind: string) => void }) {
-  return <label className="relative mb-2 inline-flex shrink-0 items-center"><span className="sr-only">{t("文档类型")}</span><select value={kind} onChange={(e) => onChange(e.target.value)} className="h-8 cursor-pointer appearance-none rounded-md bg-transparent pl-2 pr-6 text-[12px] text-muted-foreground outline-none hover:bg-hover focus-visible:ring-2 focus-visible:ring-primary/40"><option value="all">{t("所有类型")}</option><option value="doc">{t("文档")}</option><option value="sheet">{t("表格")}</option><option value="board">{t("画板")}</option><option value="base">{t("多维表格")}</option><option value="slides">{t("幻灯片")}</option><option value="survey">{t("问卷")}</option><option value="file">{t("文件")}</option></select><ChevronDown size={12} className="pointer-events-none absolute right-2 text-subtle" /></label>;
+  return (
+    <FeishuSelect
+      value={kind}
+      onChange={onChange}
+      ariaLabel={t("文档类型")}
+      chevronSize={12}
+      menuMinWidth={108}
+      className="mb-2 h-8 bg-transparent px-2 text-[12px] text-muted-foreground"
+      options={[
+        { value: "all", label: t("所有类型") },
+        { value: "doc", label: t("文档") },
+        { value: "sheet", label: t("表格") },
+        { value: "board", label: t("画板") },
+        { value: "base", label: t("多维表格") },
+        { value: "slides", label: t("幻灯片") },
+        { value: "survey", label: t("问卷") },
+        { value: "file", label: t("文件") },
+      ]}
+    />
+  );
 }
 function BoardBadge() {
   return <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]" />;

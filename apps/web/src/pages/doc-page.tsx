@@ -2016,13 +2016,13 @@ function TopBar({
         </span>
         {ancestors.map((a, i) => (
           <span key={a.id} className="flex min-w-0 items-center gap-1.5">
-            <span className={cn("text-subtle", i === 0 && "hidden sm:inline")}>/</span>
+            <ChevronRight size={13} className={cn("shrink-0 text-subtle", i === 0 && "hidden sm:block")} aria-hidden />
             <a href={hrefOf(a)} className="truncate text-muted-foreground hover:text-foreground">
               {docTitle(a)}
             </a>
           </span>
         ))}
-        <span className={cn("text-subtle", !ancestors.length && "hidden sm:inline")}>/</span>
+        <ChevronRight size={13} className={cn("shrink-0 text-subtle", !ancestors.length && "hidden sm:block")} aria-hidden />
         <span className="truncate font-medium text-foreground">{meta ? docTitle({ title, docType: meta.docType }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>

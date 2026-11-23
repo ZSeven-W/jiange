@@ -107,6 +107,8 @@ export function FeishuSelect({
         title={title ?? ariaLabel}
         disabled={disabled}
         onClick={toggle}
+        data-select-value={value}
+        data-select-options={options.map((o) => `${o.value}:${o.label}`).join("|")}
         className={cn(
           "inline-flex h-8 shrink-0 cursor-pointer items-center justify-between gap-1.5 rounded-md bg-surface px-2 text-[13px] text-foreground transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-30",
           className,

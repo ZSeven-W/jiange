@@ -56,10 +56,19 @@ export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, o
       const parent = toolbar?.parentElement;
       if (!toolbar || !parent) return;
       const viewport = window.visualViewport;
-      const leftBound = viewport?.offsetLeft ?? 0;
-      const topBound = viewport?.offsetTop ?? 0;
-      const rightBound = leftBound + (viewport?.width ?? window.innerWidth);
-      const bottomBound = topBound + (viewport?.height ?? window.innerHeight);
+      const vpLeft = viewport?.offsetLeft ?? 0;
+      const vpTop = viewport?.offsetTop ?? 0;
+      const vpRight = vpLeft + (viewport?.width ?? window.innerWidth);
+      const vpBottom = vpTop + (viewport?.height ?? window.innerHeight);
+      // Keep the floating toolbar strictly inside the main document pane so it
+      // never bleeds over the docked left sidebar when selecting text near the
+      // start of a line.
+      const docScroll = toolbar.closest<HTMLElement>("[data-doc-scroll]");
+      const scrollRect = docScroll?.getBoundingClientRect();
+      const leftBound = scrollRect && scrollRect.width > 0 ? Math.max(vpLeft, scrollRect.left) : vpLeft;
+      const topBound = scrollRect && scrollRect.height > 0 ? Math.max(vpTop, scrollRect.top) : vpTop;
+      const rightBound = scrollRect && scrollRect.width > 0 ? Math.min(vpRight, scrollRect.right) : vpRight;
+      const bottomBound = vpBottom;
       const maxWidth = Math.max(1, rightBound - leftBound - 16);
       // Set the width cap before measuring so wrapped toolbars have their real height.
       toolbar.style.maxWidth = `${maxWidth}px`;
@@ -67,8 +76,8 @@ export function FormatToolbar({ x, y, marks, blockType, align, onMark, onLink, o
       const rect = toolbar.getBoundingClientRect();
       const anchorX = parentRect.left + x;
       const anchorY = parentRect.top + y;
-      const left = Math.max(leftBound + 8, Math.min(anchorX - rect.width / 2, rightBound - rect.width - 8));
-      const above = anchorY - rect.height - 8;
+      const left = Math.max(leftBound + 12, Math.min(anchorX - rect.width / 2, rightBound - rect.width - 12));
+      const above = anchorY - rect.height - 10;
       const below = anchorY + 28;
       const preferredTop = above >= topBound + 8 ? above : below + rect.height <= bottomBound - 8 ? below : above;
       const top = Math.max(topBound + 8, Math.min(preferredTop, bottomBound - rect.height - 8));

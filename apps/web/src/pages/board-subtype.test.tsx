@@ -72,7 +72,7 @@ describe("board document subtype UI", () => {
         <Home me={me} uploads={new DriveUploadManager(7, () => {})} />
       </QueryClientProvider>,
     );
-    expect(homeHtml).toContain('<option value="board">画板</option>');
+    expect(homeHtml).toContain("board:画板");
     expect(homeHtml).toContain("未命名画板");
     expect(homeHtml).toContain("text-[#34c759]");
 

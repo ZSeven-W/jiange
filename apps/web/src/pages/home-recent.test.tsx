@@ -39,7 +39,7 @@ describe("home recent visits", () => {
     const slide = { ...first, title: "演示文稿", kind: "slides" as const, viewedAt: "2026-11-07T10:00:00Z" };
     const html = render([slide]);
     expect(html).toContain("演示文稿");
-    expect(html).toContain('value="slides"');
+    expect(html).toContain("slides:幻灯片");
     expect(html).toContain('fill="#ED6D0C"');
   });
 
@@ -47,7 +47,7 @@ describe("home recent visits", () => {
     const file = { ...first, title: "验收资料.txt", kind: "file" as const, viewedAt: "2026-11-07T10:00:00Z" };
     const html = render([file]);
     expect(html).toContain("验收资料.txt");
-    expect(html).toContain('value="file"');
+    expect(html).toContain("file:文件");
     expect(html).toContain('bg-[#e8efff]');
   });
 });

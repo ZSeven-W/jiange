@@ -403,7 +403,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         <span className="hidden h-8 w-px bg-border md:block" />
         <div className="min-w-0 flex-1 px-1">
           <div className="flex min-w-0 items-center gap-1.5 text-[13px]">
-            {base.workspaceName && <><span className="hidden max-w-28 truncate text-muted-foreground sm:inline">{base.workspaceName}</span><ChevronRight size={13} className="hidden shrink-0 text-subtle sm:block" /></>}
+            {base.workspaceName && <><span className="hidden max-w-44 truncate text-muted-foreground sm:inline">{base.workspaceName}</span><ChevronRight size={13} className="hidden shrink-0 text-subtle sm:block" /></>}
             <span className="grid size-4 shrink-0 place-items-center rounded-[4px] bg-[#8d6cdf] text-white"><Table2 size={11} strokeWidth={2} /></span>
             <BaseTitle id={id} title={base.title || t("未命名多维表格")} canEdit={canEdit} onRenamed={refresh} />
           </div>
@@ -494,26 +494,29 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">{t("筛选仅覆盖当前加载的记录，更多记录可能未显示。")}</span>}
         {current?.type === "grid" && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <ViewSettingsBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
-        {current?.type === "kanban" && (
-          <label className="flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-hover">
-            <CircleChevronDown size={15} strokeWidth={1.7} aria-hidden />
-            <span>{t("分组依据")}</span>
-            <select
-              className="cursor-pointer bg-transparent text-foreground outline-none"
-              value={cfg.group ?? ""}
-              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-              aria-label={t("分组依据")}
-              data-group-field
-            >
-              <option value="">{t("选择字段")}</option>
-              {fields.filter((f) => f.type === "select").map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name}
-                </option>
-              ))}
-            </select>
-          </label>
-        )}
+        {current?.type === "kanban" && (() => {
+          const selectFields = fields.filter((f) => f.type === "select");
+          const activeGroupId = cfg.group && selectFields.some((f) => f.id === cfg.group) ? cfg.group : selectFields[0]?.id;
+          return (
+            <div className="flex h-8 shrink-0 items-center gap-1 rounded-md px-1.5 text-muted-foreground">
+              <CircleChevronDown size={15} strokeWidth={1.7} aria-hidden />
+              <span>{t("分组依据")}</span>
+              <FeishuSelect
+                value={activeGroupId ? String(activeGroupId) : ""}
+                options={[
+                  ...(selectFields.length === 0 ? [{ value: "", label: t("选择字段") }] : []),
+                  ...selectFields.map((f) => ({ value: String(f.id), label: f.name })),
+                ]}
+                onChange={(val) => setCfg({ ...cfg, group: Number(val) || undefined })}
+                ariaLabel={t("分组依据")}
+                className="h-7 bg-transparent px-1.5 text-[13px] font-medium text-foreground"
+                chevronSize={12}
+                menuMinWidth={112}
+                dataAttr={{ "data-group-field": true }}
+              />
+            </div>
+          );
+        })()}
         {current?.type === "kanban" && <CardConfigBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
         {(current?.type === "grid" || current?.type === "kanban") && <FilterBar baseId={id} aiAllowed={!preventCopy} fields={fields} members={members} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}

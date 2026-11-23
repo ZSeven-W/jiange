@@ -134,7 +134,7 @@ export function Kanban({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
     {error && <p role="alert" className="px-5 py-1 text-[12px] text-destructive">{error}</p>}
-    <div className="flex min-h-0 flex-1 items-start gap-2 overflow-x-auto px-5 py-1" data-kanban>
+    <div className="flex min-h-0 flex-1 items-start gap-2.5 overflow-x-auto px-4 py-1.5" data-kanban>
       {cols.map((col, ci) => {
         const optionIndex = (field.options ?? []).indexOf(col.key);
         const [tagBg, tagFg] = col.key ? optionColor(field, col.key) : ["#E4E5E7", "#646A73"];
@@ -143,7 +143,7 @@ export function Kanban({
           key={col.key || "__ungrouped"}
           style={{ background: tint(col.key) }}
           className={cn(
-            "relative flex max-h-full w-[256px] shrink-0 flex-col rounded-lg",
+            "relative flex max-h-full w-[244px] shrink-0 flex-col rounded-lg",
             over?.col === col.key && over.index === col.records.length && "outline outline-2 outline-primary/50",
             colDrag === col.key && "opacity-50",
             colOver === ci && colDrag && "before:absolute before:-left-[5px] before:inset-y-0 before:w-0.5 before:rounded before:bg-primary",
@@ -229,11 +229,16 @@ export function Kanban({
                   return <div className={cn("truncate leading-[22px]", title ? "font-medium" : "text-subtle")}>{title || t("未命名记录")}</div>;
                 })()}
                 {extra.some((f) => !isBlankCell(rec.cells[f.id])) && (
-                  <div className="mt-1.5 flex flex-wrap gap-1.5 text-[12px] text-muted-foreground">
+                  <div className="mt-2 space-y-1 border-t border-[#f0f1f4] pt-2 text-[12px]">
                     {extra.filter((f) => !isBlankCell(rec.cells[f.id])).map((f) => (
-                      <span key={f.id} className="max-w-[120px] truncate">
-                        <CellView field={f} record={rec} members={members} canEdit={false} />
-                      </span>
+                      <div key={f.id} className="flex items-center justify-between gap-2">
+                        <span className="shrink-0 text-[11px] text-[#8f959e]">{f.name}</span>
+                        <span className="min-w-0 truncate text-[#4e5969] tabular-nums">
+                          {f.type === "number" && typeof rec.cells[f.id] === "number"
+                            ? (rec.cells[f.id] as number).toLocaleString("en-US")
+                            : <CellView field={f} record={rec} members={members} canEdit={false} />}
+                        </span>
+                      </div>
                     ))}
                   </div>
                 )}

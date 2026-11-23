@@ -354,17 +354,19 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
           <button className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => { setMenu(false); openAISettings(); }} data-open-ai-settings><Sparkles size={14} className="text-primary" />{t("AI 设置")}</button>
           <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>{t("退出登录")}</button>
         </div>}
-        <div className="flex items-center gap-2 rounded-md px-1.5 py-1.5 hover:bg-hover">
+        <div className="flex items-center gap-1 rounded-md px-1 py-1.5 hover:bg-hover">
           <button onClick={() => setMenu((v) => !v)} aria-label={t("账号与空间")} aria-expanded={menu} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-            <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={24} />
-            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium">{me.user.name}</span><span className="block truncate text-[11px] text-subtle">{ws?.name ?? t("我的空间")}</span></span>
-            <Chevron className="text-subtle" />
+            <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={26} />
+            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium leading-tight">{me.user.name}</span><span className="block truncate text-[11px] leading-tight text-subtle">{ws?.name ?? t("我的空间")}</span></span>
+            <Chevron className="shrink-0 text-subtle" />
           </button>
-          <DarkToggle />
-          <LocaleToggle />
-          <button className="rounded p-1 text-subtle hover:bg-black/5 hover:text-foreground" title={t("退出登录")} onClick={onLogout} data-logout>
-            <LogOut size={14} strokeWidth={1.7} />
-          </button>
+          <div className="flex shrink-0 items-center gap-0.5">
+            <DarkToggle />
+            <LocaleToggle compact />
+            <button className="grid size-6 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10" title={t("退出登录")} aria-label={t("退出登录")} onClick={onLogout} data-logout>
+              <LogOut size={13} strokeWidth={1.7} />
+            </button>
+          </div>
         </div>
       </div>
       {searchOpen && <GlobalSearch userId={me.user.id} onClose={closeSearch} />}
@@ -628,7 +630,7 @@ export function DarkToggle() {
   }, [dark]);
   return (
     <button
-      className="grid size-5 place-items-center rounded text-subtle hover:bg-black/10 hover:text-foreground dark:hover:bg-white/10"
+      className="grid size-6 shrink-0 place-items-center rounded text-subtle hover:bg-black/5 hover:text-foreground dark:hover:bg-white/10"
       title={dark ? t("切换到浅色") : t("切换到深色")}
       aria-label={dark ? t("切换到浅色") : t("切换到深色")}
       onClick={() => setDark((v) => !v)}
