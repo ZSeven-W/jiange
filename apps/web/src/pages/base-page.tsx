@@ -37,13 +37,14 @@ import { BaseAuthorizationEpoch, BaseAuthorizationFence, isBaseAuthorizationErro
 import { refreshWrites, useWriteLedger, WriteIssues } from "./base/write-safety";
 import { ask, askText } from "@/components/ui/ask";
 import { ShareDialog } from "@/components/share-dialog";
+import { FeishuSelect } from "@/components/feishu-select";
 import { ResourceReferencesButton } from "./resource-references-button";
 import { go } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, viewToUndoSnapshot, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDownUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, Check, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
 import { canDuplicateHomeDocument } from "./home-file-actions";
 
 export { view } from "./base/view";
@@ -528,40 +529,41 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         </span>}
         {(current?.type === "grid" || current?.type === "kanban") && <ToolbarSearch value={filter} onChange={setFilter} />}
         {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
-        {(current?.type === "calendar" || current?.type === "gantt") && (
-          <div className="flex shrink-0 items-center gap-1">
-            <select
-              className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
-              value={cfg.group ?? ""}
-              onChange={(e) => setCfg({ ...cfg, group: Number(e.target.value) || undefined })}
-              aria-label={t("开始日期字段")}
-              data-calendar-field
-            >
-              <option value="">{current.type === "gantt" ? t("选择开始日期") : t("选择日期字段")}</option>
-              {fields.filter((f) => f.type === "date").map((f) => (
-                <option key={f.id} value={f.id}>
-                  {t("按「{name}」排布", { name: f.name })}
-                </option>
-              ))}
-            </select>
-            {fields.filter((f) => f.type === "date").length >= 2 && (
-              <select
-                className="h-8 rounded-md bg-surface px-2 text-muted-foreground hover:bg-hover"
-                value={cfg.endField ?? ""}
-                onChange={(e) => setCfg({ ...cfg, endField: Number(e.target.value) || undefined })}
-                aria-label={t("结束日期字段")}
-                data-schedule-end-field
-              >
-                <option value="">{t("自动结束字段")}</option>
-                {fields.filter((f) => f.type === "date" && f.id !== cfg.group).map((f) => (
-                  <option key={f.id} value={f.id}>
-                    {t("结束「{name}」", { name: f.name })}
-                  </option>
-                ))}
-              </select>
-            )}
-          </div>
-        )}
+        {(current?.type === "calendar" || current?.type === "gantt") && (() => {
+          const dateFields = fields.filter((f) => f.type === "date");
+          const startOptions = [
+            { value: "", label: current.type === "gantt" ? t("选择开始日期") : t("选择日期字段") },
+            ...dateFields.map((f) => ({ value: String(f.id), label: t("按「{name}」排布", { name: f.name }) })),
+          ];
+          const endOptions = [
+            { value: "", label: t("自动结束字段") },
+            ...dateFields.filter((f) => f.id !== cfg.group).map((f) => ({ value: String(f.id), label: t("结束「{name}」", { name: f.name }) })),
+          ];
+          return (
+            <div className="flex shrink-0 items-center gap-1.5">
+              <FeishuSelect
+                value={cfg.group ? String(cfg.group) : ""}
+                options={startOptions}
+                onChange={(val) => setCfg({ ...cfg, group: Number(val) || undefined })}
+                ariaLabel={t("开始日期字段")}
+                className="px-2.5 text-[13px] text-muted-foreground"
+                chevronSize={12}
+                dataAttr={{ "data-calendar-field": true }}
+              />
+              {dateFields.length >= 2 && (
+                <FeishuSelect
+                  value={cfg.endField ? String(cfg.endField) : ""}
+                  options={endOptions}
+                  onChange={(val) => setCfg({ ...cfg, endField: Number(val) || undefined })}
+                  ariaLabel={t("结束日期字段")}
+                  className="px-2.5 text-[13px] text-muted-foreground"
+                  chevronSize={12}
+                  dataAttr={{ "data-schedule-end-field": true }}
+                />
+              )}
+            </div>
+          );
+        })()}
         {base.role === "manage" && (
           <button className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground sm:hidden" onClick={() => setAutoOpen(true)} data-open-automations>
             {t("自动化")}

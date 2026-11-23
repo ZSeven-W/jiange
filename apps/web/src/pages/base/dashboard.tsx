@@ -412,7 +412,7 @@ export function Dashboard({ baseId, activeTableId, records, fields, members, can
                   <MetricWidgetView summary={computeMetricWidget(widget, records, fields, members)} />
                 )}
                 {widget.type === "bar" && (
-                  <BarChartView series={computeGroupedSeries(widget, records, fields, members)} />
+                  <BarChartView series={computeGroupedSeries(widget, records, fields, members)} wide={widget.span === 2} />
                 )}
                 {widget.type === "horizontal_bar" && (
                   <HorizontalBarChartView series={computeGroupedSeries(widget, records, fields, members)} />
@@ -421,7 +421,7 @@ export function Dashboard({ baseId, activeTableId, records, fields, members, can
                   <PieChartView series={computeGroupedSeries(widget, records, fields, members)} />
                 )}
                 {widget.type === "line" && (
-                  <LineChartView series={computeGroupedSeries(widget, records, fields, members)} />
+                  <LineChartView series={computeGroupedSeries(widget, records, fields, members)} wide={widget.span === 2} />
                 )}
                 {widget.type === "pivot" && (
                   <PivotTableView series={computeGroupedSeries(widget, records, fields, members)} />

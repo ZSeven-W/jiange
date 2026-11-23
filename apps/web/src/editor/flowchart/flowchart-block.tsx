@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Bold, Brush, ChevronDown, ChevronLeft, Circle, Copy, Diamond, Download, Eraser, FileUp, Hand, ImageIcon, Italic, LayoutTemplate, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Strikethrough, Trash2, Type, Underline, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { FeishuSelect } from "@/components/feishu-select";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, boundedFlowOffset, bounds, flowBounds, flowIntentWrites, flowWrites, isContainer, moveFlowSelection, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, normalizeStroke, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowStroke, type FlowTheme, type Port, type Shape } from "./model";
 import { DrawioError, parseDrawio, toDrawio } from "./drawio";
@@ -633,7 +634,11 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const cancelMindDescription = () => { mindDescriptionEditingRef.current = null; setMindDescriptionEditing(null); };
   const addMindMap = () => {
     if (readOnly || (graph.mind?.length ?? 0) + 4 > 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return; }
-    const root = newFlowId("m"), x = Math.round(Math.max(-20000, Math.min(20000, view.x + size.w / view.zoom / 2 - 120))), y = Math.round(Math.max(-20000, Math.min(20000, view.y + size.h / view.zoom / 2 - 24)));
+    const hasContent = graph.nodes.length > 0 || (graph.mind?.length ?? 0) > 0 || (graph.strokes?.length ?? 0) > 0;
+    const existing = hasContent ? flowBounds(graph) : null;
+    const rawX = existing ? existing.x + existing.w + 90 : view.x + size.w / view.zoom / 2 - 120;
+    const rawY = existing ? existing.y + existing.h / 2 - 24 : view.y + size.h / view.zoom / 2 - 24;
+    const root = newFlowId("m"), x = Math.round(Math.max(-20000, Math.min(20000, rawX))), y = Math.round(Math.max(-20000, Math.min(20000, rawY)));
     const topics: MindTopic[] = [{ id: root, parent: null, order: 0, text: "", x, y }, ...[0, 1, 2].map((order) => ({ id: newFlowId("m"), parent: root, order, text: "" }))];
     const result = commitMind(graph, { ...graph, mind: [...(graph.mind ?? []), ...topics] });
     if (result.applied && result.graph.mind?.some((topic) => topic.id === root)) { setMindSelected(root); setSelected(new Set()); setTool("select"); setHand(false); setShowStarter(false); }
@@ -1631,7 +1636,16 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           <div className="relative"><button type="button" aria-label="笔迹颜色" title="笔迹颜色" className={barBtn} onClick={() => setMenu(menu === "ink-color" ? null : "ink-color")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: selectedStrokes[0].color }}/><ChevronDown size={12}/></button>
             {menu === "ink-color" && <div className={cn(pop, "left-0 w-[208px] p-2")} role="group" aria-label="笔迹颜色">{INK_COLORS.map(([color, label]) => <button key={color} type="button" aria-label={`笔迹颜色 ${label}`} title={label} onClick={() => { patchStrokes({ color }); setMenu(null); }} className="m-1 size-5 rounded-full border border-[#bbbfc4]" style={{ background: color }}/>)}</div>}
           </div>
-          <select aria-label="笔迹粗细" title="笔迹粗细" value={selectedStrokes[0].width} onChange={(e) => patchStrokes({ width: Number(e.target.value) })} className="h-8 rounded-md border bg-surface px-1 text-[13px]">{INK_WIDTHS.includes(selectedStrokes[0].width as typeof INK_WIDTHS[number]) ? null : <option value={selectedStrokes[0].width}>{selectedStrokes[0].width}</option>}{INK_WIDTHS.map((width) => <option key={width} value={width}>{width}</option>)}</select>
+          <FeishuSelect
+            ariaLabel="笔迹粗细"
+            title="笔迹粗细"
+            value={String(selectedStrokes[0].width)}
+            options={[...(INK_WIDTHS.includes(selectedStrokes[0].width as typeof INK_WIDTHS[number]) ? [] : [selectedStrokes[0].width]), ...INK_WIDTHS].map((width) => ({ value: String(width), label: String(width) }))}
+            onChange={(val) => patchStrokes({ width: Number(val) })}
+            className="min-w-[52px] border text-[13px]"
+            chevronSize={11}
+            menuMinWidth={64}
+          />
           <button type="button" className={barBtn} onClick={() => { const clip = clipOfSelection(); if (clip) pasteClip(clip, 20); }} title="创建副本" aria-label="创建笔迹副本"><Copy size={15}/></button>
           <button type="button" className={barBtn} onClick={removeSelected} data-flow-delete-ink><Trash2 size={15}/>删除笔迹</button>
         </>}
@@ -1652,7 +1666,16 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
           <div className="relative"><button type="button" className={barBtn} title="文字颜色" onClick={() => setMenu(menu === "color" ? null : "color")}><span className="grid size-[18px] place-items-center rounded-[3px] bg-[#FFE928] text-[12px] font-medium" style={{ color: selectedNodes[0].color ?? theme.text }}>A</span><ChevronDown size={12} /></button>
             {menu === "color" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="grid grid-cols-8 gap-1">{["#1F2329", "#8F959E", "#D83931", "#DE7802", "#DC9B04", "#2EA121", "#245BDB", "#6425D0"].map((c) => <button key={c} type="button" onClick={() => { patchNodes({ color: c }); setMenu(null); }} className="grid size-[18px] place-items-center rounded border text-[11px] font-medium" style={{ color: c }}>A</button>)}</div></div>}
           </div>
-          <select value={selectedNodes[0].size ?? 14} onChange={(e) => patchNodes({ size: Number(e.target.value) })} className="h-8 rounded-md border bg-surface px-1 text-[13px]" title="字号">{[12, 14, 16, 18, 20, 24, 28, 32].map((v) => <option key={v} value={v}>{v}</option>)}</select>
+          <FeishuSelect
+            ariaLabel="字号"
+            title="字号"
+            value={String(selectedNodes[0].size ?? 14)}
+            options={[12, 14, 16, 18, 20, 24, 28, 32].map((v) => ({ value: String(v), label: String(v) }))}
+            onChange={(val) => patchNodes({ size: Number(val) })}
+            className="min-w-[52px] border text-[13px]"
+            chevronSize={11}
+            menuMinWidth={68}
+          />
           <div className="relative"><button type="button" className={barBtn} title="对齐" onClick={() => setMenu(menu === "align" ? null : "align")} data-flow-align-btn>{selectedNodes.length > 1 ? <AlignStartVertical size={15} /> : selectedNodes[0].align === "left" ? <AlignLeft size={15} /> : selectedNodes[0].align === "right" ? <AlignRight size={15} /> : <AlignCenter size={15} />}<ChevronDown size={12} /></button>
             {menu === "align" && <div className={cn(pop, "left-0 w-[208px] p-2")} data-flow-align-menu>
               <div className="mb-1 text-[12px] text-subtle">文字对齐</div>
@@ -1727,7 +1750,16 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       {selectedShape !== "text" && <button type="button" data-mind-paint-trigger aria-label="节点填充" aria-expanded={mindPaintMenu?.kind === "fill"} title="节点填充" className={barBtn} onClick={(event) => openMindPaintMenu("fill", event.currentTarget)}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: currentPaint.fill === "none" ? "linear-gradient(135deg, transparent 46%, #c7cbd1 48%, #c7cbd1 52%, transparent 54%)" : currentPaint.fill ?? (mindAnchor?.topic.parent === null ? "#5b7ff1" : "#fff") }}/><ChevronDown size={11}/></button>}
       <button type="button" data-mind-paint-trigger aria-label="节点连线样式" aria-expanded={mindPaintMenu?.kind === "line"} title="节点连线样式" className={barBtn} onClick={(event) => openMindPaintMenu("line", event.currentTarget)}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: currentPaint.stroke ?? "#5b7ff1" }}/><ChevronDown size={11}/></button>
       <button type="button" data-mind-paint-trigger aria-label="文字颜色和背景" aria-expanded={mindPaintMenu?.kind === "textColor"} title="文字颜色和背景" className={barBtn} onClick={(event) => openMindPaintMenu("textColor", event.currentTarget)}><span className="border-b-2 px-0.5 text-[15px]" style={{ borderColor: graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor, background: currentTextFormat.highlight ?? "transparent" }}>A</span><ChevronDown size={11}/></button>
-      <select aria-label="文字大小" title="文字大小" className="h-8 w-14 shrink-0 rounded-md bg-surface px-1 text-[13px] hover:bg-hover" value={graph.mindStyles?.[mindSelected]?.size ?? (mindAnchor?.topic.parent === null ? 16 : 14)} onChange={(event) => updateMindStyle({ size: Number(event.target.value) })}>{[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => <option key={size} value={size}>{size}</option>)}</select>
+      <FeishuSelect
+        ariaLabel="文字大小"
+        title="文字大小"
+        value={String(graph.mindStyles?.[mindSelected]?.size ?? (mindAnchor?.topic.parent === null ? 16 : 14))}
+        options={[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => ({ value: String(size), label: String(size) }))}
+        onChange={(val) => updateMindStyle({ size: Number(val) })}
+        className="w-[52px] text-[13px]"
+        chevronSize={11}
+        menuMinWidth={68}
+      />
       <button type="button" data-mind-paint-trigger aria-label="文字格式" aria-expanded={mindPaintMenu?.kind === "textFormat"} title="文字格式" className={barBtn} onClick={(event) => openMindPaintMenu("textFormat", event.currentTarget)}><span className="text-[15px]">A</span><AlignLeft size={12}/><ChevronDown size={11}/></button>
       <button type="button" aria-label={mindDescriptionAt(graph.mindDescriptions, mindSelected) ? "编辑描述" : "添加描述"} title="添加或编辑描述 (Shift + Enter)" className={barBtn} onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindDescription(topic); }}><Plus size={15}/></button>
       {mindDescriptionAt(graph.mindDescriptions, mindSelected) && <button type="button" data-mind-paint-trigger aria-label="描述样式" aria-expanded={mindPaintMenu?.kind === "description"} title="描述字号和颜色" className={barBtn} onClick={(event) => openMindPaintMenu("description", event.currentTarget)}><span className="text-[13px]">Aa</span><ChevronDown size={11}/></button>}
@@ -1777,7 +1809,17 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       <button type="button" aria-label="荧光笔" aria-pressed={tool === "pen" && penKind === "marker"} title="荧光笔" className={cn(tb, tool === "pen" && penKind === "marker" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("marker"); setMenu(null); }}><Brush size={17}/></button>
       <button type="button" aria-label="橡皮擦" aria-pressed={tool === "eraser"} title="橡皮擦（擦除整条笔迹）" data-flow-eraser-tool className={cn(tb, tool === "eraser" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("eraser"); setMenu(null); }}><Eraser size={17}/></button>
       <span className="mx-1 h-6 w-px shrink-0 bg-[#DEE0E3]"/>
-      <select aria-label="画笔粗细" title="画笔粗细" disabled={tool !== "pen"} value={penKind === "marker" ? markerWidth : penWidth} onChange={(event) => penKind === "marker" ? setMarkerWidth(Number(event.target.value)) : setPenWidth(Number(event.target.value))} className="h-8 max-w-[58px] rounded-md bg-surface px-1 text-[12px] text-[#646A73] disabled:opacity-30">{(penKind === "marker" ? MARKER_WIDTHS : INK_WIDTHS).map((width) => <option key={width} value={width}>{width}</option>)}</select>
+      <FeishuSelect
+        ariaLabel="画笔粗细"
+        title="画笔粗细"
+        disabled={tool !== "pen"}
+        value={String(penKind === "marker" ? markerWidth : penWidth)}
+        options={(penKind === "marker" ? MARKER_WIDTHS : INK_WIDTHS).map((width) => ({ value: String(width), label: String(width) }))}
+        onChange={(val) => penKind === "marker" ? setMarkerWidth(Number(val)) : setPenWidth(Number(val))}
+        className="min-w-[50px] text-[12px] text-[#646A73]"
+        chevronSize={11}
+        menuMinWidth={64}
+      />
       <div className="relative"><button type="button" aria-label="画笔颜色" aria-expanded={menu === "pen"} title="画笔颜色" disabled={tool !== "pen"} className={tb} onClick={() => setMenu(menu === "pen" ? null : "pen")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: activeInkColor }}/></button>{menu === "pen" && penSettings}</div>
       <button type="button" aria-label="关闭画笔工具" title="关闭画笔工具" className={tb} onClick={() => { setTool("select"); setMenu(null); }}><X size={16}/></button>
     </div>}

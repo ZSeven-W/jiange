@@ -91,6 +91,25 @@ describe("analytics 100% branch coverage", () => {
     const dsTextOnly = extractChartDataset(wsTextOnly, {}, { top: 0, left: 0, bottom: 1, right: 1, headerRow: false });
     expect(dsTextOnly.series[0].name).toBe("B");
     expect(dsTextOnly.series[0].values).toEqual([0, 0]);
+
+    // Single-row all-numeric range without headerRow plots all columns as categories
+    const wsSingleRow = makeSheet([
+      [0, 0, "10"],
+      [0, 1, "20"],
+      [0, 2, "30"],
+    ]);
+    const dsSingleRow = extractChartDataset(wsSingleRow, {}, { top: 0, left: 0, bottom: 0, right: 2, headerRow: false });
+    expect(dsSingleRow.labels).toEqual(["A", "B", "C"]);
+    expect(dsSingleRow.series[0].values).toEqual([10, 20, 30]);
+
+    // Single-row with text label falls back to label + series column layout
+    const wsSingleMixed = makeSheet([
+      [0, 0, "Jan"],
+      [0, 1, "42"],
+    ]);
+    const dsSingleMixed = extractChartDataset(wsSingleMixed, {}, { top: 0, left: 0, bottom: 0, right: 1, headerRow: false });
+    expect(dsSingleMixed.labels).toEqual(["Jan"]);
+    expect(dsSingleMixed.series[0].values).toEqual([42]);
   });
 
   it("covers detectDataTableRange, headers, and numeric col offset edge branches", () => {

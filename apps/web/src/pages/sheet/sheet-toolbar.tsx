@@ -20,7 +20,7 @@ import {
   Grid2X2,
   Highlighter,
   Italic,
-  List,
+  Layers,
   ListChecks,
   Lock,
   Maximize2,
@@ -115,7 +115,7 @@ export function SheetTabsBar({
   }, [listOpen, tabMenuId]);
 
   return (
-    <div ref={containerRef} className="relative flex h-[40px] min-w-0 shrink-0 items-end gap-1 border-b border-[#e5e6eb] bg-[#f7f8fa] px-2 sm:px-3" data-sheet-tabs>
+    <div ref={containerRef} className="relative flex h-[38px] min-w-0 shrink-0 items-end gap-1 border-b border-[#e5e6eb] bg-[#f5f6f7] px-2 sm:px-3" data-sheet-tabs>
       <div className="relative mb-1 shrink-0">
         <button
           type="button"
@@ -126,9 +126,9 @@ export function SheetTabsBar({
             setTabMenuId(null);
             setListOpen((v) => !v);
           }}
-          className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#e9ecf1]"
+          className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#e8eaed]"
         >
-          <List size={15} />
+          <Layers size={15} />
         </button>
         {listOpen && (
           <div role="menu" className="absolute left-0 top-8 z-50 w-48 rounded-md border border-[#dee0e3] bg-white py-1 shadow-lg">
@@ -166,10 +166,10 @@ export function SheetTabsBar({
                   onDoubleClick={() => {
                     if (canEdit) onRenameSheet(ws.id);
                   }}
-                  className={`group/tab flex h-[34px] max-w-44 items-center gap-1 rounded-t-md border px-3 text-[13px] transition-colors ${
+                  className={`group/tab flex h-[33px] max-w-44 items-center gap-1 rounded-t-md border px-3 text-[13px] transition-colors ${
                     active
-                      ? "border-[#e5e6eb] border-b-white bg-white font-medium text-[#3370ff]"
-                      : "border-transparent bg-transparent text-[#646a73] hover:bg-[#ebedf0]"
+                      ? "-mb-px border-[#e5e6eb] border-b-white bg-white font-medium text-[#3370ff]"
+                      : "border-transparent bg-transparent text-[#646a73] hover:bg-[#e8eaed]"
                   }`}
                 >
                   <span className="truncate">{ws.title}</span>
@@ -368,7 +368,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
   const activeFmtLabel = NUM_FORMATS.find((f) => f.id === (activeStyle.numFmt || "general"))?.label.split(" ")[0] ?? t("常规");
 
   return (
-    <div ref={rootRef} className="relative flex h-14 min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#e5e6eb] bg-[#f7f8fa] px-2" data-sheet-toolbar>
+    <div ref={rootRef} className="relative flex h-[54px] min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#e5e6eb] bg-white px-2" data-sheet-toolbar>
       <div className="relative shrink-0">
         {labeledBtn(t("菜单"), openMenu === "file", false, () => setOpenMenu((m) => (m === "file" ? null : "file")), <Menu size={15} />)}
         {openMenu === "file" && (
@@ -443,6 +443,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
               </div>
             )}
           </div>
+          {iconBtn(t("边框"), !!activeStyle.borders, !canEdit, onToggleBorder, <Grid2X2 size={14} />, "borders")}
         </div>
         <div className="flex items-center gap-0.5">
           {iconBtn(t("粗体"), !!activeStyle.bold, !canEdit, () => onStylePatch({ bold: !activeStyle.bold }), <Bold size={14} />, "bold")}
@@ -465,7 +466,6 @@ export function SheetToolbar(props: SheetToolbarProps) {
               </div>
             )}
           </div>
-          {iconBtn(t("边框"), !!activeStyle.borders, !canEdit, onToggleBorder, <Grid2X2 size={14} />, "borders")}
         </div>
       </div>
 
@@ -570,7 +570,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
           title={t("收起工具栏")}
           aria-label={t("收起工具栏")}
           onClick={onCollapseToolbar}
-          className="sticky right-0 ml-auto grid size-7 shrink-0 place-items-center rounded bg-[#f7f8fa] text-[#646a73] hover:bg-[#e9ecf1]"
+          className="sticky right-0 ml-auto grid size-7 shrink-0 place-items-center rounded bg-white text-[#646a73] hover:bg-[#f2f3f5]"
         >
           <ChevronUp size={15} />
         </button>

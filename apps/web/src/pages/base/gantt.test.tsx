@@ -100,4 +100,19 @@ describe("gantt view", () => {
     expect(ganttDate(clampedStart.start)).toBe("2026-11-14");
     expect(resizeGanttRange(r, "end", 2, true)).toBeNull();
   });
+
+  it("auto-detects start/end date fields by name even when due date appears first", () => {
+    vi.useFakeTimers(); vi.setSystemTime(new Date("2026-11-23T12:00:00Z"));
+    try {
+      const reversedFields: Field[] = [
+        { id: 1, name: "任务", type: "text", position: 0 },
+        { id: 2, name: "截止日期", type: "date", position: 1 },
+        { id: 3, name: "开始日期", type: "date", position: 2 },
+      ];
+      const rec: BaseRecord = { id: 10, baseId: 1, position: 1, cells: { "1": "排期任务", "2": "2026-11-28", "3": "2026-11-18" } };
+      const html = renderToStaticMarkup(<Gantt baseId={1} canEdit fields={reversedFields} records={[rec]} members={[]} onMutate={() => {}} />);
+      expect(html).toContain('data-gantt-bar="10"');
+      expect(html).toContain("2026-11-18 – 2026-11-28");
+    } finally { vi.useRealTimers(); }
+  });
 });

@@ -115,6 +115,9 @@
     -moz-appearance: none;
     background-image: none;
   }
+  select.appearance-none::picker-icon {
+    display: none;
+  }
 }
 
 /* Printing obeys the document download policy. Keep unrelated controls and

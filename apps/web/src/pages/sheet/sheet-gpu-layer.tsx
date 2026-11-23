@@ -20,7 +20,7 @@ import { evaluateSheetConditionalFormat, isSheetCellProtected } from "./sheet-ru
 import type { EvaluatedSheetMap, FormulaRefHighlight } from "./workbook-engine";
 
 const COL_HEADER_BG: RGBA = [0.961, 0.965, 0.969, 1]; // #f5f6f7
-const HEADER_ACTIVE_BG: RGBA = [0.914, 0.937, 1, 1]; // #e9efff
+const HEADER_ACTIVE_BG: RGBA = [0.918, 0.929, 0.945, 1]; // #eaedf1 (Feishu active header gray)
 const HEADER_BORDER: RGBA = [0.871, 0.878, 0.89, 1]; // #dee0e3
 const GRID_LINE: RGBA = [0.871, 0.878, 0.89, 1]; // #dee0e3 (Feishu crisp hairline)
 const FREEZE_LINE: RGBA = [0.62, 0.718, 0.961, 1]; // #9eb7f5

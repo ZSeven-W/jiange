@@ -1618,4 +1618,5 @@ export const en: Record<string, string> = {
   "季度": "Quarter",
   "展开工具栏": "Expand toolbar",
   "收起工具栏": "Collapse toolbar",
+  "输入关键词搜索模板": "Search templates",
 };

@@ -137,33 +137,53 @@ export function extractChartDataset(
       if (rowNonEmpty) dataRows.push(r);
     }
 
-    const labelCols: number[] = [left];
-    const seriesCols: number[] = [];
-    for (let c = left + 1; c <= right; c++) {
-      let numericCount = 0;
-      for (const r of dataRows) {
-        if (readEvaluatedCell(cellByKey, evalMap, r, c).num !== null) numericCount++;
+    let singleRowNums: number[] | null = null;
+    if (dataRows.length === 1 && !chart.headerRow) {
+      const nums: number[] = [];
+      for (let c = left; c <= right; c++) {
+        const n = readEvaluatedCell(cellByKey, evalMap, dataRows[0], c).num;
+        if (n === null) {
+          nums.length = 0;
+          break;
+        }
+        nums.push(n);
       }
-      if (numericCount > 0) seriesCols.push(c);
-      else labelCols.push(c);
-    }
-    if (seriesCols.length === 0) {
-      labelCols.length = 1;
-      for (let c = left + 1; c <= right; c++) seriesCols.push(c);
+      if (nums.length === colSpan) singleRowNums = nums;
     }
 
-    for (const r of dataRows) {
-      const parts = labelCols.map((c) => readEvaluatedCell(cellByKey, evalMap, r, c).text.trim()).filter(Boolean);
-      labels.push(parts.length > 0 ? parts.join("·") : `${r + 1}`);
-    }
+    if (singleRowNums) {
+      const r0 = dataRows[0];
+      for (let c = left; c <= right; c++) labels.push(columnName(c));
+      series.push({ name: `${r0 + 1}`, color: CHART_PALETTE[0], values: singleRowNums });
+    } else {
+      const labelCols: number[] = [left];
+      const seriesCols: number[] = [];
+      for (let c = left + 1; c <= right; c++) {
+        let numericCount = 0;
+        for (const r of dataRows) {
+          if (readEvaluatedCell(cellByKey, evalMap, r, c).num !== null) numericCount++;
+        }
+        if (numericCount > 0) seriesCols.push(c);
+        else labelCols.push(c);
+      }
+      if (seriesCols.length === 0) {
+        labelCols.length = 1;
+        for (let c = left + 1; c <= right; c++) seriesCols.push(c);
+      }
 
-    seriesCols.forEach((c, sIdx) => {
-      const name = chart.headerRow && bottom > top
-        ? (readEvaluatedCell(cellByKey, evalMap, top, c).text || columnName(c))
-        : columnName(c);
-      const values = dataRows.map((r) => readEvaluatedCell(cellByKey, evalMap, r, c).num ?? 0);
-      series.push({ name, color: CHART_PALETTE[sIdx % CHART_PALETTE.length], values });
-    });
+      for (const r of dataRows) {
+        const parts = labelCols.map((c) => readEvaluatedCell(cellByKey, evalMap, r, c).text.trim()).filter(Boolean);
+        labels.push(parts.length > 0 ? parts.join("·") : `${r + 1}`);
+      }
+
+      seriesCols.forEach((c, sIdx) => {
+        const name = chart.headerRow && bottom > top
+          ? (readEvaluatedCell(cellByKey, evalMap, top, c).text || columnName(c))
+          : columnName(c);
+        const values = dataRows.map((r) => readEvaluatedCell(cellByKey, evalMap, r, c).num ?? 0);
+        series.push({ name, color: CHART_PALETTE[sIdx % CHART_PALETTE.length], values });
+      });
+    }
   }
 
   let maxVal = 0;

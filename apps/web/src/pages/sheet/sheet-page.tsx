@@ -259,6 +259,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [replaceText, setReplaceText] = useState("");
   const [formatBrush, setFormatBrush] = useState<SheetCellStyle | null>(null);
   const [templateHidden, setTemplateHidden] = useState(false);
+  const [templateQuery, setTemplateQuery] = useState("");
   const [zoom, setZoom] = useState(100);
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [redoStack, setRedoStack] = useState<UndoEntry[]>([]);
@@ -1700,7 +1701,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   };
 
   return (
-    <div className={`flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white text-[#1f2329] ${fullscreen ? "fixed inset-0 z-50" : "h-dvh"}`} data-sheet-page={sheetId}>
+    <div className={`relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white text-[#1f2329] ${fullscreen ? "fixed inset-0 z-50" : "h-dvh"}`} data-sheet-page={sheetId}>
       {/* Header matching Feishu spreadsheet chrome */}
       <header className="flex h-14 min-w-0 shrink-0 items-center gap-2 border-b border-[#e5e6eb] pl-14 pr-3 sm:pr-5 md:pl-4">
         <button type="button" aria-label={t("返回主页")} title={t("返回主页")} onClick={() => go("#/")} className="hidden size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:grid">
@@ -1873,7 +1874,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       )}
 
       {/* Name Box + fx + Formula Bar */}
-      <div className="relative flex h-7 min-w-0 shrink-0 items-center border-b border-[#e5e6eb] bg-white text-[12px]">
+      <div className="relative flex h-[30px] min-w-0 shrink-0 items-center border-b border-[#e5e6eb] bg-white text-[12px]">
         <input
           aria-label={t("单元格名称框")}
           data-sheet-address
@@ -1896,7 +1897,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               }
             }
           }}
-          className="h-full w-20 shrink-0 border-r border-[#e5e6eb] px-2.5 text-[#4b5058] outline-none focus:bg-[#f5f7ff]"
+          className="h-full w-16 shrink-0 border-r border-[#eef0f3] px-2 text-center text-[#4b5058] outline-none focus:bg-[#f5f7ff]"
         />
         <div className="relative flex shrink-0 items-center">
           <button
@@ -1905,7 +1906,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             aria-label={t("插入函数")}
             disabled={!canEdit}
             onClick={() => setFxMenuOpen((v) => !v)}
-            className="grid h-7 w-8 place-items-center italic text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-50"
+            className="grid h-7 w-7 place-items-center text-[11px] italic text-[#8f959e] hover:bg-[#f2f3f5] hover:text-[#4b5058] disabled:opacity-50"
           >
             fx
           </button>
@@ -2081,7 +2082,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   }}
                   className={`relative flex shrink-0 items-center justify-center border-b border-r border-[#dfe2e6] text-[11px] ${
                     activeCol
-                      ? "bg-[#e9efff] font-medium text-[#2b5ddb]"
+                      ? "bg-[#eaedf1] font-medium text-[#1f2329] shadow-[inset_0_-2px_0_#3370ff]"
                       : "bg-[#f5f6f7] text-[#646a73]"
                   } ${cIdx === activeSheet.frozenCols - 1 ? "border-r-2 border-r-[#9eb7f5]" : ""}`}
                 >
@@ -2179,9 +2180,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                 <div
                   role="rowheader"
                   style={{ width: ROW_HEADER_WIDTH, height: rh }}
-                  className={`sticky left-0 z-20 flex shrink-0 items-center justify-center border-b border-r border-[#e5e6eb] text-[11px] ${
+                  className={`sticky left-0 z-20 flex shrink-0 items-center justify-center border-b border-r border-[#dfe2e6] text-[11px] ${
                     selection.focus.row === rowIdx
-                      ? "bg-[#e9efff] font-medium text-[#2b5ddb]"
+                      ? "bg-[#eaedf1] font-medium text-[#1f2329] shadow-[inset_-2px_0_0_#3370ff]"
                       : "bg-[#f5f6f7] text-[#8f959e]"
                   }`}
                 >
@@ -2593,29 +2594,85 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       )}
       </div>
 
-      {/* Empty-sheet Quick Templates Strip (aligned with Feishu empty sheet footer strip) */}
-      {canEdit && !hasAnyContent && !templateHidden && (
-        <div className="flex shrink-0 items-center gap-3 overflow-x-auto border-t border-[#e5e6eb] bg-[#f9fafb] px-4 py-2.5" data-sheet-templates>
-          <span className="shrink-0 text-[12px] font-medium text-[#4b5058]">{t("快速套用模板")}</span>
-          {SHEET_STARTER_TEMPLATES.map((tpl) => (
-            <button
-              key={tpl.id}
-              type="button"
-              onClick={() => void handleApplyTemplate(tpl)}
-              className="flex shrink-0 items-center gap-2 rounded-md border border-[#dee0e3] bg-white px-3 py-1.5 text-left text-[12px] hover:border-[#3370ff] hover:text-[#3370ff]"
-            >
-              <span className="font-medium">{t(tpl.name)}</span>
-              <span className="rounded bg-[#eef3ff] px-1.5 py-0.5 text-[10px] text-[#3370ff]">{t(tpl.tag)}</span>
-            </button>
-          ))}
-          <button type="button" onClick={() => setTemplateHidden(true)} className="ml-auto shrink-0 text-[12px] text-[#8f959e] hover:text-[#4b5058]">
-            {t("隐藏")}
-          </button>
-        </div>
-      )}
+      {/* Empty-sheet Floating Feishu Template Gallery */}
+      {canEdit && !hasAnyContent && !templateHidden && (() => {
+        const q = templateQuery.trim().toLowerCase();
+        const filteredTemplates = q
+          ? SHEET_STARTER_TEMPLATES.filter((tpl) => t(tpl.name).toLowerCase().includes(q) || t(tpl.tag).toLowerCase().includes(q))
+          : SHEET_STARTER_TEMPLATES;
+        return (
+          <div
+            className="pointer-events-none absolute inset-x-0 bottom-12 z-20 flex justify-center px-4"
+            data-sheet-templates
+          >
+            <div className="pointer-events-auto w-full max-w-[660px] rounded-xl bg-white/90 p-3 backdrop-blur-[2px]">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="flex h-8 w-64 items-center gap-1.5 rounded-md border border-[#dee0e3] bg-white px-2.5 text-[12px] text-[#8f959e] focus-within:border-[#3370ff]">
+                  <Search size={13} className="shrink-0" />
+                  <input
+                    value={templateQuery}
+                    onChange={(e) => setTemplateQuery(e.target.value)}
+                    placeholder={t("输入关键词搜索模板")}
+                    aria-label={t("输入关键词搜索模板")}
+                    className="w-full bg-transparent text-[#1f2329] outline-none placeholder:text-[#8f959e]"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setTemplateHidden(true)}
+                  className="shrink-0 rounded px-2 py-1 text-[12px] text-[#646a73] hover:bg-[#f2f3f5] hover:text-[#1f2329]"
+                >
+                  {t("隐藏")}
+                </button>
+              </div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                {filteredTemplates.map((tpl, idx) => {
+                  const accent = idx === 0 ? "#4e83fd" : idx === 1 ? "#f7b500" : "#34c759";
+                  const headers = tpl.cells.filter((c) => c.row === 0).slice(0, 3);
+                  const previewRows = [1, 2, 3];
+                  return (
+                    <button
+                      key={tpl.id}
+                      type="button"
+                      onClick={() => void handleApplyTemplate(tpl)}
+                      className="group flex flex-col rounded-xl border border-[#e5e6eb] bg-white p-3 text-left shadow-[0_4px_16px_rgba(31,35,41,0.06)] transition-all hover:-translate-y-0.5 hover:border-[#3370ff] hover:shadow-[0_6px_20px_rgba(51,112,255,0.12)]"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="truncate text-[13px] font-medium text-[#1f2329] group-hover:text-[#3370ff]">{t(tpl.name)}</span>
+                        <span className="shrink-0 rounded bg-[#f2f3f5] px-1.5 py-0.5 text-[10px] text-[#646a73]">{t(tpl.tag)}</span>
+                      </div>
+                      <div className="overflow-hidden rounded-md border border-[#eceef2] bg-[#fafbfc]">
+                        <div className="grid grid-cols-3 gap-px px-1.5 py-1 text-[8px] font-medium text-white" style={{ backgroundColor: accent }}>
+                          {headers.map((h, hi) => (
+                            <span key={hi} className="truncate">{h.raw}</span>
+                          ))}
+                        </div>
+                        {previewRows.map((r) => (
+                          <div key={r} className="grid grid-cols-3 gap-1 border-t border-[#eff0f1] bg-white px-1.5 py-1">
+                            {[0, 1, 2].map((c) => (
+                              <span
+                                key={c}
+                                className="h-1.5 rounded-full"
+                                style={{
+                                  width: c === 0 ? "85%" : c === 1 ? "62%" : "70%",
+                                  backgroundColor: r === 1 && c === 0 ? "#d0d7e2" : "#e5e6eb",
+                                }}
+                              />
+                            ))}
+                          </div>
+                        ))}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Bottom Status & Aggregation Bar */}
-      <footer className="flex h-8 shrink-0 items-center justify-between gap-2 border-t border-[#e5e6eb] bg-[#f7f8fa] px-3 text-[11px] text-[#646a73]">
+      <footer className="flex h-8 shrink-0 items-center justify-between gap-2 border-t border-[#e5e6eb] bg-white px-3 text-[11px] text-[#646a73]">
         <span role={errorMessage ? "alert" : undefined} className={`min-w-0 truncate ${errorMessage ? "text-[#d83931]" : statusMessage ? "text-[#3370ff]" : ""}`}>
           {errorMessage || statusMessage || `${activeSheet.title} · ${activeSheet.rows.length}×${activeSheet.columns.length}`}
         </span>

@@ -64,6 +64,32 @@ describe("sheet-analytics (charts & pivot tables)", () => {
     expect(detectFirstNumericColOffset(sheet, evalMap, { top: 0, left: 0, bottom: 5, right: 4 })).toBe(2);
   });
 
+  it("plots all columns for a single-row all-numeric range without headerRow", () => {
+    const sheet: SheetWorksheet = {
+      id: 2,
+      nodeId: 10,
+      title: "SingleRow",
+      pos: 0,
+      frozenRows: 0,
+      frozenCols: 0,
+      merges: [],
+      filter: { enabled: false, headerRow: 0, rules: {} },
+      revision: 1,
+      rows: [{ id: 1, pos: 0 }],
+      columns: [{ id: 1, pos: 0 }, { id: 2, pos: 1 }, { id: 3, pos: 2 }],
+      cells: [
+        { rowId: 1, columnId: 1, raw: "10", style: {}, revision: 1 },
+        { rowId: 1, columnId: 2, raw: "20", style: {}, revision: 1 },
+        { rowId: 1, columnId: 3, raw: "=SUM(A1:B1)", style: {}, revision: 1 },
+      ],
+    };
+    const evalMap = calculateWorkbook([sheet]).get(sheet.id) ?? {};
+    const ds = extractChartDataset(sheet, evalMap, { top: 0, left: 0, bottom: 0, right: 2, headerRow: false });
+    expect(ds.labels).toEqual(["A", "B", "C"]);
+    expect(ds.series).toHaveLength(1);
+    expect(ds.series[0].values).toEqual([10, 20, 30]);
+  });
+
   it("auto-detects contiguous data table around a single focused cell", () => {
     const sheet = buildSalesSheet();
     const evalMap = calculateWorkbook([sheet]).get(sheet.id) ?? {};

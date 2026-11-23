@@ -117,8 +117,10 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
 }) {
   useI18n();
   const dateFields = fields.filter((f) => f.type === "date");
-  const startField = fields.find((f) => f.id === startFieldId && f.type === "date") ?? dateFields[0];
-  const endField = fields.find((f) => f.id === endFieldId && f.type === "date") ?? dateFields.find((f) => f.id !== startField?.id) ?? startField;
+  const autoStart = dateFields.find((f) => /开始|起始|start|begin/i.test(f.name)) ?? dateFields.find((f) => !/结束|截止|到期|end|due|finish/i.test(f.name)) ?? dateFields[0];
+  const startField = fields.find((f) => f.id === startFieldId && f.type === "date") ?? autoStart;
+  const autoEnd = dateFields.find((f) => f.id !== startField?.id && /结束|截止|到期|end|due|finish/i.test(f.name)) ?? dateFields.find((f) => f.id !== startField?.id) ?? startField;
+  const endField = fields.find((f) => f.id === endFieldId && f.type === "date") ?? autoEnd;
   const sameField = !startField || !endField || startField.id === endField.id;
 
   const [month, setMonth] = useState(() => {
@@ -389,7 +391,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
         <div style={{ minWidth: 192 + days * zoomCfg.dayWidth }}>
           {zoomCfg.months > 1 && (
             <div className="flex border-b bg-sidebar/80 text-center text-[11px] font-medium text-muted-foreground">
-              <div className="w-48 shrink-0 border-r py-1 pl-3 text-left" />
+              <div className="sticky left-0 z-20 w-48 shrink-0 border-r border-[#e5e6eb] bg-sidebar py-1 pl-3 text-left" />
               {monthBuckets.map((mb) => (
                 <div key={`${mb.year}-${mb.month}`} className="border-l py-1" style={{ flex: mb.days }}>
                   {t("{year} 年 {month} 月", { year: mb.year, month: mb.month })}
@@ -398,7 +400,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
             </div>
           )}
           <div className="flex border-b bg-sidebar/60 text-center text-[11px] text-muted-foreground">
-            <div className="w-48 shrink-0 py-1 pl-3 text-left">{t("记录")}</div>
+            <div className="sticky left-0 z-20 w-48 shrink-0 border-r border-[#e5e6eb] bg-sidebar py-1 pl-3 text-left">{t("记录")}</div>
             {Array.from({ length: days }, (_, i) => {
               const d = new Date((first + i) * DAY + DAY / 2);
               const wd = d.getUTCDay();
@@ -428,7 +430,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
               <div key={bar.rec.id} className="flex items-stretch border-b" data-gantt-row={bar.rec.id}>
                 <button
                   type="button"
-                  className="w-48 shrink-0 truncate px-3 py-2 text-left text-[13px] hover:bg-hover/60"
+                  className="sticky left-0 z-20 w-48 shrink-0 truncate border-r border-[#e5e6eb] bg-surface px-3 py-2 text-left text-[13px] hover:bg-hover/60"
                   onClick={() => onOpen?.(bar.rec)}
                   aria-disabled={!onOpen || undefined}
                   tabIndex={onOpen ? 0 : -1}

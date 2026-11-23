@@ -442,7 +442,29 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     next[index] = alignSlideShape(shapes[index], alignment);
     queue.edit(active, { shapes: next });
   };
-  const addShape = (kind: SlideShape["kind"]) => { if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return; const id = `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`; const shape: SlideShape = kind === "text" ? { id, kind, x: 12, y: 55, width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 } : kind !== "image" && isLineSlideShape(kind as BasicSlideShape) ? { id, kind, x: 35, y: 48, width: 30, height: 5, color: "#1f2329" } : { id, kind, x: 68, y: 54, color: "#3370ff" }; queue.edit(active, { shapes: [...draft.content.shapes, shape] }); setSelectedShape(shape.id); setShapeMenu(false); };
+  const addShape = (kind: SlideShape["kind"]) => {
+    if (!active || !draft || !canEdit || draft.content.shapes.length >= 100) return;
+    const id = `shape-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const existing = draft.content.shapes;
+    const cascade = (baseX: number, baseY: number, w: number, h: number) => {
+      let x = baseX, y = baseY;
+      for (let step = 0; step < 12; step++) {
+        if (!existing.some((s) => Math.abs(s.x - x) < 2 && Math.abs(s.y - y) < 2)) break;
+        x = baseX + ((step + 1) * 3) % Math.max(4, Math.floor(96 - w - baseX + 18));
+        if (x + w > 96) x = 10 + ((step + 1) * 3) % 60;
+        y = Math.min(92 - h, baseY + ((step + 1) * 3) % 24);
+      }
+      return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+    };
+    const shape: SlideShape = kind === "text"
+      ? { id, kind, ...cascade(12, 55, 35, 15), width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 }
+      : kind !== "image" && isLineSlideShape(kind as BasicSlideShape)
+        ? { id, kind, ...cascade(35, 48, 30, 5), width: 30, height: 5, color: "#1f2329" }
+        : { id, kind, ...cascade(14, 52, 16, 20), color: "#3370ff" };
+    queue.edit(active, { shapes: [...existing, shape] });
+    setSelectedShape(shape.id);
+    setShapeMenu(false);
+  };
   const insertImage = async (file: File) => {
     if (!active || !canEdit || imageUpload.current) return;
     const page = active;

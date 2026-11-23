@@ -25,7 +25,7 @@ export function MetricWidgetView({ summary }: { summary: MetricSummary }) {
   );
 }
 
-export function BarChartView({ series }: { series: GroupedSeries }) {
+export function BarChartView({ series, wide = false }: { series: GroupedSeries; wide?: boolean }) {
   const [gpuActive, setGpuActive] = useState(false);
   if (series.buckets.length === 0) {
     return <EmptyChart />;
@@ -34,9 +34,9 @@ export function BarChartView({ series }: { series: GroupedSeries }) {
   const chartH = 156;
   const topPad = 22;
   const bottomPad = 28;
-  const barW = Math.min(44, Math.max(22, Math.floor(320 / Math.max(1, series.buckets.length))));
-  const gap = 18;
-  const totalW = Math.max(280, series.buckets.length * (barW + gap) + 24);
+  const barW = Math.min(48, Math.max(24, Math.floor((wide ? 520 : 320) / Math.max(1, series.buckets.length))));
+  const gap = wide ? 28 : 18;
+  const totalW = Math.max(wide ? 560 : 280, series.buckets.length * (barW + gap) + 24);
 
   return (
     <div className="mt-3 overflow-x-auto" data-dashboard-viz="bar">
@@ -219,12 +219,12 @@ export function PieChartView({ series }: { series: GroupedSeries }) {
   );
 }
 
-export function LineChartView({ series }: { series: GroupedSeries }) {
+export function LineChartView({ series, wide = false }: { series: GroupedSeries; wide?: boolean }) {
   const [gpuActive, setGpuActive] = useState(false);
   if (series.buckets.length === 0) {
     return <EmptyChart />;
   }
-  const w = Math.max(320, series.buckets.length * 64);
+  const w = Math.max(wide ? 760 : 360, series.buckets.length * (wide ? 96 : 64));
   const h = 156;
   const padL = 24;
   const padR = 24;

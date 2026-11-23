@@ -290,7 +290,7 @@ export function BaseGanttGpuLayer({
       const topEdge = timelineRect ? timelineRect.top - hostRect.top : 28;
       const dayW = timelineW / days;
 
-      const scissor = { x: Math.max(0, 192 - el.scrollLeft), y: Math.max(0, topEdge), w: width, h: Math.max(0, height - Math.max(0, topEdge)) };
+      const scissor = { x: 192, y: Math.max(0, topEdge), w: Math.max(0, width - 192), h: Math.max(0, height - Math.max(0, topEdge)) };
       gridBatch.scissor = scissor;
       barBatch.scissor = scissor;
 
