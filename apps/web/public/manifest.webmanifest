@@ -1,0 +1,25 @@
+{
+  "name": "Jiange 剑阁协作空间",
+  "short_name": "Jiange",
+  "description": "云文档、电子表格、幻灯片、多维表格与知识库协作空间",
+  "start_url": "/#/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#ffffff",
+  "theme_color": "#3370ff",
+  "icons": [
+    {
+      "src": "/brand/icon-192.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/brand/icon-512.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

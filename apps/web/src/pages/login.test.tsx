@@ -68,3 +68,41 @@ describe("LoginPage SSO integration", () => {
     expect(formatSSOErrorMessage("custom_idp_err", t)).toContain("custom_idp_err");
   });
 });
+
+describe("LoginPage MFA challenge integration", () => {
+  it("renders standard login form when no MFA challenge is active", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage />
+      </QueryClientProvider>,
+    );
+    expect(html).not.toContain("data-mfa-challenge-form");
+    expect(html).not.toContain("data-mfa-code-input");
+    expect(html).toContain("欢迎回来");
+  });
+
+  it("renders Feishu-styled MFA 6-digit / recovery code challenge form when mfaRequired is triggered", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage
+          initialMFAChallenge={{
+            mfaToken: "challenge-token-xyz",
+            email: "alice@example.com",
+          }}
+        />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("data-mfa-challenge-form");
+    expect(html).toContain("二步验证（MFA）");
+    expect(html).toContain("alice@example.com");
+    expect(html).toContain("data-mfa-code-input");
+    expect(html).toContain("验证并登录");
+    expect(html).toContain("返回账号登录");
+    expect(html).not.toContain('id="password"');
+    expect(html).not.toMatch(/<select[\s>]/i);
+  });
+});

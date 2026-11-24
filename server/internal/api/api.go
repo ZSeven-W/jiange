@@ -49,6 +49,9 @@ type Server struct {
 	// SSOTransport / SSOAllowHTTP let tests reach a local fake OIDC/OAuth2 provider.
 	SSOTransport http.RoundTripper
 	SSOAllowHTTP bool
+	// WebhookTransport / WebhookAllowHTTP let tests reach a local fake webhook receiver.
+	WebhookTransport http.RoundTripper
+	WebhookAllowHTTP bool
 }
 
 func (s *Server) now() time.Time {
@@ -71,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/sso/providers", s.listPublicSSOProviders)
 	mux.HandleFunc("GET /api/auth/sso/{slug}/start", s.startSSO)
 	mux.HandleFunc("GET /api/auth/sso/{slug}/callback", s.callbackSSO)
+	mux.HandleFunc("POST /api/auth/mfa/verify", s.verifyMFALogin)
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
@@ -331,8 +335,23 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/workspaces/{wsId}/sso/discover":        s.discoverSSOProvider,
 		"GET /api/workspaces/{wsId}/audit-logs":           s.listWorkspaceAuditLogs,
 		"GET /api/workspaces/{wsId}/audit-logs/export":    s.exportWorkspaceAuditLogs,
-		"GET /api/workspaces/{wsId}/security-policy":      s.getWorkspaceSecurityPolicy,
-		"PUT /api/workspaces/{wsId}/security-policy":      s.putWorkspaceSecurityPolicy,
+		"GET /api/workspaces/{wsId}/security-policy":        s.getWorkspaceSecurityPolicy,
+		"PUT /api/workspaces/{wsId}/security-policy":        s.putWorkspaceSecurityPolicy,
+
+		// 开放平台（PAT 个人访问令牌、空间事件 Webhook）与二步验证（TOTP MFA）
+		"GET /api/me/tokens":                                   s.listMyPATs,
+		"POST /api/me/tokens":                                  s.createMyPAT,
+		"DELETE /api/me/tokens/{tid}":                          s.revokeMyPAT,
+		"GET /api/me/mfa":                                      s.getMyMFA,
+		"POST /api/me/mfa/setup":                               s.setupMyMFA,
+		"POST /api/me/mfa/enable":                              s.enableMyMFA,
+		"POST /api/me/mfa/disable":                             s.disableMyMFA,
+		"GET /api/workspaces/{wsId}/webhooks":                  s.listWorkspaceWebhooks,
+		"POST /api/workspaces/{wsId}/webhooks":                 s.createWorkspaceWebhook,
+		"PATCH /api/workspaces/{wsId}/webhooks/{wid}":          s.updateWorkspaceWebhook,
+		"DELETE /api/workspaces/{wsId}/webhooks/{wid}":         s.deleteWorkspaceWebhook,
+		"POST /api/workspaces/{wsId}/webhooks/{wid}/test":      s.testWorkspaceWebhook,
+		"GET /api/workspaces/{wsId}/webhooks/{wid}/deliveries": s.listWebhookDeliveries,
 
 		// 独立知识库空间（Wiki）
 		"GET /api/workspaces/{wsId}/wiki-spaces":             s.listWikiSpaces,
@@ -444,6 +463,16 @@ func UserFrom(ctx context.Context) (store.User, bool) {
 
 func (s *Server) requireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, pat, ok := s.authenticateBearerPAT(r); ok {
+			if !patHasScope(pat.Scopes, r.Method) {
+				httpx.Error(w, http.StatusForbidden, "insufficient_scope", "当前访问令牌权限不足")
+				return
+			}
+			ctx := context.WithValue(r.Context(), userKey, u)
+			ctx = store.WithActor(ctx, store.Actor{UserID: u.ID, Kind: "pat"})
+			next.ServeHTTP(w, r.WithContext(ctx))
+			return
+		}
 		c, err := r.Cookie(CookieName)
 		if err != nil || c.Value == "" {
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "login required")
@@ -540,6 +569,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if !ok {
 		httpx.Error(w, http.StatusUnauthorized, "invalid_credentials", "wrong email or password")
+		return
+	}
+	if s.maybeStartMFAChallenge(w, r, u) {
 		return
 	}
 	if !s.startSession(w, r, u.ID) {

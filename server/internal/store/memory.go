@@ -27,6 +27,9 @@ type Memory struct {
 	sheetHistory      memSheetHistory
 	sheetDefinedNames memSheetDefinedNames
 	slidesExtras      memSlidesExtras
+	pat               memPAT
+	webhooks          memWebhooks
+	mfa               memMFA
 	sessions         map[string]session
 	d                memDocs
 	sh               memShare

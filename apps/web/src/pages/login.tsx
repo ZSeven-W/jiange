@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, type Me } from "@/lib/api";
+import { isMfaChallengeResponse, mfaApi, type LoginOrMfaResponse } from "@/lib/mfa-api";
 import { buildSSOStartUrl, ssoApi } from "@/lib/sso-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand";
-import { AlertCircle, Check, FileText, ShieldCheck, Sparkles, Table2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, FileText, ShieldCheck, Sparkles, Table2, X } from "lucide-react";
 import { finishLogin } from "@/lib/session-cache";
 import { useI18n, type TFunc } from "@/lib/i18n";
 import { LocaleToggle } from "@/components/locale-toggle";
@@ -48,12 +49,25 @@ export function formatSSOErrorMessage(code: string, t: TFunc): string {
   }
 }
 
-export function LoginPage({ initialSSOError }: { initialSSOError?: string } = {}) {
+export interface LoginMFAChallenge {
+  mfaToken: string;
+  email?: string;
+}
+
+export function LoginPage({
+  initialSSOError,
+  initialMFAChallenge = null,
+}: {
+  initialSSOError?: string;
+  initialMFAChallenge?: LoginMFAChallenge | null;
+} = {}) {
   const { t } = useI18n();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [mfaChallenge, setMfaChallenge] = useState<LoginMFAChallenge | null>(initialMFAChallenge);
+  const [mfaCode, setMfaCode] = useState("");
   const [ssoError, setSSOError] = useState<string>(() => {
     if (initialSSOError !== undefined) return initialSSOError.trim();
     if (typeof window === "undefined") return "";
@@ -67,8 +81,44 @@ export function LoginPage({ initialSSOError }: { initialSSOError?: string } = {}
     staleTime: 60_000,
   });
   const ssoProviders = ssoQuery.data ?? [];
-  const m = useMutation({ mutationFn: () => mode === "login" ? api.login(email, password) : api.register(email, name, password), onSuccess: (me) => finishLogin(qc, me) });
+  const mfaVerify = useMutation({
+    mutationFn: () => {
+      if (!mfaChallenge) {
+        return Promise.reject(new Error(t("二步验证会话已失效，请重新登录")));
+      }
+      return mfaApi.verifyLogin(mfaChallenge.mfaToken, mfaCode.trim());
+    },
+    onSuccess: (me: Me) => {
+      void finishLogin(qc, me);
+    },
+  });
+  const m = useMutation({
+    mutationFn: (): Promise<LoginOrMfaResponse> =>
+      mode === "login"
+        ? (api.login(email, password) as Promise<LoginOrMfaResponse>)
+        : api.register(email, name, password),
+    onSuccess: (res) => {
+      if (isMfaChallengeResponse(res)) {
+        setMfaChallenge({ mfaToken: res.mfaToken, email: res.email || email.trim() });
+        setMfaCode("");
+        mfaVerify.reset();
+        return;
+      }
+      void finishLogin(qc, res);
+    },
+  });
   const submit = (e: FormEvent) => { e.preventDefault(); m.mutate(); };
+  const submitMFA = (e: FormEvent) => {
+    e.preventDefault();
+    if (!mfaCode.trim() || mfaVerify.isPending) return;
+    mfaVerify.mutate();
+  };
+  const backToPasswordLogin = () => {
+    setMfaChallenge(null);
+    setMfaCode("");
+    mfaVerify.reset();
+    m.reset();
+  };
   const login = mode === "login";
   return (
     <div className="flex min-h-full bg-surface">
@@ -91,6 +141,61 @@ export function LoginPage({ initialSSOError }: { initialSSOError?: string } = {}
         <div aria-hidden className="pointer-events-none absolute -right-32 -top-32 size-96 rounded-full bg-[#dfe9ff]/60 blur-3xl" />
       </aside>
       <main className="flex flex-1 items-center justify-center px-7 py-12">
+        {mfaChallenge ? (
+          <form onSubmit={submitMFA} className="w-full max-w-[360px]" data-mfa-challenge-form>
+            <div className="mb-10 flex items-start justify-between lg:hidden"><Logo /><LocaleToggle /></div>
+            <div className="mb-6 hidden justify-end lg:flex"><LocaleToggle /></div>
+            <div className="inline-flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <ShieldCheck size={22} />
+            </div>
+            <h2 className="mt-4 text-[24px] font-semibold tracking-tight">{t("二步验证（MFA）")}</h2>
+            <p className="mt-2 text-[14px] leading-6 text-muted-foreground">
+              {t("请输入身份验证器 App 中的 6 位动态码，或输入一次性备用恢复码完成登录")}
+            </p>
+            {mfaChallenge.email && (
+              <div className="mt-3 inline-flex max-w-full items-center rounded-full border border-border bg-hover/60 px-3 py-1 text-[12px] text-muted-foreground">
+                <span className="truncate">{mfaChallenge.email}</span>
+              </div>
+            )}
+            <div className="mt-6 space-y-4">
+              <Field id="mfa-code" label={t("动态验证码 / 备用恢复码")}>
+                <Input
+                  id="mfa-code"
+                  type="text"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  placeholder={t("6 位动态码或恢复码")}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  className="h-11 font-mono text-center text-[16px] tracking-[0.2em]"
+                  data-mfa-code-input
+                />
+              </Field>
+            </div>
+            {mfaVerify.error && (
+              <p role="alert" className="mt-3 text-[13px] text-destructive">
+                {(mfaVerify.error as Error).message}
+              </p>
+            )}
+            <Button
+              type="submit"
+              className="mt-7 h-11 w-full"
+              disabled={mfaVerify.isPending || !mfaCode.trim()}
+              data-mfa-submit-btn
+            >
+              {mfaVerify.isPending ? t("验证中…") : t("验证并登录")}
+            </Button>
+            <button
+              type="button"
+              onClick={backToPasswordLogin}
+              data-mfa-back-btn
+              className="mt-4 flex h-10 w-full items-center justify-center gap-1.5 rounded-md text-[13px] font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+            >
+              <ArrowLeft size={14} />
+              {t("返回账号登录")}
+            </button>
+          </form>
+        ) : (
         <form onSubmit={submit} className="w-full max-w-[360px]">
           <div className="mb-10 flex items-start justify-between lg:hidden"><Logo /><LocaleToggle /></div>
           <div className="mb-6 hidden justify-end lg:flex"><LocaleToggle /></div>
@@ -145,6 +250,7 @@ export function LoginPage({ initialSSOError }: { initialSSOError?: string } = {}
           )}
           <p className="mt-7 text-center text-[13px] text-muted-foreground">{login ? t("还没有账号？") : t("已有账号？")}<button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => { setMode(login ? "register" : "login"); m.reset(); }}>{login ? t("免费注册") : t("去登录")}</button></p>
         </form>
+        )}
       </main>
     </div>
   );

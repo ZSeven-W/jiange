@@ -153,6 +153,7 @@ func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, d.WorkspaceID, "share.update", d.Kind, d.ID, d.Title, map[string]any{"targetEmail": u.Email, "role": in.Role})
+	s.dispatchWorkspaceEvent(d.WorkspaceID, store.WebhookEventShareUpdated, map[string]any{"docId": d.ID, "title": d.Title, "targetEmail": u.Email, "role": in.Role})
 	// A committed update may also have removed the caller's access, or a
 	// concurrent revocation may prevent the follow-up read. Report the write
 	// as successful even when a fresh, authorized result is unavailable.

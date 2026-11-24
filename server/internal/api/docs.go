@@ -105,6 +105,7 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	d = s.sanitizeWrittenDocMeta(r.Context(), u.ID, d)
 	s.recordAudit(r, d.WorkspaceID, "doc.create", d.Kind, d.ID, d.Title, map[string]any{"docType": d.DocType})
+	s.dispatchWorkspaceEvent(d.WorkspaceID, store.WebhookEventDocCreated, map[string]any{"docId": d.ID, "title": d.Title, "kind": d.Kind, "actorId": u.ID})
 	httpx.JSON(w, http.StatusCreated, d)
 }
 
@@ -283,6 +284,7 @@ func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.recordAudit(r, d.WorkspaceID, "doc.delete", d.Kind, d.ID, d.Title, nil)
+	s.dispatchWorkspaceEvent(d.WorkspaceID, store.WebhookEventDocDeleted, map[string]any{"docId": d.ID, "title": d.Title, "kind": d.Kind})
 	w.WriteHeader(http.StatusNoContent)
 }
 
