@@ -78,6 +78,7 @@ import {
   toggleOutlineGroupCollapsed,
 } from "./sheet-outline";
 import { SheetCellImagePopover, SheetCellImagePreviewModal } from "./sheet-cell-image";
+import { extractSheetAiContext, SheetAiPopover } from "./sheet-ai-popover";
 import { computeSheetSelectionStats } from "./sheet-selection-stats";
 import { SheetSelectionStatsBar } from "./sheet-selection-stats-bar";
 import {
@@ -329,6 +330,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [activePanel, setActivePanel] = useState<SheetPanelMode | null>(null);
   const [sparklinePopover, setSparklinePopover] = useState<{ left: number; top: number; bottom: number; right: number } | null>(null);
   const [cellImagePopover, setCellImagePopover] = useState<{ left: number; top: number; bottom: number; right: number } | null>(null);
+  const [aiPopover, setAiPopover] = useState<{ left: number; top: number; bottom: number; right: number } | null>(null);
   const [previewCellImage, setPreviewCellImage] = useState<{ url: string; alt?: string; point: SheetPoint } | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number; row: number; col: number } | null>(null);
@@ -2300,12 +2302,20 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         sparklineOpen={sparklinePopover !== null}
         onOpenSparkline={(anchor) => {
           setCellImagePopover(null);
+          setAiPopover(null);
           setSparklinePopover((cur) => (cur ? null : anchor));
         }}
         cellImageOpen={cellImagePopover !== null}
         onOpenCellImage={(anchor) => {
           setSparklinePopover(null);
+          setAiPopover(null);
           setCellImagePopover((cur) => (cur ? null : anchor));
+        }}
+        aiOpen={aiPopover !== null}
+        onOpenAi={(anchor) => {
+          setSparklinePopover(null);
+          setCellImagePopover(null);
+          setAiPopover((cur) => (cur ? null : anchor));
         }}
         hasRowGroupInSelection={hasRowGroupInSelection}
         hasColGroupInSelection={hasColGroupInSelection}
@@ -3548,6 +3558,25 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           onClose={() => setCellImagePopover(null)}
         />
       )}
+
+      {aiPopover && activeSheet && (() => {
+        const aiCtx = extractSheetAiContext(activeSheet, activeEvalMap, gridMap.cellByKey);
+        return (
+          <SheetAiPopover
+            sheetTitle={activeSheet.title}
+            activeCell={sheetAddress(selection.focus)}
+            headers={aiCtx.headers}
+            sampleRows={aiCtx.sampleRows}
+            canEdit={canEdit}
+            anchorRect={aiPopover}
+            onApplyFormula={async (formula) => {
+              if (!activeSheet || !canEdit) return;
+              await commitCellEdits([{ row: selection.focus.row, col: selection.focus.col, raw: formula }]);
+            }}
+            onClose={() => setAiPopover(null)}
+          />
+        );
+      })()}
 
       {previewCellImage && activeSheet && (
         <SheetCellImagePreviewModal

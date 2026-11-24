@@ -1,6 +1,6 @@
 import { openAISettings } from "@/lib/ai";
 import { openAccountSecurity } from "./account-security-dialog";
-import { PwaInstallButton } from "./offline-banner";
+import { OfflineCacheButton, PwaInstallButton } from "./offline-banner";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -300,6 +300,15 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         <NavItem icon={<HomeIcon width={18} height={18} />} label={t("主页")} active={route.page === "home"} onClick={() => go("#/")} />
         <NavItem icon={<DriveNavIcon className="size-[18px]" />} label={t("云盘")} active={false} onClick={() => go("#/drive/mine")} />
         <NavItem icon={<BookOpen size={18} strokeWidth={1.7} />} label={t("知识库")} active={route.page === "wiki" || route.page === "wiki-space"} onClick={() => go("#/wiki")} />
+        <button
+          type="button"
+          data-workspace-ai-btn
+          onClick={() => window.dispatchEvent(new CustomEvent("jiange:open-workspace-ai"))}
+          className="flex h-9 w-full items-center gap-2 rounded-md px-2.5 text-[14px] text-foreground transition-colors hover:bg-hover"
+        >
+          <span className="grid size-5 shrink-0 place-items-center text-primary"><Sparkles size={17} strokeWidth={1.8} /></span>
+          <span className="truncate">{t("知识库 AI 问答")}</span>
+        </button>
         <NavItem icon={<ClockIcon />} label={t("最近访问")} active={route.page === "recent"} onClick={() => go("#/recent")} />
         <NavItem icon={<StarIcon />} label={t("收藏")} active={route.page === "favorites"} onClick={() => go("#/favorites")} />
         <NavItem icon={<Building2 size={18} strokeWidth={1.7} />} label={t("组织架构")} active={route.page === "org"} onClick={() => go("#/org")} />
@@ -355,6 +364,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
           {me.workspaces.map((w) => <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">{w.name} <span>✓</span></div>)}
           <button className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => { setMenu(false); openAISettings(); }} data-open-ai-settings><Sparkles size={14} className="text-primary" />{t("AI 设置")}</button>
           <button className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => { setMenu(false); openAccountSecurity("mfa"); }} data-open-account-security><ShieldCheck size={14} className="text-primary" />{t("账号安全与令牌")}</button>
+          <div className="mt-1 px-1" onClick={() => setMenu(false)}><OfflineCacheButton compact /></div>
           <div className="mt-1 px-1"><PwaInstallButton compact /></div>
           <button className="mt-1 w-full rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={onLogout}>{t("退出登录")}</button>
         </div>}

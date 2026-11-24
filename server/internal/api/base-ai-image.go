@@ -126,7 +126,7 @@ func (s *Server) baseAIImageImportPreview(w http.ResponseWriter, r *http.Request
 		httpx.Error(w, http.StatusBadRequest, "invalid_messages", "识别内容无效或过长")
 		return
 	}
-	if !aiRate.allow(u.ID, s.now()) {
+	if !s.aiRate.allow(u.ID, s.now()) {
 		httpx.Error(w, http.StatusTooManyRequests, "ai_rate_limited", "请求过于频繁，请稍后再试")
 		return
 	}

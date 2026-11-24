@@ -1,6 +1,7 @@
 import { ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
 import { bodyBlocks, TITLE } from "@/editor/model";
 import { parseMarkdown, type MdBlock } from "@/lib/markdown";
+import { isSafeMarkdownImageUrl } from "@/lib/markdown-image-import";
 
 /** Do not replace an existing block or nested content when inserting a starter. */
 export function isEmptyStarterDocument(doc: Doc): boolean {
@@ -16,10 +17,25 @@ export function insertStarterTemplate(doc: Doc, markdown: string): Tx | null {
   return insertStarterBlocks(doc, parseMarkdown(markdown));
 }
 
-/** Same as insertStarterTemplate for already-parsed seeds (e.g. a staged Word import). */
-export function insertStarterBlocks(doc: Doc, seeds: MdBlock[], allowUploadedImages = false): Tx | null {
+/** Same as insertStarterTemplate for already-parsed seeds (e.g. a staged Word or Markdown import). */
+export function insertStarterBlocks(doc: Doc, seeds: MdBlock[], allowUploadedImages = false, allowExternalImages = false): Tx | null {
   if (!isEmptyStarterDocument(doc)) return null;
-  if (!seeds.length || seeds.some((s) => s.type === "file" || (s.type === "image" && (!allowUploadedImages || !/^[1-9]\d*$/.test(s.props.fileId ?? "") || !!s.props.url || !!s.props.importImageId)))) return null;
+  if (
+    !seeds.length ||
+    seeds.some((s) => {
+      if (s.type === "file") return true;
+      if (s.type !== "image") return false;
+      if (s.props.importImageId) return true;
+      const hasFileId = !!s.props.fileId;
+      const hasUrl = !!s.props.url;
+      if (hasFileId && hasUrl) return true;
+      if (hasFileId) return !allowUploadedImages || !/^[1-9]\d*$/.test(s.props.fileId ?? "");
+      if (hasUrl) return !allowExternalImages || !isSafeMarkdownImageUrl(s.props.url);
+      return true;
+    })
+  ) {
+    return null;
+  }
   const tx = new Tx(doc);
   let after: OpId | null = doc.hasBlock(TITLE) ? TITLE : null;
   for (const seed of seeds) {

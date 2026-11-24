@@ -12,8 +12,9 @@ import { OrgSyncPanel } from "./org-sync-panel";
 import { OrgSSOPanel } from "./org-sso-panel";
 import { OrgAuditPanel } from "./org-audit-panel";
 import { OrgWebhooksPanel } from "./org-webhooks-panel";
+import { OrgNotificationsPanel } from "./org-notifications-panel";
 
-type OrgTab = "departments" | "groups" | "members" | "sync" | "sso" | "security" | "webhooks";
+type OrgTab = "departments" | "groups" | "members" | "sync" | "sso" | "security" | "webhooks" | "notifications";
 
 const WS_ROLE_LABELS: Record<string, string> = {
   owner: "空间所有者",
@@ -272,6 +273,7 @@ export function OrgPage({ me }: { me: Me }) {
             ["sso", t("单点登录 SSO")],
             ["security", t("安全审计与水印")],
             ["webhooks", t("开放集成 Webhook")],
+            ["notifications", t("外部通知渠道")],
           ] as const).map(([key, label]) => (
             <button
               key={key}
@@ -669,6 +671,10 @@ export function OrgPage({ me }: { me: Me }) {
 
           {data && tab === "webhooks" && (
             <OrgWebhooksPanel workspaceId={effectiveWsId} userId={me.user.id} canAdmin={canAdmin} />
+          )}
+
+          {data && tab === "notifications" && (
+            <OrgNotificationsPanel workspaceId={effectiveWsId} userId={me.user.id} canAdmin={canAdmin} />
           )}
         </div>
       </div>

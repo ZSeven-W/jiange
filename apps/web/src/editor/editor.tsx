@@ -62,6 +62,7 @@ import { LinkCard } from "./link-card";
 import { FileCard, fmtSize } from "./file-card";
 import { ApiError, conditionalBatchBase64, linkApi, type DocSuggestion } from "@/lib/api";
 import { ImageBlock } from "./image-block";
+import { isRichPreviewable } from "@/components/rich-file-preview";
 import { TableBlock, type TableReorderSession, type TableResizeSession } from "./table-block";
 import { equalizedTableWidths, parseTableWidths, updatedSelectedTableWidths, validTableWidths, visibleTableWidths } from "./table-widths";
 import { TableWidthHistory, type TableWidthBefore } from "./table-width-history";
@@ -1349,6 +1350,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     if (!mounted.current || readOnlyRef.current || sync.client !== client || !d || !d.hasBlock(b)) throw new Error("changed");
     const tx = new Tx(d);
     tx.setProp(b, "fileId", String(asset.id));
+    if (d.blockInfo(b).props.url) tx.setProp(b, "url", "");
     tx.setProp(b, "name", asset.name);
     tx.setProp(b, "mime", asset.mime);
     tx.setProp(b, "size", String(asset.size));
@@ -4453,7 +4455,7 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
       ) : type === "divider" ? (
         <hr contentEditable={false} className="h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />
       ) : type === "image" ? (
-        <ImageBlock fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} onComment={onBlockComment} />
+        <ImageBlock fileId={props.fileId} url={props.url} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} onComment={onBlockComment} />
       ) : type === "video" ? (
         <VideoBlockView
           url={props.url}
@@ -4534,7 +4536,7 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
           onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
         />
       ) : type === "file" ? (
-        <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
+        <FileCard fileId={props.fileId} name={props.name} size={props.size} canDownload={!!canDownload} onPreview={onPreviewImage && isPreviewable(props.mime, props.name) ? () => onPreviewImage(`/api/files/${props.fileId}`, props.name ?? "附件", props.mime) : undefined} />
       ) : type === "code" ? (
         <div className="rounded-md border border-[#D9DBDF] bg-[#F3F5F6] dark:border-border dark:bg-[#23262a]" data-code-wrap-mode={props.wrap === "false" ? "nowrap" : "wrap"}>
           <CodeBlockHeader
@@ -4789,7 +4791,7 @@ function MathBlock({ src, findRanges, onSource }: { src: string; findRanges?: { 
 }
 
 
-/** 可在线预览的附件 mime：图片/PDF/纯文本类。 */
-function isPreviewable(mime?: string): boolean {
-  return !!mime && (mime.startsWith("image/") || mime === "application/pdf" || mime.startsWith("text/") || /^(application\/(json|xml|javascript|x-yaml|sql))$/.test(mime));
+/** 可在线预览的附件：图片/PDF/音视频/Office/Markdown/CSV/代码与纯文本。 */
+function isPreviewable(mime?: string, name?: string): boolean {
+  return isRichPreviewable(name, mime);
 }

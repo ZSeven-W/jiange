@@ -42,6 +42,7 @@ import { CsvImport, importFailureMessage, importResultMessage } from "./base/csv
 import { downloadXlsxBytes, exportBaseToXlsx, parseXlsxToBaseRows, xlsxToImportCsv } from "./base/xlsx-io";
 import { AddRecordMenu } from "./base/add-record-menu";
 import { AiPasteDialog } from "./base/ai-paste-dialog";
+import { BaseAiColumnFillDialog } from "./base/ai-column-fill";
 import { FormPublication } from "./base/form-publication";
 import { FormSetup, validFormSelection } from "./base/form-setup";
 import { saveFormConfig } from "./base/public-form-api";
@@ -132,6 +133,7 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
   const [autoOpen, setAutoOpen] = useState(false);
   const [duplicatingBase, setDuplicatingBase] = useState(false);
   const [aiPasteOpen, setAiPasteOpen] = useState(false);
+  const [aiFillOpen, setAiFillOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
   const [baseSidebarOpen, setBaseSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1200);
   const expandBaseSidebar = useRef<HTMLButtonElement>(null), collapseBaseSidebar = useRef<HTMLButtonElement>(null);
@@ -714,6 +716,19 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
         )}
         {current?.type === "grid" && <RowHeightBar cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <FillBar fields={fields} cfg={cfg} onChange={setCfg} />}
+        {viewCanEdit && current?.type !== "form" && (
+          <button
+            type="button"
+            disabled={preventCopy || q.isFetching}
+            title={preventCopy ? t("当前表格禁止复制内容，无法使用 AI 填充") : t("AI 批量填充列")}
+            onClick={() => setAiFillOpen(true)}
+            data-base-ai-fill-btn
+            className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-primary hover:bg-[#eef3ff] disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <Sparkles size={15} strokeWidth={1.7} />
+            <span>{t("AI 填充")}</span>
+          </button>
+        )}
         <span className="ml-auto" aria-hidden />
         {canEdit && current?.type !== "form" && <span className="ml-1 flex shrink-0 items-center gap-0.5 border-l pl-1.5">
           <button type="button" disabled={!undoStack.canUndo} onClick={() => void runUndo(false)} aria-label={t("撤销")} title={undoStack.undoLabel ? `${t("撤销")}：${undoStack.undoLabel} (⌘/Ctrl+Z)` : t("撤销")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-undo><Undo2 size={16} /></button>
@@ -987,6 +1002,17 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
       </div>
       {autoOpen && <AutomationsPanel baseId={id} fields={fields} tables={tables} activeTableId={activeTableId} members={members} onClose={() => setAutoOpen(false)} />}
       {aiPasteOpen && <AiPasteDialog key={`${id}:${userId}`} baseId={id} userId={userId} fields={fields} allowed={canAddRecord && !preventCopy && !q.isFetching} onClose={() => setAiPasteOpen(false)} onRefresh={refresh} />}
+      {aiFillOpen && (
+        <BaseAiColumnFillDialog
+          key={`ai-fill:${id}:${activeTableId ?? "default"}`}
+          baseId={id}
+          fields={visibleFields}
+          records={records}
+          readonlyFieldIds={readonlyFieldIds}
+          onClose={() => setAiFillOpen(false)}
+          onApplied={refresh}
+        />
+      )}
       {sharing && <ShareDialog meta={base} userId={userId} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       <DocumentWatermark
         workspaceId={base.workspaceId}

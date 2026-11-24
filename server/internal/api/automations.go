@@ -578,7 +578,7 @@ func (s *Server) SweepSchedules(ctx context.Context) {
 				hit = &recs[0]
 			}
 		}
-		s.fireAutomation(ctx, a.BaseID, cfg, fields, *hit, 0)
+		s.fireAutomation(ctx, a.BaseID, a.Name, cfg, fields, *hit, 0)
 		_ = s.Store.MarkFired(ctx, a.ID, now)
 	}
 }
@@ -653,20 +653,22 @@ func (s *Server) runAutomations(ctx context.Context, baseID int64, trigger strin
 				continue
 			}
 		}
-		s.fireAutomation(ctx, baseID, cfg, fields, rec, skipActor)
+		s.fireAutomation(ctx, baseID, a.Name, cfg, fields, rec, skipActor)
 	}
 }
 
 // fireAutomation runs one automation's legacy notify/webhook fields plus any
 // structured Actions for one record; skipActor hides the triggering user from
 // recipients when non-zero.
-func (s *Server) fireAutomation(ctx context.Context, baseID int64, cfg automationConfig, fields []store.Field, rec store.Record, skipActor int64) {
+func (s *Server) fireAutomation(ctx context.Context, baseID int64, automationName string, cfg automationConfig, fields []store.Field, rec store.Record, skipActor int64) {
 	if automationDepth(ctx) >= maxAutomationDepth {
 		return
 	}
+	var wsID int64
 	baseTitle := ""
 	if doc, err := s.Store.GetDocSystem(ctx, baseID); err == nil {
 		baseTitle = doc.Title
+		wsID = doc.WorkspaceID
 	}
 	env := &automationExecEnv{
 		baseID:     baseID,
@@ -687,6 +689,24 @@ func (s *Server) fireAutomation(ctx context.Context, baseID int64, cfg automatio
 	// Structured multi-step actions.
 	if len(cfg.Actions) > 0 {
 		s.executeAutomationActions(ctx, env, cfg.Actions, 0)
+	}
+
+	// External notification channels subscribed to "automation" events.
+	if wsID > 0 {
+		titleBase := strings.TrimSpace(baseTitle)
+		if titleBase == "" {
+			titleBase = "多维表"
+		}
+		ruleName := strings.TrimSpace(automationName)
+		title := fmt.Sprintf("【自动化触发】%s", titleBase)
+		if ruleName != "" {
+			title = fmt.Sprintf("【自动化触发】%s - %s", titleBase, ruleName)
+		}
+		body := strings.TrimSpace(interpolateTemplate(cfg.Message, env))
+		if body == "" {
+			body = fmt.Sprintf("多维表「%s」中的自动化流程已执行完成。", titleBase)
+		}
+		s.dispatchWorkspaceNotification(wsID, store.NotificationEventAutomation, title, body, fmt.Sprintf("/bases/%d", baseID))
 	}
 }
 

@@ -49,6 +49,7 @@ import {
   Trash2,
   Underline,
   Undo2,
+  Wand2,
   WrapText,
 } from "lucide-react";
 import type { SheetPanelMode } from "./sheet-panels";
@@ -333,6 +334,8 @@ export interface SheetToolbarProps {
   onOpenSparkline?: (anchor: { left: number; top: number; bottom: number; right: number }) => void;
   cellImageOpen?: boolean;
   onOpenCellImage?: (anchor: { left: number; top: number; bottom: number; right: number }) => void;
+  aiOpen?: boolean;
+  onOpenAi?: (anchor: { left: number; top: number; bottom: number; right: number }) => void;
   hasRowGroupInSelection?: boolean;
   hasColGroupInSelection?: boolean;
   onToggleGroupRows?: () => void;
@@ -419,6 +422,8 @@ export function SheetToolbar(props: SheetToolbarProps) {
     onOpenSparkline,
     cellImageOpen,
     onOpenCellImage,
+    aiOpen,
+    onOpenAi,
     hasRowGroupInSelection,
     hasColGroupInSelection,
     onToggleGroupRows,
@@ -925,6 +930,25 @@ export function SheetToolbar(props: SheetToolbarProps) {
 
       <span className="mx-0.5 h-8 w-px shrink-0 bg-[#dee0e3]" />
 
+      {onOpenAi && (
+        <button
+          type="button"
+          title={t("AI 助手")}
+          aria-label={t("AI 助手")}
+          aria-expanded={!!aiOpen}
+          data-sheet-ai-btn
+          data-sheet-tool="ai"
+          onClick={(e) => {
+            closeMenu();
+            const r = e.currentTarget.getBoundingClientRect();
+            onOpenAi({ left: r.left, top: r.top, bottom: r.bottom, right: r.right });
+          }}
+          className={`flex h-12 min-w-[38px] shrink-0 flex-col items-center justify-center gap-0.5 rounded px-1.5 text-[10.5px] transition-colors hover:bg-[#eef3ff] hover:text-[#3370ff] ${aiOpen ? "bg-[#e1eaff] text-[#3370ff]" : "text-[#3370ff]"}`}
+        >
+          <Wand2 size={15} />
+          <span>{t("AI 助手")}</span>
+        </button>
+      )}
       {labeledBtn(t("图表"), activePanel === "charts", false, () => onTogglePanel("charts"), <BarChart3 size={15} />, "charts")}
       {labeledBtn(t("透视表"), activePanel === "pivot", false, () => onTogglePanel("pivot"), <TableProperties size={15} />, "pivot")}
       {onOpenSparkline && (

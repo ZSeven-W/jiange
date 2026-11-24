@@ -70,9 +70,24 @@ function RichText({ spans, flags, activeThread, onActivateComment }: { spans: Sp
   })}</>;
 }
 
+function safeReadOnlyImageURL(url?: string, publicToken?: string, versionSeq?: number): string | undefined {
+  if (!url) return undefined;
+  const trimmed = url.trim();
+  const internalMatch = trimmed.match(/^\/api\/files\/([1-9]\d*)(?:\?version=([1-9]\d*))?$/);
+  if (internalMatch) {
+    return fileURL(internalMatch[1], publicToken, internalMatch[2] ? Number(internalMatch[2]) : versionSeq);
+  }
+  try {
+    const parsed = new URL(trimmed);
+    return (parsed.protocol === "http:" || parsed.protocol === "https:") && parsed.host ? trimmed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false, onPreview, activeComment = false }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean; onPreview?: (src: string, name: string, mime?: string) => void; activeComment?: boolean }) {
   const [failed, setFailed] = useState(false);
-  const src = fileURL(block.props.fileId, publicToken, versionSeq);
+  const src = fileURL(block.props.fileId, publicToken, versionSeq) ?? safeReadOnlyImageURL(block.props.url, publicToken, versionSeq);
   useEffect(() => { setFailed(false); }, [src, recovery]);
   if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">图片不可用或需要登录：{block.props.name || "图片"}</div>;
   const align = imageAlign(block.props.align);
@@ -189,7 +204,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
           break;
         }
         case "divider": content = <hr className="my-5 h-px border-0 bg-[#DEE0E3] dark:bg-border" data-divider />; break;
-        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
+        case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${block.props.url ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken, imageVersionSeq);
           content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;

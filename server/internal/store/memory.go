@@ -29,6 +29,7 @@ type Memory struct {
 	slidesExtras      memSlidesExtras
 	pat               memPAT
 	webhooks          memWebhooks
+	notifChannels     memNotifChannels
 	mfa               memMFA
 	sessions         map[string]session
 	d                memDocs

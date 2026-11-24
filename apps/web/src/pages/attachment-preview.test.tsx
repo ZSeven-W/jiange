@@ -36,5 +36,10 @@ describe("attachment image preview", () => {
     const pdf = renderToStaticMarkup(<AttachmentPreview src="/api/files/2" name="文件.pdf" mime="application/pdf" onClose={() => {}} />);
     expect(pdf).toContain('data-pdf-frame="true"');
     expect(pdf).not.toContain('aria-label="放大图片"');
+    const docx = renderToStaticMarkup(<AttachmentPreview src="/api/files/3" name="说明.docx" mime="application/octet-stream" onClose={() => {}} />);
+    expect(docx).toContain('data-docx-preview="true"');
+    const video = renderToStaticMarkup(<AttachmentPreview src="/api/files/4" name="演示.mp4" mime="video/mp4" allowPrint={false} onClose={() => {}} />);
+    expect(video).toContain('data-video-preview="true"');
+    expect(video).toContain('controlsList="nodownload"');
   });
 });

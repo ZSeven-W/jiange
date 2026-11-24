@@ -52,6 +52,8 @@ type Server struct {
 	// WebhookTransport / WebhookAllowHTTP let tests reach a local fake webhook receiver.
 	WebhookTransport http.RoundTripper
 	WebhookAllowHTTP bool
+	// aiRate tracks per-user AI requests on this Server instance (avoids cross-test state sharing).
+	aiRate aiLimiter
 }
 
 func (s *Server) now() time.Time {
@@ -223,6 +225,7 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/drive/shortcuts/{sid}":                   s.deleteDriveShortcut,
 		"POST /api/drive/move/{id}":                           s.postDriveMove,
 		"POST /api/drive/account-move/{id}":                   s.postAccountDriveMove,
+		"POST /api/drive/cross-space-move/{id}":               s.postDriveCrossSpaceMove,
 		"POST /api/drive/trash/{id}":                          s.postDriveTrash,
 		"POST /api/drive/account-trash/{id}":                  s.accountTrash,
 		"POST /api/drive/restore/{id}":                        s.postDriveRestore,
@@ -279,7 +282,10 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/me/ai":         s.putAISettings,
 		"DELETE /api/me/ai":      s.deleteAISettings,
 		"POST /api/me/ai/test":   s.testAISettings,
-		"POST /api/docs/{id}/ai": s.docAI,
+		"POST /api/docs/{id}/ai":     s.docAI,
+		"POST /api/ai/ask-workspace": s.aiAskWorkspace,
+		"POST /api/ai/sheet-assist":  s.aiSheetAssist,
+		"POST /api/ai/base-fill":     s.aiBaseFill,
 
 		// 我的模板
 		"GET /api/me/templates":          s.listUserTemplates,
@@ -352,6 +358,13 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/workspaces/{wsId}/webhooks/{wid}":         s.deleteWorkspaceWebhook,
 		"POST /api/workspaces/{wsId}/webhooks/{wid}/test":      s.testWorkspaceWebhook,
 		"GET /api/workspaces/{wsId}/webhooks/{wid}/deliveries": s.listWebhookDeliveries,
+
+		// 外部通知渠道（SMTP / 飞书 / 钉钉 / 企业微信 / Slack）
+		"GET /api/workspaces/{wsId}/notification-channels":             s.listNotificationChannels,
+		"POST /api/workspaces/{wsId}/notification-channels":            s.createNotificationChannel,
+		"PATCH /api/workspaces/{wsId}/notification-channels/{cid}":     s.updateNotificationChannel,
+		"DELETE /api/workspaces/{wsId}/notification-channels/{cid}":    s.deleteNotificationChannel,
+		"POST /api/workspaces/{wsId}/notification-channels/{cid}/test": s.testNotificationChannel,
 
 		// 独立知识库空间（Wiki）
 		"GET /api/workspaces/{wsId}/wiki-spaces":             s.listWikiSpaces,

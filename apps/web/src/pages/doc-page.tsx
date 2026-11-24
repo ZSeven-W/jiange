@@ -31,7 +31,7 @@ import { StarterTemplates, type StarterTemplate } from "./starter-templates";
 import { parseTitleConsistency, TitleConsistency } from "./title-consistency";
 import { TitleAutoSync, TitleSyncReadError, titleSyncDurableStorage, type TitleSyncOutcome } from "./title-auto-sync";
 import { DocumentReferencesPanel } from "./document-references";
-import { hasUnsupportedImportBlocks, insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starter-template-ops";
+import { insertStarterBlocks, insertStarterTemplate, isEmptyStarterDocument } from "./starter-template-ops";
 import { peekStarter, takeStarter } from "./pending-starter";
 import { clearPendingWord, loadPendingWord, type PendingWord } from "./pending-word";
 import { BOARD_SEED, MINDMAP_SEED, hasBoard, peekBoardKind, takeBoard } from "./board-starter";
@@ -76,6 +76,7 @@ import { AttachmentPreview } from "./attachment-preview";
 import { commentsApi, extrasApi, suggestionsApi, type DocSuggestion } from "@/lib/api";
 import { SuggestionPanel, type SuggestionBlockOption } from "./suggestion-panel";
 import { parseMarkdown, viewToMarkdown } from "@/lib/markdown";
+import { extractMarkdownImages, importMarkdownBlocksWithImages } from "@/lib/markdown-image-import";
 import { appendBlocksOps, appendMarkdownOps } from "@/lib/md-import";
 import { buildDocx, docxExportLosses, docxImportErrorMessage, DOCX_MIME, isDocxFile, readDocxFile, type DocxExportComment, type DocxImportResult, type DocxImportedComment } from "@/lib/docx";
 import { fetchDocxImages } from "./docx-images";
@@ -941,12 +942,27 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     try { md = await file.text(); } catch { setTemplateError("读取文件失败，请重试。"); return; }
     if (!canEditRef.current) { setTemplateError("当前为只读状态，无法导入。"); return; }
     if (!sync.client.caughtUp || sync.client.status !== "synced") { setTemplateError("请等待文档同步完成后再导入。"); return; }
-    if (!parseMarkdown(md).length) { setTemplateError("文件没有可导入的内容。"); return; }
-    if (hasUnsupportedImportBlocks(md)) { setTemplateError("暂不支持导入图片，请先移除图片内容。"); return; }
-    if (d !== sync.client.doc || !canEditRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || !recordExternalUndo.current) { setTemplateError("文档同步状态已改变，请重新导入。"); return; }
-    const tx = appendMarkdownOps(d, md);
+    const ready = () => {
+      const context = exportContext.current;
+      return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && d === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && !!recordExternalUndo.current;
+    };
+    let imported;
+    try {
+      imported = await importMarkdownBlocksWithImages(md, {
+        uploadImage: (imgFile) => docsApi.upload(id, imgFile),
+        canContinue: ready,
+      });
+    } catch {
+      if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) {
+        setTemplateError("文档同步状态已改变，请重新导入。");
+      }
+      return;
+    }
+    if (!imported.blocks.length) { setTemplateError("文件没有可导入的内容。"); return; }
+    if (!ready() || !recordExternalUndo.current) { setTemplateError("文档同步状态已改变，请重新导入。"); return; }
+    const tx = appendBlocksOps(d, imported.blocks);
     if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
-    setTemplateError("");
+    setTemplateError(imported.warnings.length ? imported.warnings.join("；") : "");
   };
   const importWord = async (file: File) => {
     const d = sync.client.doc;
@@ -1260,18 +1276,41 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
     sync.client.push(tx.ops);
   });
-  const applyPendingStarter = () => {
+  const applyPendingStarter = async () => {
     const content = peekStarter(me.user.id, id);
     const doc = sync.client.doc;
     if (!content || !doc || submittedStarter.current) return;
-    if (!canEditRef.current || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.droppedOnResync > 0 || !recordExternalUndo.current) { setTemplateError("文档当前无法安全导入，请检查编辑权限和同步状态。"); return; }
+    const ready = () => {
+      const context = exportContext.current;
+      return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && doc === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && sync.client.droppedOnResync === 0 && !!recordExternalUndo.current;
+    };
+    if (!ready()) { setTemplateError("文档当前无法安全导入，请检查编辑权限和同步状态。"); return; }
     submittedStarter.current = true;
-    const tx = content.blocks ? insertStarterBlocks(doc, content.blocks) : insertStarterTemplate(doc, content.markdown);
-    if (!tx) { submittedStarter.current = false; setTemplateError("文档已有内容或含不支持的内容，未导入。原文已保留。"); return; }
-    recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
-    setPendingSubmitted(true);
-    setTemplateError("");
-    sync.client.push(tx.ops);
+    try {
+      let tx: Tx | null;
+      if (content.blocks) {
+        tx = insertStarterBlocks(doc, content.blocks, true, true);
+      } else if (extractMarkdownImages(content.markdown).length > 0) {
+        const imported = await importMarkdownBlocksWithImages(content.markdown, {
+          uploadImage: (imgFile) => docsApi.upload(id, imgFile),
+          canContinue: ready,
+        });
+        if (!ready() || !recordExternalUndo.current) { submittedStarter.current = false; setTemplateError("文档当前无法安全导入，请检查编辑权限和同步状态。"); return; }
+        tx = insertStarterBlocks(doc, imported.blocks, true, true);
+      } else {
+        tx = insertStarterTemplate(doc, content.markdown);
+      }
+      if (!tx || !recordExternalUndo.current) { submittedStarter.current = false; setTemplateError("文档已有内容或含不支持的内容，未导入。原文已保留。"); return; }
+      recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
+      setPendingSubmitted(true);
+      setTemplateError("");
+      sync.client.push(tx.ops);
+    } catch {
+      submittedStarter.current = false;
+      if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) {
+        setTemplateError("导入未完成，原文已保留，请检查文档状态后重试。");
+      }
+    }
   };
   const applyPendingWord = async () => {
     const file = pendingWord?.file;
@@ -1923,7 +1962,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             {pendingStarter && <div className="mt-4 rounded-md border bg-sidebar/50 p-3 text-[13px]" role="status">
               <p className="text-muted-foreground">{pendingSubmitted ? "导入操作已发送，请核对内容；原文仍暂存在当前标签页。" : "待导入内容已准备好。请确认文档为空后导入。"}{!pendingStarter.persistent && " 浏览器暂存不可用，请勿刷新或关闭页面。"}</p>
               <div className="mt-2 flex flex-wrap items-center gap-3">
-                {!pendingSubmitted && <button type="button" disabled={!canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={applyPendingStarter} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">导入内容</button>}
+                {!pendingSubmitted && <button type="button" disabled={!canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={() => void applyPendingStarter()} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">导入内容</button>}
                 <button type="button" className="text-primary hover:underline" onClick={() => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([pendingStarter.markdown], { type: "text/markdown" })); a.download = "待导入内容.md"; a.click(); URL.revokeObjectURL(a.href); }}>下载原文</button>
                 <button type="button" className="text-muted-foreground hover:underline" onClick={() => { takeStarter(me.user.id, id); submittedStarter.current = false; setPendingSubmitted(false); setPendingRevision((n) => n + 1); setTemplateError(""); }}>清除暂存</button>
               </div>

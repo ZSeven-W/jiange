@@ -17,11 +17,11 @@ import type { DriveUploadManager } from "./drive-upload";
 import { DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stagePendingWord } from "./pending-word";
 import { parseMarkdown } from "@/lib/markdown";
+import { extractMarkdownImages, importMarkdownBlocksWithImages } from "@/lib/markdown-image-import";
 import { type StarterTemplate } from "./starter-template-data";
 import { TemplateLibrary } from "./template-library";
 import { stageStarter } from "./pending-starter";
 import { BOARD_TITLE, MINDMAP_TITLE, stageBoard, type BoardStarterKind } from "./board-starter";
-import { hasUnsupportedImportBlocks } from "./starter-template-ops";
 import { ask, askText } from "@/components/ui/ask";
 import { Check, ChevronDown, ChevronRight, ClipboardList, FileText, Folder, FolderOpen, Grid2X2, List, ListTree, Pin, PinOff, Plus, Star, Trash2 } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
@@ -226,14 +226,22 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
       }
       if (file.size > 5 * 1024 * 1024) throw new Error(t("Markdown 文件不能超过 5 MB。"));
       const markdown = await file.text();
-      if (!parseMarkdown(markdown).length) throw new Error(t("文件没有可导入的内容。"));
-      if (hasUnsupportedImportBlocks(markdown)) throw new Error(t("暂不支持导入图片，请先移除图片内容。"));
+      const extractedImages = extractMarkdownImages(markdown);
+      if (!parseMarkdown(markdown).some((b) => b.type !== "image") && !extractedImages.some((img) => img.safe)) {
+        throw new Error(t("文件没有可导入的内容。"));
+      }
       if (!stillHere()) return;
       const title = file.name.replace(/\.(md|markdown)$/i, "") || t("导入文档");
       // The guarded import endpoint also accepts Markdown and binds creation
       // to the account that selected the file, even if another tab signs in.
       const doc = await driveApi.createWordImportNode(title, null, true, me.user.id);
-      stageStarter(me.user.id, doc.id, markdown);
+      const imported = await importMarkdownBlocksWithImages(markdown, {
+        uploadImage: (imgFile) => docsApi.upload(doc.id, imgFile),
+        canContinue: stillHere,
+      });
+      if (!stillHere()) return;
+      if (!imported.blocks.length) throw new Error(t("文件没有可导入的内容。"));
+      stageStarter(me.user.id, doc.id, markdown, imported.blocks);
       if (!stillHere()) return;
       void qc.invalidateQueries({ queryKey: ["docs"] }); void qc.invalidateQueries({ queryKey: ["drive"] });
       go(hrefOf({ id: doc.id, kind: "doc" }));

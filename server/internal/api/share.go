@@ -154,6 +154,19 @@ func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordAudit(r, d.WorkspaceID, "share.update", d.Kind, d.ID, d.Title, map[string]any{"targetEmail": u.Email, "role": in.Role})
 	s.dispatchWorkspaceEvent(d.WorkspaceID, store.WebhookEventShareUpdated, map[string]any{"docId": d.ID, "title": d.Title, "targetEmail": u.Email, "role": in.Role})
+	if d.WorkspaceID > 0 {
+		roleLabel := in.Role
+		if roleLabel == "" {
+			roleLabel = "已移除"
+		}
+		s.dispatchWorkspaceNotification(
+			d.WorkspaceID,
+			store.NotificationEventShareUpdated,
+			"【权限变更】「"+d.Title+"」的协作者权限已更新",
+			"目标成员："+u.Email+" · 权限："+roleLabel,
+			docNotificationLink(d.Kind, d.ID),
+		)
+	}
 	// A committed update may also have removed the caller's access, or a
 	// concurrent revocation may prevent the follow-up read. Report the write
 	// as successful even when a fresh, authorized result is unavailable.

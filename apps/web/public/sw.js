@@ -1,24 +1,54 @@
-/* Jiange Production Service Worker — App Shell & Immutable Static Assets Only */
+/* Jiange Production Service Worker — App Shell & Immutable Static Assets Only.
+ *
+ * Strictly caches ONLY static app shell assets (/, /index.html, /assets/*, /brand/*,
+ * /manifest.webmanifest). ALL /api/* requests remain strictly network-only and are NEVER
+ * stored in CacheStorage — structured offline snapshots & FIFO mutation replay live in
+ * IndexedDB (`jiange-offline-v1` in apps/web/src/lib/offline-db.ts).
+ */
 
 const CACHE_PREFIX = "jiange-shell-";
 const CACHE_NAME = "jiange-shell-v1";
 const SHELL_URLS = ["/", "/manifest.webmanifest", "/brand/icon-192.svg"];
 
 function isCacheableResponse(response) {
-  return Boolean(response && response.ok && response.status === 200 && response.type === "basic");
+  if (!response || !response.ok || response.status !== 200 || response.type !== "basic") {
+    return false;
+  }
+  const cacheControl =
+    response.headers && typeof response.headers.get === "function"
+      ? response.headers.get("cache-control")
+      : null;
+  if (cacheControl && cacheControl.toLowerCase().includes("no-store")) {
+    return false;
+  }
+  return true;
+}
+
+function normalizePathname(pathname) {
+  return String(pathname || "/").replace(/\/{2,}/g, "/");
 }
 
 function isApiPath(pathname) {
-  return pathname === "/api" || pathname.startsWith("/api/");
+  const normalized = normalizePathname(pathname).toLowerCase();
+  return normalized === "/api" || normalized.startsWith("/api/");
+}
+
+function isAppShellDocumentPath(pathname) {
+  const normalized = normalizePathname(pathname);
+  return normalized === "/" || normalized === "/index.html";
 }
 
 function isStaticAssetPath(pathname) {
-  return pathname.startsWith("/assets/") || pathname.startsWith("/brand/");
+  const normalized = normalizePathname(pathname);
+  return normalized.startsWith("/assets/") || normalized.startsWith("/brand/");
 }
 
 function isWebSocketRequest(request, url) {
   if (url.protocol === "ws:" || url.protocol === "wss:") return true;
-  const upgrade = request.headers && typeof request.headers.get === "function" ? request.headers.get("upgrade") : null;
+  const upgrade =
+    request.headers && typeof request.headers.get === "function"
+      ? request.headers.get("upgrade")
+      : null;
   return Boolean(upgrade && upgrade.toLowerCase() === "websocket");
 }
 
@@ -30,10 +60,11 @@ function shouldBypass(request, url) {
   if (url.protocol !== "http:" && url.protocol !== "https:") return true;
   // Never intercept cross-origin requests.
   if (url.origin !== self.location.origin) return true;
-  // Never intercept or cache any /api/ endpoints (prevents leaking authenticated session data).
+  // Strictly keep ALL /api/* requests network-only (never stale-cache authenticated API data).
   if (isApiPath(url.pathname)) return true;
   // Never intercept the service worker script itself or health probes.
-  if (url.pathname === "/sw.js" || url.pathname === "/healthz") return true;
+  const normalized = normalizePathname(url.pathname);
+  if (normalized === "/sw.js" || normalized === "/healthz") return true;
   return false;
 }
 
@@ -43,27 +74,44 @@ async function cacheFirstAsset(request, event) {
   if (cached) {
     return cached;
   }
-  const response = await fetch(request);
-  if (isCacheableResponse(response)) {
-    const putPromise = cache.put(request, response.clone()).catch(() => {});
-    if (event && typeof event.waitUntil === "function") {
-      event.waitUntil(putPromise);
+  try {
+    const response = await fetch(request);
+    if (isCacheableResponse(response)) {
+      const putPromise = cache.put(request, response.clone()).catch(() => {});
+      if (event && typeof event.waitUntil === "function") {
+        event.waitUntil(putPromise);
+      }
     }
+    return response;
+  } catch {
+    return new Response("Offline", {
+      status: 503,
+      statusText: "Service Unavailable",
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
   }
-  return response;
 }
 
 async function networkFirstNavigation(request, url, event) {
   try {
     const response = await fetch(request);
-    if (isCacheableResponse(response) && (url.pathname === "/" || url.pathname === "/index.html")) {
+    if (isCacheableResponse(response) && isAppShellDocumentPath(url.pathname)) {
       const contentType =
-        response.headers && typeof response.headers.get === "function" ? response.headers.get("content-type") : null;
+        response.headers && typeof response.headers.get === "function"
+          ? response.headers.get("content-type")
+          : null;
       if (!contentType || contentType.toLowerCase().includes("text/html")) {
-        const clone = response.clone();
+        const cloneRoot = response.clone();
+        const cloneIndex =
+          normalizePathname(url.pathname) === "/index.html" ? response.clone() : null;
         const putPromise = caches
           .open(CACHE_NAME)
-          .then((cache) => cache.put("/", clone))
+          .then(async (cache) => {
+            await cache.put("/", cloneRoot);
+            if (cloneIndex) {
+              await cache.put("/index.html", cloneIndex);
+            }
+          })
           .catch(() => {});
         if (event && typeof event.waitUntil === "function") {
           event.waitUntil(putPromise);
@@ -144,7 +192,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (request.mode === "navigate") {
+  if (request.mode === "navigate" || isAppShellDocumentPath(url.pathname)) {
     event.respondWith(networkFirstNavigation(request, url, event));
     return;
   }
@@ -154,7 +202,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  if (url.pathname === "/manifest.webmanifest") {
+  if (normalizePathname(url.pathname) === "/manifest.webmanifest") {
     event.respondWith(networkFirstManifest(request, event));
   }
 });

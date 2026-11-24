@@ -37,4 +37,16 @@ describe("Feishu image block", () => {
     expect(html).toContain("data-image-uploading");
     expect(html).toContain("正在上传 42%");
   });
+  it("renders safe external URLs and rejects unsafe schemes", () => {
+    const external = renderToStaticMarkup(
+      <ImageBlock url="https://cdn.example.com/pic.png" name="外链图" caption="图注" version={0} status="synced" canDownload />,
+    );
+    expect(external).toContain('src="https://cdn.example.com/pic.png"');
+    expect(external).toContain('referrerPolicy="no-referrer"');
+    const unsafe = renderToStaticMarkup(
+      <ImageBlock url="javascript:alert(1)" name="危险图" version={0} status="synced" canDownload />,
+    );
+    expect(unsafe).not.toContain("javascript:");
+    expect(unsafe).toContain("图片不可用");
+  });
 });

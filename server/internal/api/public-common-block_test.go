@@ -231,6 +231,31 @@ func TestPublicCommonBlockProjectsInteractiveAndMediaBlocks(t *testing.T) {
 	}
 }
 
+func TestPublicCommonBlockProjectsSafeImageURLs(t *testing.T) {
+	view := collab.DocView{Blocks: []collab.BlockView{
+		{ID: "1:1", Parent: "0:0", Type: "image", Props: map[string]string{"url": "https://cdn.example.com/arch.png", "name": "架构图", "caption": "系统架构"}},
+		{ID: "1:2", Parent: "0:0", Type: "image", Props: map[string]string{"url": "/api/files/88", "name": "内嵌图"}},
+		{ID: "1:3", Parent: "0:0", Type: "image", Props: map[string]string{"url": "javascript:alert(1)", "name": "非法图"}},
+		{ID: "1:4", Parent: "0:0", Type: "image", Props: map[string]string{"url": "#/doc/12", "name": "路由图"}},
+	}}
+	out, err := publicTableView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Blocks[0].Props; got["url"] != "https://cdn.example.com/arch.png" || got["name"] != "架构图" || got["caption"] != "系统架构" {
+		t.Fatalf("https image: %#v", out.Blocks[0])
+	}
+	if got := out.Blocks[1].Props; got["url"] != "/api/files/88" || got["name"] != "内嵌图" {
+		t.Fatalf("internal file image: %#v", out.Blocks[1])
+	}
+	if got := out.Blocks[2].Props; got["url"] != "" {
+		t.Fatalf("javascript image url leaked: %#v", out.Blocks[2])
+	}
+	if got := out.Blocks[3].Props; got["url"] != "" {
+		t.Fatalf("hash route image url leaked: %#v", out.Blocks[3])
+	}
+}
+
 func TestCommonBlockProjectionAppliesToPublicAndSavedVersion(t *testing.T) {
 	ctx := context.Background()
 	e := newCopyTestEnv(t)

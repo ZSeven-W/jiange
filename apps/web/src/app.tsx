@@ -30,6 +30,7 @@ import { AskHost } from "@/components/ui/ask";
 import { AISettingsHost } from "@/components/ai-settings";
 import { AccountSecurityHost } from "@/components/account-security-dialog";
 import { OfflineBanner } from "@/components/offline-banner";
+import { WorkspaceAiDialog } from "@/components/workspace-ai-dialog";
 import { SidebarFoldIcon } from "@/components/feishu-icons";
 import type { SearchGuardCapture } from "@/components/search-focus";
 import { isDocumentSidebarShortcut } from "@/lib/sidebar-shortcut";
@@ -101,6 +102,12 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   const captureGlobalSearchGuard = useCallback(() => globalSearchGuard.current?.() ?? null, []);
   useEffect(() => { uploads.activate(); return () => uploads.dispose(); }, [uploads]);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [workspaceAiOpen, setWorkspaceAiOpen] = useState(false);
+  useEffect(() => {
+    const onOpenAi = () => setWorkspaceAiOpen(true);
+    window.addEventListener("jiange:open-workspace-ai", onOpenAi);
+    return () => window.removeEventListener("jiange:open-workspace-ai", onOpenAi);
+  }, []);
   const [sidebarStorage] = useState(browserSidebarStorage);
   const [docSidebarDocked, setDocSidebarDocked] = useState(() => readSidebarPreference(sidebarStorage, me.user.id));
   const docSidebarDockedRef = useRef(docSidebarDocked);
@@ -185,6 +192,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       <AskHost />
       <AISettingsHost />
       <AccountSecurityHost />
+      <WorkspaceAiDialog open={workspaceAiOpen} onClose={() => setWorkspaceAiOpen(false)} workspaceId={me.workspaces[0]?.id} />
       <OfflineBanner />
       <button type="button" ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg border border-[#dee0e3]/80 bg-surface/90 text-muted-foreground shadow-xs backdrop-blur-sm transition-colors hover:bg-hover dark:border-border/80 md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-none ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
       {sidebarOpen && <button type="button" data-mobile-nav-backdrop className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] transition-opacity md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}

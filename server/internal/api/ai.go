@@ -162,11 +162,12 @@ type aiLimiter struct {
 	hits map[int64][]time.Time
 }
 
-var aiRate = &aiLimiter{hits: map[int64][]time.Time{}}
-
 func (l *aiLimiter) allow(userID int64, now time.Time) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.hits == nil {
+		l.hits = map[int64][]time.Time{}
+	}
 	cut := now.Add(-time.Minute)
 	kept := l.hits[userID][:0]
 	for _, t := range l.hits[userID] {
@@ -387,7 +388,7 @@ func (s *Server) aiError(w http.ResponseWriter, r *http.Request, err error) {
 
 func (s *Server) testAISettings(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
-	if !aiRate.allow(u.ID, s.now()) {
+	if !s.aiRate.allow(u.ID, s.now()) {
 		httpx.Error(w, http.StatusTooManyRequests, "ai_rate_limited", "请求过于频繁，请稍后再试")
 		return
 	}
@@ -432,7 +433,7 @@ func (s *Server) docAI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := UserFrom(r.Context())
-	if !aiRate.allow(u.ID, s.now()) {
+	if !s.aiRate.allow(u.ID, s.now()) {
 		httpx.Error(w, http.StatusTooManyRequests, "ai_rate_limited", "请求过于频繁，请稍后再试")
 		return
 	}

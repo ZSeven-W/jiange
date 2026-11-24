@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Maximize2, Minus, Plus, RotateCw } from "lucide-react";
+import { detectPreviewKind, RichFilePreview } from "@/components/rich-file-preview";
 import { IMAGE_ZOOM_LEVELS, previewImageSize, stepImageZoom } from "./image-preview-zoom";
 import { useImagePreviewTouch } from "./use-image-preview-touch";
 
 /**
- * 附件在线预览遮罩：图片大图、PDF 内嵌、文本/代码内容预览；
+ * 附件在线预览遮罩：图片大图支持缩放旋转与触控；
+ * PDF/音视频/DOCX/XLSX/PPTX/Markdown/CSV/代码委托给统一 RichFilePreview 组件；
  * 其余类型回退为下载卡片。allowCopy/allowPrint 由分享策略控制。
  */
 export function AttachmentPreview({
@@ -31,7 +33,7 @@ export function AttachmentPreview({
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [imageError, setImageError] = useState(false);
-  const isImage = !!mime?.startsWith("image/");
+  const isImage = !!mime?.startsWith("image/") || detectPreviewKind(name, mime) === "image";
   useEffect(() => { setNatural(null); setZoom(1); setRotation(0); setImageError(false); }, [src]);
   useEffect(() => {
     const node = viewport.current;
@@ -48,8 +50,6 @@ export function AttachmentPreview({
     close.current?.focus();
     return () => { if (previous?.isConnected) previous.focus(); };
   }, []);
-  const isPdf = mime === "application/pdf";
-  const isText = !!mime && (mime.startsWith("text/") || /^(application\/(json|xml|javascript|x-yaml|sql))$/.test(mime));
   const size = previewImageSize(natural, viewportSize, zoom, rotation);
   const sideways = rotation % 180 !== 0;
   const touch = useImagePreviewTouch(viewport, imageFrame, zoom, setZoom, src, rotation);
@@ -89,7 +89,7 @@ export function AttachmentPreview({
           ✕
         </button>
       </div>
-      <div ref={viewport} className={isImage ? "flex min-h-0 flex-1 overflow-auto" : "grid min-h-0 flex-1 place-items-center overflow-auto"} style={isImage ? { touchAction: "none" } : undefined} {...(isImage && natural && !imageError ? touch : {})} onClick={(e) => e.stopPropagation()}>
+      <div ref={viewport} className={isImage ? "flex min-h-0 flex-1 overflow-auto" : "flex min-h-0 flex-1 items-center justify-center overflow-auto"} style={isImage ? { touchAction: "none" } : undefined} {...(isImage && natural && !imageError ? touch : {})} onClick={(e) => e.stopPropagation()}>
         {isImage ? (
           imageError ? <p role="status" className="m-auto text-[13px] text-white/70">图片加载失败</p> : <div ref={imageFrame} style={size} className={size ? "relative m-auto shrink-0" : "m-auto flex max-h-full max-w-full shrink-0"}><img
             src={src}
@@ -104,20 +104,15 @@ export function AttachmentPreview({
             style={size ? { width: sideways ? size.height : size.width, height: sideways ? size.width : size.height, transform: `translate(-50%, -50%) rotate(${rotation}deg)` } : undefined}
             className={size ? "absolute left-1/2 top-1/2 max-h-none max-w-none rounded-lg object-contain shadow-2xl" : "m-auto max-h-full max-w-full rounded-lg object-contain shadow-2xl"}
           /></div>
-        ) : isPdf ? (
-          <iframe src={src} title={name} className="h-full w-full max-w-5xl rounded-lg bg-white shadow-2xl" data-pdf-frame />
-        ) : isText ? (
-          <TextPreview src={src} name={name} />
         ) : (
-          <div className="grid place-items-center gap-3 text-center">
-            <span className="grid size-14 place-items-center rounded-2xl bg-white/10 text-[22px]">📎</span>
-            <p className="text-[13px] text-white/60">此格式暂不支持在线预览</p>
-            {allowPrint && (
-              <a href={src} className="rounded-md bg-primary px-4 py-2 text-[13px] text-white no-underline hover:opacity-90" download={name}>
-                下载文件
-              </a>
-            )}
-          </div>
+          <RichFilePreview
+            src={src}
+            name={name}
+            mime={mime}
+            allowCopy={allowCopy}
+            allowPrint={allowPrint}
+            theme="dark"
+          />
         )}
       </div>
       {isImage && <div className="mt-3 flex shrink-0 justify-center" onClick={(event) => event.stopPropagation()}><div className="flex items-center gap-1 rounded-lg bg-white/10 p-1 text-white shadow-lg" role="group" aria-label="图片缩放">
@@ -129,31 +124,5 @@ export function AttachmentPreview({
         <button type="button" aria-label="顺时针旋转图片" title="顺时针旋转" aria-disabled={imageError} onClick={() => { if (!imageError) setRotation((value) => (value + 90) % 360); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><RotateCw size={17}/></button>
       </div></div>}
     </div>
-  );
-}
-
-/** 文本/代码内容预览（截断到 64KB，自动识别超长换行）。 */
-function TextPreview({ src, name }: { src: string; name: string }) {
-  const [content, setContent] = useState<string | null>(null);
-  const [err, setErr] = useState("");
-  useEffect(() => {
-    let alive = true;
-    fetch(src, { credentials: "same-origin" })
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const t = await r.text();
-        if (alive) setContent(t.length > 64 * 1024 ? t.slice(0, 64 * 1024) + "\n…（内容过长，已截断）" : t);
-      })
-      .catch((e) => alive && setErr(String(e.message ?? e)));
-    return () => {
-      alive = false;
-    };
-  }, [src]);
-  if (err) return <p className="text-[13px] text-white/60">加载失败：{err}</p>;
-  if (content === null) return <p className="text-[13px] text-white/60">加载中…</p>;
-  return (
-    <pre className="max-h-full w-full max-w-4xl overflow-auto rounded-lg bg-white p-4 font-mono text-[12.5px] leading-5 text-foreground shadow-2xl" data-text-preview={name}>
-      {content}
-    </pre>
   );
 }

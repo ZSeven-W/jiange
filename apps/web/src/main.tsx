@@ -4,9 +4,11 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./app";
 import { I18nProvider } from "@/lib/i18n";
 import { registerServiceWorker } from "@/lib/pwa";
+import { installOfflineAutoSync } from "@/lib/offline-sync";
 import "./index.css";
 
 registerServiceWorker();
+installOfflineAutoSync();
 
 const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } } });
 

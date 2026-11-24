@@ -214,4 +214,19 @@ describe("read-only document snapshots", () => {
     expect(allowed).not.toContain('controlsList="nodownload"');
     expect(allowed).toContain('href="https://example.com/watch"');
   });
+
+  it("renders safe external and internal URL images while rejecting unsafe schemes", () => {
+    const view: DocView = {
+      blocks: [
+        b("1:1", "image", "", { url: "https://cdn.example.com/hero.png", name: "外链图", caption: "说明" }),
+        b("1:2", "image", "", { url: "/api/files/88", name: "站内图" }),
+        b("1:3", "image", "", { url: "javascript:alert(1)", name: "危险图" }),
+      ],
+    };
+    const html = renderToStaticMarkup(<ReadOnlyDoc view={view} />);
+    expect(html).toContain('src="https://cdn.example.com/hero.png"');
+    expect(html).toContain('src="/api/files/88"');
+    expect(html).not.toContain("javascript:");
+    expect(html).toContain("图片不可用或需要登录：危险图");
+  });
 });

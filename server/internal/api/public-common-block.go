@@ -76,6 +76,9 @@ func publicCommonBlock(block collab.BlockView, children map[string]bool, columnC
 		if id := publicFileID(props["fileId"]); id != "" {
 			clean["fileId"] = id
 		}
+		if publicSafeImageURL(props["url"]) {
+			clean["url"] = props["url"]
+		}
 		if width, err := strconv.ParseFloat(props["imageWidth"], 64); err == nil && !math.IsNaN(width) && !math.IsInf(width, 0) && width > 0 {
 			clean["imageWidth"] = strconv.FormatFloat(math.Min(width, 100), 'f', -1, 64)
 		}
@@ -272,6 +275,17 @@ func publicSafeMediaURL(value string) bool {
 		return false
 	}
 	return publicInternalFileURL.MatchString(value) || publicSafeLink(value)
+}
+
+func publicSafeImageURL(value string) bool {
+	if value == "" {
+		return false
+	}
+	if publicInternalFileURL.MatchString(value) {
+		return true
+	}
+	u, err := url.Parse(value)
+	return err == nil && (strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")) && u.Host != ""
 }
 
 type publicPollOption struct {

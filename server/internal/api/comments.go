@@ -85,6 +85,7 @@ func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 		s.commentMutationError(w, r, err)
 		return
 	}
+	s.notifyCommentExternalChannels(d, u, c)
 	s.commentResultAfterMutation(w, r, guard, d.ID, http.StatusCreated, c)
 }
 

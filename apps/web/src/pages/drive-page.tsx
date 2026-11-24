@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { docsApi, driveApi, extrasApi, type DocMeta, type DriveEntry, type DriveShortcut } from "@/lib/api";
+import { api, docsApi, driveApi, extrasApi, type DocMeta, type DriveEntry, type DriveShortcut } from "@/lib/api";
+import { crossSpaceMoveApi } from "@/lib/cross-space-move-api";
+import { FeishuSelect } from "@/components/feishu-select";
 import { BaseIcon, docTitle, hrefOf, isBoardDoc } from "@/components/sidebar";
 import { nodeHref } from "@/lib/route";
 import { DocumentGlyph } from "@/components/document-glyph";
 import { ask, askText } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";
 import { parseMarkdown } from "@/lib/markdown";
+import { extractMarkdownImages, importMarkdownBlocksWithImages } from "@/lib/markdown-image-import";
 import { DOCX_MIME, DocxImportError, isDocxFile, readDocxFile } from "@/lib/docx";
 import { stageStarter } from "./pending-starter";
 import { stagePendingWord } from "./pending-word";
 import { stageBoard } from "./board-starter";
 import { type StarterTemplate } from "./starter-template-data";
 import { TemplateLibrary } from "./template-library";
-import { hasUnsupportedImportBlocks } from "./starter-template-ops";
 import { DirectoryPickerGate, type DriveUploadManager } from "./drive-upload";
 import type { DriveDirectoryHandle } from "./drive-upload-plan";
 import { formatDriveTime, ownRootFolders, sortDriveDocuments, sortDriveFolders, type FolderSortDirection, type FolderSortField } from "./drive-sort";
@@ -225,11 +227,20 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       }
       if (file.size > 5 * 1024 * 1024) throw new Error("Markdown 文件不能超过 5 MB。");
       const markdown = await file.text();
-      if (!parseMarkdown(markdown).length) throw new Error("文件没有可导入的内容。");
-      if (hasUnsupportedImportBlocks(markdown)) throw new Error("暂不支持导入图片，请先移除图片内容。");
+      const extractedImages = extractMarkdownImages(markdown);
+      if (!parseMarkdown(markdown).some((b) => b.type !== "image") && !extractedImages.some((img) => img.safe)) {
+        throw new Error("文件没有可导入的内容。");
+      }
+      if (!stillHere()) return;
       const title = file.name.replace(/\.(md|markdown)$/i, "") || "导入文档";
       const doc = await driveApi.createNode("doc", title, folderId, scope);
-      stageStarter(userId, doc.id, markdown);
+      const imported = await importMarkdownBlocksWithImages(markdown, {
+        uploadImage: (imgFile) => docsApi.upload(doc.id, imgFile),
+        canContinue: stillHere,
+      });
+      if (!stillHere()) return;
+      if (!imported.blocks.length) throw new Error("文件没有可导入的内容。");
+      stageStarter(userId, doc.id, markdown, imported.blocks);
       invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
       location.hash = hrefOf({ id: doc.id, kind: "doc" });
     } catch (err) { if (stillHere()) setError(err instanceof DocxImportError || (err instanceof Error && !isDocxFile(file)) ? err.message : "导入未完成，请检查目录后重试。"); }
@@ -309,7 +320,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       {notice && <p role="status" className="mt-4 text-[12px] text-[#3370ff]">{notice}</p>}
       {error && <p role="alert" className="mt-4 text-[12px] text-destructive">{error}</p>}
     </div>
-    {moving && <MoveDialog entries={moving.entries} onDone={(result) => { const batch = moving.batch; setMoving(null); if (result && batch) finishBatch("移动", result); }}/>}
+    {moving && <MoveDialog entries={moving.entries} userId={userId} onDone={(result) => { const batch = moving.batch; setMoving(null); if (result && batch) finishBatch("移动", result); }}/>}
     {copying && <CopyToDialog entry={copying} userId={userId} onDone={(created) => { setCopying(null); if (created) { setCopiedDoc(created); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); } }}/>}
     {shortcutDialogOpen && <AddShortcutDialog folderId={folderId} scope={scope} userId={userId} onDone={(created) => { setShortcutDialogOpen(false); if (created) { setNotice(`已添加快捷方式「${created.targetTitle || created.title}」`); invalidate(); } }}/>}
     {libraryOpen && <TemplateLibrary disabled={templatePending} onChoose={(template) => void chooseTemplate(template)} onClose={() => setLibraryOpen(false)}/>}
@@ -432,24 +443,137 @@ function EntryMenu({ entry, starred, onStar, onMove, onCopyTo, onCopyLink, onRen
   </>;
 }
 
-/** Move within the same scope using actual folder names. */
-function MoveDialog({ entries, onDone }: { entries: DriveEntry[]; onDone: (result?: { done: number[]; failed: number[] }) => void }) {
+/** Move within the same scope or explicitly across personal/shared scopes and workspaces. */
+function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId: number; onDone: (result?: { done: number[]; failed: number[] }) => void }) {
   const qc = useQueryClient();
   const entry = entries[0];
   const movingIds = new Set(entries.map((item) => item.id));
+  const [targetPersonal, setTargetPersonal] = useState(!!entry.personal);
+  const [targetWorkspaceId, setTargetWorkspaceId] = useState<number>(entry.workspaceId ?? 0);
   const [path, setPath] = useState<DriveEntry[]>([]);
   const [error, setError] = useState("");
   const parent = path.at(-1)?.id ?? null;
-  const dirs = useQuery({ queryKey: ["drive-move", entry.id, parent], queryFn: () => driveApi.children(parent, !!entry.personal) });
+  const meQuery = useQuery({ queryKey: ["me"], queryFn: api.me, staleTime: 60_000 });
+  const workspaces = meQuery.data?.workspaces ?? [];
+  const effectiveWorkspaceId = targetWorkspaceId || entry.workspaceId || workspaces[0]?.id || 0;
+  const isCrossWorkspace = !!entry.workspaceId && effectiveWorkspaceId > 0 && effectiveWorkspaceId !== entry.workspaceId;
+  const isCrossScope = targetPersonal !== !!entry.personal;
+  const isCrossSpace = isCrossScope || isCrossWorkspace;
+  const dirs = useQuery({
+    queryKey: ["drive-move", entry.id, effectiveWorkspaceId, targetPersonal, parent],
+    queryFn: () => driveApi.children(parent, targetPersonal, effectiveWorkspaceId || undefined),
+  });
   const move = useMutation({
     mutationFn: async () => {
-      if (entries.length === 1) { await driveApi.move(entry.id, parent, entry.revision); return { done: [entry.id], failed: [] }; }
-      return runDriveBatch(entries, (item) => driveApi.move(item.id, parent, item.revision));
+      const moveOne = (item: DriveEntry) =>
+        isCrossSpace
+          ? crossSpaceMoveApi.move({
+              nodeId: item.id,
+              targetWorkspaceId: effectiveWorkspaceId || undefined,
+              targetParentId: parent,
+              targetPersonal,
+              expected: item.revision,
+              userId,
+            })
+          : driveApi.move(item.id, parent, item.revision);
+      if (entries.length === 1) {
+        await moveOne(entry);
+        return { done: [entry.id], failed: [] };
+      }
+      return runDriveBatch(entries, moveOne);
     },
-    onSuccess: (result) => { void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["drive-nav"] }); void qc.invalidateQueries({ queryKey: ["docs"] }); onDone(result); },
-    onError: () => setError("移动未完成，请检查权限或目录后重试。"),
+    onSuccess: (result) => {
+      void qc.invalidateQueries({ queryKey: ["drive"] });
+      void qc.invalidateQueries({ queryKey: ["drive-nav"] });
+      void qc.invalidateQueries({ queryKey: ["docs"] });
+      onDone(result);
+    },
+    onError: (err) => setError(err instanceof Error && err.message ? err.message : "移动未完成，请检查权限或目录后重试。"),
   });
-  return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/30 px-4" onMouseDown={() => { if (!move.isPending) onDone(); }}><div role="dialog" aria-modal="true" aria-label="移动文件" className="w-full max-w-[420px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}><h3 className="text-[16px] font-semibold">{entries.length > 1 ? `移动 ${entries.length} 项` : `移动「${entry.title}」`}</h3><div className="mt-4 flex items-center gap-1 text-[13px] text-[#646a73]"><button type="button" onClick={() => setPath([])} className="hover:text-[#3370ff]">{entry.personal ? "我的文件夹" : "共享文件夹"}</button>{path.map((folder, i) => <span key={folder.id} className="flex items-center gap-1"><ChevronRight size={12}/><button type="button" onClick={() => setPath(path.slice(0, i + 1))}>{folder.title}</button></span>)}</div><div className="mt-3 h-44 overflow-y-auto rounded-md border">{(dirs.data ?? []).filter((item) => item.kind === "folder" && !movingIds.has(item.id)).map((folder) => <button type="button" key={folder.id} onClick={() => setPath([...path, folder])} className="flex h-9 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-[#f2f3f5]"><Folder size={16} fill="#ffcc4d" stroke="#f5a623"/>{folder.title}<ChevronRight size={13} className="ml-auto text-[#8f959e]"/></button>)}{dirs.isError && <p className="p-3 text-xs text-destructive">无法加载文件夹</p>}</div>{error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}<div className="mt-5 flex justify-end gap-2"><button type="button" disabled={move.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">取消</button><button type="button" disabled={move.isPending || dirs.isError} onClick={() => move.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">移动到这里</button></div></div></div>;
+  return (
+    <div className="fixed inset-0 z-[60] grid place-items-center bg-black/30 px-4" onMouseDown={() => { if (!move.isPending) onDone(); }}>
+      <div role="dialog" aria-modal="true" aria-label="移动文件" className="w-full max-w-[460px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <h3 className="text-[16px] font-semibold">{entries.length > 1 ? `移动 ${entries.length} 项` : `移动「${entry.title}」`}</h3>
+        {workspaces.length > 0 && (
+          <div className="mt-3 flex items-center gap-2">
+            <span className="shrink-0 text-[12px] text-[#646a73]">目标空间</span>
+            <div className="min-w-0 flex-1" data-move-workspace-select>
+              <FeishuSelect
+                ariaLabel="目标空间"
+                value={String(effectiveWorkspaceId)}
+                onChange={(val) => {
+                  const nextWs = Number(val);
+                  if (Number.isFinite(nextWs) && nextWs > 0) {
+                    setTargetWorkspaceId(nextWs);
+                    setPath([]);
+                    setError("");
+                  }
+                }}
+                options={workspaces.map((ws) => ({
+                  value: String(ws.id),
+                  label: ws.id === entry.workspaceId ? `${ws.name}（当前空间）` : ws.name,
+                }))}
+              />
+            </div>
+          </div>
+        )}
+        <div className="mt-3 flex items-center gap-1.5 rounded-md bg-[#f5f6f7] p-1" role="tablist" aria-label="目标目录范围">
+          {([
+            [true, "我的文件夹"],
+            [false, "共享文件夹"],
+          ] as const).map(([personal, label]) => (
+            <button
+              key={String(personal)}
+              type="button"
+              role="tab"
+              aria-selected={targetPersonal === personal}
+              data-move-scope={personal ? "personal" : "shared"}
+              onClick={() => { setTargetPersonal(personal); setPath([]); setError(""); }}
+              className={cn(
+                "h-8 flex-1 rounded px-3 text-[13px] font-medium transition-colors",
+                targetPersonal === personal ? "bg-white text-[#3370ff] shadow-xs" : "text-[#646a73] hover:text-[#1f2329]",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {isCrossSpace && (
+          <p
+            role="status"
+            data-cross-space-notice
+            className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800"
+          >
+            跨空间移动将同步更新该条目及子目录的所属空间与可见范围
+          </p>
+        )}
+        <div className="mt-3 flex items-center gap-1 text-[13px] text-[#646a73]">
+          <button type="button" onClick={() => setPath([])} className="hover:text-[#3370ff]">{targetPersonal ? "我的文件夹" : "共享文件夹"}</button>
+          {path.map((folder, i) => (
+            <span key={folder.id} className="flex items-center gap-1">
+              <ChevronRight size={12} />
+              <button type="button" onClick={() => setPath(path.slice(0, i + 1))}>{folder.title}</button>
+            </span>
+          ))}
+        </div>
+        <div className="mt-2 h-44 overflow-y-auto rounded-md border">
+          {(dirs.data ?? []).filter((item) => item.kind === "folder" && !movingIds.has(item.id)).map((folder) => (
+            <button type="button" key={folder.id} onClick={() => setPath([...path, folder])} className="flex h-9 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-[#f2f3f5]">
+              <Folder size={16} fill="#ffcc4d" stroke="#f5a623" />
+              {folder.title}
+              <ChevronRight size={13} className="ml-auto text-[#8f959e]" />
+            </button>
+          ))}
+          {dirs.isError && <p className="p-3 text-xs text-destructive">无法加载文件夹</p>}
+        </div>
+        {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" disabled={move.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">取消</button>
+          <button type="button" disabled={move.isPending || dirs.isError} onClick={() => move.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">移动到这里</button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /** Duplicate any supported Drive entry into a chosen Drive folder or root. */
