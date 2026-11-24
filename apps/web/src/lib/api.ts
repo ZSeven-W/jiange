@@ -321,6 +321,10 @@ export interface ViewConfig {
     operator: "eq" | "neq" | "not_empty" | "checked";
     value?: string;
   }[];
+  /** Column widths persisted per view (fieldId -> px in [60, 1200]). */
+  fieldWidths?: Record<string, number>;
+  /** Column summary stat function persisted per view (fieldId -> stat key). */
+  fieldStats?: Record<string, string>;
 }
 export type RowHeight = "low" | "medium" | "high" | "xhigh";
 export interface FillRule extends FilterRule {
@@ -1016,6 +1020,36 @@ export interface FileMeta {
   personal?: boolean;
 }
 
+export type AutomationActionType =
+  | "create_record"
+  | "update_record"
+  | "find_records"
+  | "if_condition"
+  | "notify"
+  | "webhook";
+
+export interface AutomationWebhook {
+  url?: string;
+  kind?: string;
+  message?: string;
+}
+
+export interface AutomationAction {
+  id?: string;
+  type: AutomationActionType;
+  tableId?: number;
+  cells?: Record<string, unknown>;
+  conj?: "and" | "or";
+  rules?: FilterRule[];
+  limit?: number;
+  targetScope?: "trigger" | "found";
+  thenActions?: AutomationAction[];
+  elseActions?: AutomationAction[];
+  notifyUsers?: number[];
+  message?: string;
+  webhook?: AutomationWebhook;
+}
+
 export interface Automation {
   id: number;
   baseId: number;
@@ -1027,8 +1061,9 @@ export interface Automation {
     conj?: "and" | "or";
     notifyUsers?: number[];
     message?: string;
-    webhook?: { url?: string; kind?: string; message?: string };
+    webhook?: AutomationWebhook;
     schedule?: { every?: string };
+    actions?: AutomationAction[];
   };
 }
 export interface DriveEntry {

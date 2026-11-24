@@ -13,7 +13,7 @@ export interface PublicSnapshot {
   view: DocView;
 }
 
-export type PublicIssue = "login" | "expired" | "temporary" | "unsupported_table" | "table_unavailable";
+export type PublicIssue = "login" | "expired" | "temporary" | "unsupported_table" | "table_unavailable" | "password_required";
 export type PublicOutcome = { snapshot: PublicSnapshot } | { issue: PublicIssue };
 export interface PublicDocState {
   token: string;
@@ -48,9 +48,14 @@ export function updatePublicDocState(previous: PublicDocState, token: string, re
 /** Request only the current link; callers ignore a result after unmount. */
 export async function fetchPublicDoc(token: string, signal: AbortSignal): Promise<PublicOutcome> {
   try {
-    const response = await fetch(`/api/public/${encodeURIComponent(token)}`, { signal, cache: "no-store" });
+    const response = await fetch(`/api/public/${encodeURIComponent(token)}`, { signal, cache: "no-store", credentials: "same-origin" });
     if (response.status === 401) return { issue: "login" };
-    if (response.status === 403 || response.status === 404 || response.status === 410) return { issue: "expired" };
+    if (response.status === 403) {
+      const error: unknown = await response.json().catch(() => null);
+      if (error && typeof error === "object" && "error" in error && error.error === "password_required") return { issue: "password_required" };
+      return { issue: "expired" };
+    }
+    if (response.status === 404 || response.status === 410) return { issue: "expired" };
     if (response.status === 409) {
       const error: unknown = await response.json().catch(() => null);
       if (error && typeof error === "object" && "error" in error && error.error === "table_unsupported") return { issue: "unsupported_table" };

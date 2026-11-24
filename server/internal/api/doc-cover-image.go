@@ -226,12 +226,18 @@ func (s *Server) getPublicCoverImage(w http.ResponseWriter, r *http.Request) {
 		s.coverPreviewError(w, r, err)
 		return
 	}
+	if !s.requireLinkPassword(w, r, docID, token) {
+		return
+	}
 	check := func() (store.DocCover, error) {
 		id, role, err := s.Store.DocByToken(r.Context(), token)
 		if errors.Is(err, store.ErrNotFound) || err == nil && (id != docID || role != "anon") {
 			return store.DocCover{}, store.ErrNotFound
 		}
 		if err != nil {
+			return store.DocCover{}, err
+		}
+		if err := s.checkLinkPasswordError(r, docID, token); err != nil {
 			return store.DocCover{}, err
 		}
 		cover, err := s.Store.DocCoverSystem(r.Context(), docID)
@@ -245,6 +251,9 @@ func (s *Server) getPublicCoverImage(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return store.DocCover{}, err
 		}
+		if err := s.checkLinkPasswordError(r, docID, token); err != nil {
+			return store.DocCover{}, err
+		}
 		return cover, nil
 	}
 	cover, err := check()
@@ -256,6 +265,10 @@ func (s *Server) getPublicCoverImage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) coverPreviewError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errLinkPasswordRequired) {
+		httpx.Error(w, http.StatusForbidden, "password_required", "此分享链接已加密，请输入访问密码")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, blob.ErrNotFound) || errors.Is(err, store.ErrForbidden) || errors.Is(err, store.ErrUnauthenticated) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "封面不存在或无权访问")
 		return

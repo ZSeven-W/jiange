@@ -9,12 +9,15 @@ import type {
   SheetDataValidation,
   SheetPivotTable,
   SheetProtectedRange,
+  SheetSnapshot,
   SheetWorksheet,
 } from "@/lib/api";
+import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
+import type { SheetVersionMeta } from "@/lib/sheet-history-api";
 import { t } from "@/lib/i18n";
 import { FeishuSelect } from "@/components/feishu-select";
 import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
-import { BarChart3, Check, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, TableProperties, Trash2, X, ListChecks } from "lucide-react";
+import { BarChart3, Check, Clock, History, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, TableProperties, Tag, Trash2, X, ListChecks } from "lucide-react";
 import {
   buildColorScaleRule,
   buildDataBarRule,
@@ -31,10 +34,21 @@ import {
 } from "./sheet-rules";
 import type { EvaluatedSheetMap } from "./workbook-engine";
 import { SheetChartsPanel, SheetPivotPanel } from "./sheet-analytics-panels";
+import { SheetCellHistoryPanel, SheetDefinedNamesPanel, SheetVersionsPanel } from "./sheet-history-panel";
 
-export type SheetPanelMode = "validation" | "condfmt" | "protect" | "comments" | "charts" | "pivot";
+export type SheetPanelMode =
+  | "validation"
+  | "condfmt"
+  | "protect"
+  | "comments"
+  | "charts"
+  | "pivot"
+  | "versions"
+  | "cell-history"
+  | "names";
 
 export interface SheetSidePanelProps {
+  sheetId: number;
   mode: SheetPanelMode;
   onChangeMode: (mode: SheetPanelMode) => void;
   onClose: () => void;
@@ -63,6 +77,11 @@ export interface SheetSidePanelProps {
   onCreateComment: (body: string) => Promise<boolean>;
   onToggleResolveComment: (comment: SheetComment) => Promise<void>;
   onDeleteComment: (commentId: number) => Promise<void>;
+  definedNames: SheetDefinedName[];
+  onUpdateDefinedNames: (next: SheetDefinedName[]) => void;
+  onJumpToNamedRange?: (dn: SheetDefinedName) => void;
+  onVersionRestored: (snapshot: SheetSnapshot) => void;
+  onVersionSaved?: (version: SheetVersionMeta) => void;
 }
 
 const VALIDATION_TYPE_LABEL: Record<SheetDataValidation["type"], string> = {
@@ -94,6 +113,7 @@ function formatCommentTime(iso: string): string {
 }
 
 export function SheetSidePanel({
+  sheetId,
   mode,
   onChangeMode,
   onClose,
@@ -122,6 +142,11 @@ export function SheetSidePanel({
   onCreateComment,
   onToggleResolveComment,
   onDeleteComment,
+  definedNames,
+  onUpdateDefinedNames,
+  onJumpToNamedRange,
+  onVersionRestored,
+  onVersionSaved,
 }: SheetSidePanelProps) {
   const isManager = role === "manage";
   const rangeLabel = formatSheetRectA1(selectionBoundsRect);
@@ -329,7 +354,7 @@ export function SheetSidePanel({
         mode === "pivot" ? "sm:w-[400px]" : "sm:w-80"
       }`}
     >
-      {/* Header + 6-mode switcher */}
+      {/* Header + panel mode switcher */}
       <div className="flex items-start justify-between gap-1 border-b border-[#e5e6eb] px-2.5 py-2">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1">
           {(
@@ -340,6 +365,9 @@ export function SheetSidePanel({
               { id: "condfmt", label: t("条件"), icon: <Sparkles size={13} /> },
               { id: "protect", label: t("保护"), icon: <Lock size={13} /> },
               { id: "comments", label: t("评论"), icon: <MessageSquare size={13} /> },
+              { id: "names", label: t("名称"), icon: <Tag size={13} /> },
+              { id: "versions", label: t("版本"), icon: <History size={13} /> },
+              { id: "cell-history", label: t("记录"), icon: <Clock size={13} /> },
             ] as const
           ).map((tab) => (
             <button
@@ -1034,6 +1062,37 @@ export function SheetSidePanel({
               )}
             </div>
           </div>
+        )}
+
+        {mode === "versions" && (
+          <SheetVersionsPanel
+            sheetId={sheetId}
+            userId={userId}
+            canEdit={canEdit}
+            onVersionRestored={onVersionRestored}
+            onVersionSaved={onVersionSaved}
+          />
+        )}
+
+        {mode === "cell-history" && (
+          <SheetCellHistoryPanel
+            sheetId={sheetId}
+            userId={userId}
+            activeSheet={activeSheet}
+            focusedPoint={focusedPoint}
+          />
+        )}
+
+        {mode === "names" && (
+          <SheetDefinedNamesPanel
+            sheets={sheets}
+            activeSheet={activeSheet}
+            selectionBoundsRect={selectionBoundsRect}
+            definedNames={definedNames}
+            canEdit={canEdit}
+            onUpdateDefinedNames={onUpdateDefinedNames}
+            onJumpToNamedRange={onJumpToNamedRange}
+          />
         )}
       </div>
     </aside>

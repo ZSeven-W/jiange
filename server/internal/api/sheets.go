@@ -92,6 +92,7 @@ func (s *Server) writeSheetCells(w http.ResponseWriter, r *http.Request) {
 	if !httpx.Decode(w, r, &batch) {
 		return
 	}
+	preHist := s.snapshotSheetCellHistoryPreState(r.Context(), g, id, batch)
 	res, err := s.Store.WriteSheetCells(r.Context(), g, id, batch)
 	if errors.Is(err, store.ErrSheetValidation) {
 		httpx.Error(w, http.StatusUnprocessableEntity, "validation_failed", "单元格内容不符合数据验证规则")
@@ -100,6 +101,7 @@ func (s *Server) writeSheetCells(w http.ResponseWriter, r *http.Request) {
 	if driveWriteErr(w, err, "write sheet cells") {
 		return
 	}
+	s.recordSheetCellHistoryPostWrite(r.Context(), preHist, u, id, res)
 	if s.SheetHub != nil && !res.Replayed && len(res.Cells) > 0 {
 		s.SheetHub.NotifyCells(id, res.WorkbookRevision, u.ID, res.WorksheetID, res.Cells)
 	}

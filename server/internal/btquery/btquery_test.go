@@ -2,6 +2,7 @@ package btquery
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -291,5 +292,68 @@ func TestValidatePermissionRoles(t *testing.T) {
 		RowFilters: &Filters{Conj: "xor", Rules: []Rule{{F: 2, Op: "is", V: "待审"}}},
 	}}}}); err == nil {
 		t.Fatal("invalid conj in rowFilters accepted")
+	}
+}
+
+func TestValidateFieldWidthsAndStats(t *testing.T) {
+	valid := Config{
+		FieldWidths: map[string]int{"1": 60, "2": 240, "3": 1200},
+		FieldStats: map[string]string{
+			"1":  "none",
+			"2":  "count",
+			"3":  "empty",
+			"4":  "filled",
+			"5":  "unique",
+			"6":  "sum",
+			"7":  "avg",
+			"8":  "min",
+			"9":  "max",
+			"10": "checked",
+			"11": "unchecked",
+			"12": "pct_checked",
+		},
+	}
+	if err := Validate(fields, valid); err != nil {
+		t.Fatalf("valid fieldWidths/fieldStats rejected: %v", err)
+	}
+
+	// Width bounds
+	if err := Validate(fields, Config{FieldWidths: map[string]int{"1": 59}}); err == nil {
+		t.Fatal("width below 60 accepted")
+	}
+	if err := Validate(fields, Config{FieldWidths: map[string]int{"1": 1201}}); err == nil {
+		t.Fatal("width above 1200 accepted")
+	}
+
+	// Invalid field ID keys
+	for _, badKey := range []string{"0", "-1", "abc", "01", ""} {
+		if err := Validate(fields, Config{FieldWidths: map[string]int{badKey: 200}}); err == nil {
+			t.Fatalf("invalid fieldWidths key %q accepted", badKey)
+		}
+		if err := Validate(fields, Config{FieldStats: map[string]string{badKey: "sum"}}); err == nil {
+			t.Fatalf("invalid fieldStats key %q accepted", badKey)
+		}
+	}
+
+	// Invalid stat enum
+	for _, badStat := range []string{"", "median", "SUM", "stddev"} {
+		if err := Validate(fields, Config{FieldStats: map[string]string{"1": badStat}}); err == nil {
+			t.Fatalf("invalid fieldStats value %q accepted", badStat)
+		}
+	}
+
+	// Max 200 entries
+	tooManyWidths := make(map[string]int, 201)
+	tooManyStats := make(map[string]string, 201)
+	for i := 1; i <= 201; i++ {
+		k := strconv.Itoa(i)
+		tooManyWidths[k] = 200
+		tooManyStats[k] = "count"
+	}
+	if err := Validate(fields, Config{FieldWidths: tooManyWidths}); err == nil {
+		t.Fatal(">200 fieldWidths accepted")
+	}
+	if err := Validate(fields, Config{FieldStats: tooManyStats}); err == nil {
+		t.Fatal(">200 fieldStats accepted")
 	}
 }

@@ -29,7 +29,7 @@ function ChartSvg({
   const gridBatchRef = useRef<InstanceBatch | null>(null);
   const batchRef = useRef<InstanceBatch | null>(null);
   const ds = extractChartDataset(sheet, evalMap, chart);
-  const w = Math.max(240, chart.width - 24);
+  const w = Math.max(196, chart.width - 24);
   const legendH = chart.showLegend && ds.series.length > 0 ? 26 : 0;
   const h = Math.max(130, chart.height - 56 - legendH);
 
@@ -468,6 +468,23 @@ function ChartSvg({
   );
 }
 
+/**
+ * Clamps floating chart horizontal bounds inside the visible viewport so charts
+ * never overflow off the right edge on narrow (e.g. 390px) mobile screens.
+ */
+export function clampChartBounds(
+  chart: { x: number; width: number },
+  viewportWidth: number,
+): { left: number; width: number } {
+  if (!Number.isFinite(viewportWidth) || viewportWidth <= 0) {
+    return { left: Math.max(0, chart.x), width: chart.width };
+  }
+  const clampedWidth = Math.min(chart.width, Math.max(220, viewportWidth - 24));
+  const maxLeft = Math.max(8, viewportWidth - clampedWidth - 8);
+  const clampedLeft = Math.max(0, Math.min(chart.x, maxLeft));
+  return { left: clampedLeft, width: clampedWidth };
+}
+
 export function SheetChartOverlay({
   sheet,
   evalMap,
@@ -491,6 +508,36 @@ export function SheetChartOverlay({
   const charts = sheet.charts ?? [];
   const [dragDraft, setDragDraft] = useState<SheetChart | null>(null);
   const cleanupDragRef = useRef<(() => void) | null>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+  const [viewportWidth, setViewportWidth] = useState<number>(() =>
+    typeof window !== "undefined" ? window.innerWidth : 0,
+  );
+
+  useEffect(() => {
+    const measure = () => {
+      const winW = typeof window !== "undefined" ? window.innerWidth : 0;
+      const gridEl = overlayRef.current?.closest("[data-sheet-grid]") as HTMLElement | null;
+      const containerW = gridEl?.clientWidth ?? 0;
+      const effective =
+        containerW > 0 && winW > 0 ? Math.min(containerW, winW) : containerW || winW;
+      setViewportWidth(effective);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== "undefined") {
+      const gridEl = overlayRef.current?.closest("[data-sheet-grid]") as HTMLElement | null;
+      const target = gridEl ?? overlayRef.current;
+      if (target) {
+        ro = new ResizeObserver(measure);
+        ro.observe(target);
+      }
+    }
+    return () => {
+      window.removeEventListener("resize", measure);
+      ro?.disconnect();
+    };
+  }, [charts.length]);
 
   useEffect(() => {
     return () => {
@@ -545,10 +592,12 @@ export function SheetChartOverlay({
   if (charts.length === 0) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-20" data-sheet-charts-layer>
+    <div ref={overlayRef} className="pointer-events-none absolute inset-0 z-20" data-sheet-charts-layer>
       {charts.map((rawChart) => {
         const chart = dragDraft?.id === rawChart.id ? dragDraft : rawChart;
         const isSelected = selectedChartId === chart.id;
+        const { left: clampedLeft, width: clampedWidth } = clampChartBounds(chart, viewportWidth);
+        const renderChart = clampedWidth === chart.width ? chart : { ...chart, width: clampedWidth };
         return (
           <div
             key={chart.id}
@@ -559,10 +608,11 @@ export function SheetChartOverlay({
               onSelectChart(chart);
             }}
             style={{
-              left: chart.x,
+              left: clampedLeft,
               top: chart.y,
-              width: chart.width,
+              width: clampedWidth,
               height: chart.height,
+              maxWidth: "calc(100vw - 16px)",
             }}
             className={`pointer-events-auto absolute flex flex-col overflow-hidden rounded-lg border bg-white shadow-md transition-shadow ${
               isSelected ? "border-[#3370ff] ring-2 ring-[#3370ff]/20" : "border-[#dee0e3] hover:border-[#b8c4e0]"
@@ -622,7 +672,7 @@ export function SheetChartOverlay({
             </div>
 
             <div className="min-h-0 flex-1 p-3">
-              <ChartSvg chart={chart} sheet={sheet} evalMap={evalMap} />
+              <ChartSvg chart={renderChart} sheet={sheet} evalMap={evalMap} />
             </div>
 
             {canEdit && (

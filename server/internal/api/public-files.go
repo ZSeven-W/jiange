@@ -27,6 +27,9 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if !s.requireLinkPassword(w, r, docID, tok) {
+		return
+	}
 	fileID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || fileID <= 0 || s.Blobs == nil {
 		notFound()
@@ -87,6 +90,9 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 			return false, store.ErrNotFound
 		}
 		if err != nil {
+			return false, err
+		}
+		if err := s.checkLinkPasswordError(r, docID, tok); err != nil {
 			return false, err
 		}
 		allowDownload := fileReference && store.DocumentDownloadAllowed(meta, store.RoleView)

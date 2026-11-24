@@ -20,6 +20,7 @@ import {
   Filter,
   Grid2X2,
   Highlighter,
+  History,
   Italic,
   Layers,
   ListChecks,
@@ -33,12 +34,14 @@ import {
   Palette,
   PanelTop,
   Plus,
+  Printer,
   Redo2,
   Rows3,
   Search,
   Sparkles,
   Strikethrough,
   TableProperties,
+  Tag,
   Trash2,
   Underline,
   Undo2,
@@ -299,6 +302,7 @@ export interface SheetToolbarProps {
   onTriggerImport: () => void;
   /** Omitted when the workbook's download policy forbids export/copies. */
   onExport?: () => void;
+  onOpenPrint?: () => void;
   onDuplicate?: () => void;
   onUndo: () => void;
   onRedo: () => void;
@@ -340,7 +344,7 @@ interface OpenToolbarMenu {
 }
 
 const MENU_METRICS: Record<ToolbarMenuId, { width: number; estHeight: number }> = {
-  file: { width: 176, estHeight: 132 },
+  file: { width: 184, estHeight: 212 },
   insert: { width: 164, estHeight: 224 },
   font: { width: 148, estHeight: 184 },
   size: { width: 84, estHeight: 212 },
@@ -376,6 +380,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
     importing,
     onTriggerImport,
     onExport,
+    onOpenPrint,
     onDuplicate,
     onUndo,
     onRedo,
@@ -535,11 +540,38 @@ export function SheetToolbar(props: SheetToolbarProps) {
               <Download size={14} />{t("导出 XLSX")}
             </button>
           )}
+          {onOpenPrint && (
+            <button
+              type="button"
+              role="menuitem"
+              data-sheet-print-trigger
+              onClick={() => {
+                closeMenu();
+                onOpenPrint();
+              }}
+              className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"
+            >
+              <Printer size={14} />{t("打印 / 导出 PDF")}
+            </button>
+          )}
           {onDuplicate && (
             <button type="button" role="menuitem" onClick={() => { closeMenu(); onDuplicate(); }} className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]">
               <MoreHorizontal size={14} />{t("创建副本")}
             </button>
           )}
+          <div className="my-1 border-t border-[#eceef2]" />
+          <button
+            type="button"
+            role="menuitem"
+            data-sheet-versions-menu-item
+            onClick={() => {
+              closeMenu();
+              onTogglePanel("versions");
+            }}
+            className="flex h-9 w-full items-center gap-2 px-3 hover:bg-[#f2f3f5]"
+          >
+            <History size={14} />{t("历史版本")}
+          </button>
         </div>
       );
     } else if (openMenu.id === "insert") {
@@ -878,6 +910,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
       {labeledBtn(t("数据验证"), activePanel === "validation", false, () => onTogglePanel("validation"), <ListChecks size={15} />, "validation")}
       {labeledBtn(t("条件格式"), activePanel === "condfmt", false, () => onTogglePanel("condfmt"), <Sparkles size={15} />, "cond-fmt")}
       {labeledBtn(t("保护区域"), activePanel === "protect", false, () => onTogglePanel("protect"), <Lock size={15} />, "protect")}
+      {labeledBtn(t("名称管理器"), activePanel === "names", false, () => onTogglePanel("names"), <Tag size={15} />, "names")}
       {labeledBtn(
         t("评论"),
         activePanel === "comments",

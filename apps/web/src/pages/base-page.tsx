@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, baseApi, docsApi, orgApi, type FillRule, type FilterRule, type Me, type RowHeight, type User, type ViewConfig } from "@/lib/api";
@@ -36,7 +36,8 @@ import {
   ViewPermissionsPanel,
   type ViewPermissionsConfig,
 } from "./base/view-permissions-panel";
-import { CsvImport } from "./base/csv-import";
+import { CsvImport, importFailureMessage, importResultMessage } from "./base/csv-import";
+import { downloadXlsxBytes, exportBaseToXlsx, parseXlsxToBaseRows, xlsxToImportCsv } from "./base/xlsx-io";
 import { AddRecordMenu } from "./base/add-record-menu";
 import { AiPasteDialog } from "./base/ai-paste-dialog";
 import { FormPublication } from "./base/form-publication";
@@ -155,6 +156,12 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
   const shareAnchor = useRef<HTMLButtonElement>(null);
   const [cfg, setCfgState] = useState<ViewConfig>(EMPTY_CONFIG);
   const configDrafts = useRef(new Map<string, ViewConfig>());
+  const layoutPersistTimer = useRef<number | null>(null);
+  const pendingLayoutPatch = useRef<{
+    viewId: number;
+    fieldWidths?: Record<string, number> | null;
+    fieldStats?: Record<string, string> | null;
+  } | null>(null);
   const [filter, setFilter] = useState("");
   const [pane, setPane] = useState<"table" | "dashboard">("table");
   const refresh = () => {
@@ -170,6 +177,17 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
   useEffect(() => { document.title = `${q.data?.base.title || t("未命名多维表格")} - Jiange`; }, [q.data?.base.title, locale]);
   const views = q.data?.views ?? [];
   const current = views.find((v) => v.id === viewId) ?? views[0];
+  const latestViewRef = useRef(current);
+  latestViewRef.current = current;
+  useEffect(() => {
+    return () => {
+      if (layoutPersistTimer.current !== null) {
+        window.clearTimeout(layoutPersistTimer.current);
+        layoutPersistTimer.current = null;
+      }
+      pendingLayoutPatch.current = null;
+    };
+  }, [id, current?.id]);
   const setCfg = (next: ViewConfig) => {
     if (current) {
       const draftKey = `${id}:${current.id}`;
@@ -325,6 +343,11 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
   const save = async () => {
     if (!current || savingKey.current) return;
     if (current.type === "form" && (base.role !== "manage" || !validFormSelection(cfg, fields))) return;
+    if (layoutPersistTimer.current !== null) {
+      window.clearTimeout(layoutPersistTimer.current);
+      layoutPersistTimer.current = null;
+    }
+    pendingLayoutPatch.current = null;
     const draftKey = `${id}:${current.id}`;
     savingKey.current = draftKey;
     setSavingView(true);
@@ -363,6 +386,66 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
       } else setSaveError(true);
     }
     finally { savingKey.current = null; setSavingView(false); }
+  };
+  const updateViewLayout = (patch: { fieldWidths?: Record<string, number>; fieldStats?: Record<string, string> }) => {
+    const nextCfg: ViewConfig = { ...cfg };
+    if (patch.fieldWidths !== undefined) {
+      if (Object.keys(patch.fieldWidths).length > 0) nextCfg.fieldWidths = patch.fieldWidths;
+      else delete nextCfg.fieldWidths;
+    }
+    if (patch.fieldStats !== undefined) {
+      if (Object.keys(patch.fieldStats).length > 0) nextCfg.fieldStats = patch.fieldStats;
+      else delete nextCfg.fieldStats;
+    }
+    setCfg(nextCfg);
+    if (!current || current.type === "form" || !canEdit) return;
+    if (current.config?.configLocked && !isManager && current.ownerId == null) return;
+    const targetViewId = current.id;
+    const prevPending =
+      pendingLayoutPatch.current?.viewId === targetViewId ? pendingLayoutPatch.current : { viewId: targetViewId };
+    pendingLayoutPatch.current = {
+      viewId: targetViewId,
+      fieldWidths:
+        patch.fieldWidths !== undefined
+          ? Object.keys(patch.fieldWidths).length > 0
+            ? patch.fieldWidths
+            : null
+          : prevPending.fieldWidths,
+      fieldStats:
+        patch.fieldStats !== undefined
+          ? Object.keys(patch.fieldStats).length > 0
+            ? patch.fieldStats
+            : null
+          : prevPending.fieldStats,
+    };
+    if (layoutPersistTimer.current !== null) window.clearTimeout(layoutPersistTimer.current);
+    layoutPersistTimer.current = window.setTimeout(() => {
+      layoutPersistTimer.current = null;
+      const pending = pendingLayoutPatch.current;
+      pendingLayoutPatch.current = null;
+      const activeView = latestViewRef.current;
+      if (!pending || !activeView || activeView.id !== pending.viewId || savingKey.current) return;
+      const serverCfg: ViewConfig = { ...(activeView.config ?? EMPTY_CONFIG) };
+      if (pending.fieldWidths !== undefined) {
+        if (pending.fieldWidths) serverCfg.fieldWidths = pending.fieldWidths;
+        else delete serverCfg.fieldWidths;
+      }
+      if (pending.fieldStats !== undefined) {
+        if (pending.fieldStats) serverCfg.fieldStats = pending.fieldStats;
+        else delete serverCfg.fieldStats;
+      }
+      const draftKey = `${id}:${pending.viewId}`;
+      void baseApi
+        .patchView(id, pending.viewId, { config: serverCfg })
+        .then(() => {
+          const currentDraft = configDrafts.current.get(draftKey);
+          if (currentDraft && JSON.stringify(currentDraft) === JSON.stringify(serverCfg)) {
+            configDrafts.current.delete(draftKey);
+          }
+          void refresh();
+        })
+        .catch(() => undefined);
+    }, 350);
   };
   const newView = async (type: import("@/lib/api").View["type"], name: string, isPersonal = false) => {
     setViewMenuOpen(false);
@@ -677,10 +760,28 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
           </button>
         )}
         {canAddRecord && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
+        {canAddRecord && current?.type === "grid" && <XlsxImport key={`xlsx:${id}`} baseId={id} fields={fields} members={members} onRefresh={refresh} />}
         {!canExportBase(base, q.data.writeRestricted) ? (
-          <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
+          <>
+            <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
+            <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-xlsx>{t("导出 Excel (.xlsx)（不可用）")}</span>
+          </>
         ) : (
-          <a href={activeTableId ? `/api/bases/${id}/export?tableId=${activeTableId}` : `/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>{t("导出 CSV")}</a>
+          <>
+            <a href={activeTableId ? `/api/bases/${id}/export?tableId=${activeTableId}` : `/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>{t("导出 CSV")}</a>
+            <button
+              type="button"
+              onClick={() => {
+                const tableName = tables.find((tbl) => tbl.id === activeTableId)?.name || base.title || t("数据表");
+                const bytes = exportBaseToXlsx(tableName, visibleFields, records, members);
+                downloadXlsxBytes(bytes, `${tableName}.xlsx`);
+              }}
+              className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground"
+              data-export-xlsx
+            >
+              {t("导出 Excel (.xlsx)")}
+            </button>
+          </>
         )}
         <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索记录")} className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
         {current?.type !== "grid" && <span className="px-2 text-subtle">
@@ -844,7 +945,7 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
             }
           }}
         >
-        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={viewCanEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} undo={viewCanEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={viewCanEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} fieldWidths={cfg.fieldWidths} fieldStats={cfg.fieldStats} onFieldWidthsChange={(fieldWidths) => updateViewLayout({ fieldWidths })} onFieldStatsChange={(fieldStats) => updateViewLayout({ fieldStats })} undo={viewCanEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
           else if (action === "group") setCfg({ ...cfg, group: field.id });
           else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });
@@ -861,7 +962,7 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
         </div>
         </div>
       </div>
-      {autoOpen && <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />}
+      {autoOpen && <AutomationsPanel baseId={id} fields={fields} tables={tables} activeTableId={activeTableId} members={members} onClose={() => setAutoOpen(false)} />}
       {aiPasteOpen && <AiPasteDialog key={`${id}:${userId}`} baseId={id} userId={userId} fields={fields} allowed={canAddRecord && !preventCopy && !q.isFetching} onClose={() => setAiPasteOpen(false)} onRefresh={refresh} />}
       {sharing && <ShareDialog meta={base} userId={userId} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       <DocumentWatermark
@@ -1396,4 +1497,115 @@ export function foldExpansions(
     }
     return { ...r, cells };
   });
+}
+
+function XlsxImport({
+  baseId,
+  fields,
+  members,
+  onRefresh,
+}: {
+  baseId: number;
+  fields: import("@/lib/api").Field[];
+  members: User[];
+  onRefresh: () => Promise<unknown>;
+}) {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const { ledger } = useWriteLedger(baseId);
+  const identity = useRef({ baseId, alive: true });
+  const pending = useRef(false);
+  identity.current.baseId = baseId;
+  useLayoutEffect(() => {
+    identity.current.alive = true;
+    return () => {
+      identity.current.alive = false;
+    };
+  }, []);
+  const valid = (original: number) => identity.current.alive && identity.current.baseId === original;
+
+  const importFile = async (file: File) => {
+    if (pending.current) return;
+    if (ledger.hasCellWrites() || ledger.blocked("record:create")) return;
+    const original = baseId;
+    pending.current = true;
+    setBusy(true);
+    setMessage(null);
+    const op = ledger.begin(t("导入 Excel (.xlsx)"), file.name, "batch");
+    if (op === null) {
+      pending.current = false;
+      setBusy(false);
+      return;
+    }
+    let requestStarted = false;
+    try {
+      const buffer = await file.arrayBuffer();
+      const parsed = await parseXlsxToBaseRows(buffer, fields, members);
+      if (!valid(original)) {
+        ledger.complete(op);
+        return;
+      }
+      const { csv } = xlsxToImportCsv(parsed, fields);
+      if (!csv || parsed.rawRows.length === 0) {
+        ledger.complete(op);
+        if (valid(original)) setMessage(t("Excel 文件中没有可导入的数据行。"));
+        return;
+      }
+      requestStarted = true;
+      const result = await baseApi.importCSV(original, csv, true);
+      ledger.complete(op);
+      if (valid(original)) setMessage(importResultMessage(result));
+    } catch (error) {
+      if (
+        !requestStarted ||
+        (error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429)
+      ) {
+        ledger.complete(op);
+      } else {
+        ledger.fail(op, t("无法确认导入是否完成，请先核对记录，勿直接重复导入。"));
+      }
+      if (valid(original)) {
+        setMessage(
+          requestStarted
+            ? importFailureMessage(error)
+            : error instanceof Error && error.message
+              ? t("无法解析 Excel 文件：{msg}", { msg: error.message })
+              : t("无法解析 Excel 文件，请选择有效的 .xlsx 文件。"),
+        );
+      }
+    } finally {
+      if (requestStarted) refreshWrites(onRefresh);
+      pending.current = false;
+      if (valid(original)) setBusy(false);
+    }
+  };
+
+  const disabled = busy || ledger.blocked("batch") || ledger.blocked("record:create") || ledger.hasCellWrites();
+  return (
+    <>
+      <label
+        className={`rounded-md px-2 py-1 ${disabled ? "cursor-not-allowed text-subtle" : "cursor-pointer text-muted-foreground hover:bg-hover hover:text-foreground"}`}
+        data-import-xlsx
+      >
+        {busy ? t("正在导入…") : t("导入 Excel (.xlsx)")}
+        <input
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          disabled={disabled}
+          className="sr-only"
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void importFile(file);
+          }}
+        />
+      </label>
+      {message && (
+        <span role="status" className="max-w-[420px] whitespace-normal text-xs text-muted-foreground">
+          {message}
+        </span>
+      )}
+    </>
+  );
 }

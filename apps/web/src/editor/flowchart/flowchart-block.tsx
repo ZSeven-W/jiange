@@ -15,7 +15,7 @@ import { MindMapSvg } from "./mind-map-svg";
 import { GPU_NATIVE_BOARD_SHAPES, WhiteboardGpuLayer } from "./whiteboard-gpu-layer";
 import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
 import { canonicalMindDescription, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
-import { layoutMindTopicsWithStructure, MIND_LAYOUT_OPTIONS, mindLayoutPropWrites, readMindLayoutFromProps, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
+import { layoutMindTopicsWithStructure, MIND_LAYOUT_OPTIONS, mindLayoutPropWrites, mindRelationCurvePath, mindRelationLabelPoint, readMindLayoutFromProps, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
 import { boardFramePropWrites, createBoardFrame, exportFrameToSvg, moveFrameWithContents, readBoardFramesFromProps, type BoardFrame } from "./board-frames";
 import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
@@ -124,19 +124,94 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
+const SVG_PAIR_RE = /(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?),(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)/gi;
+
+function svgPathBounds(d: string, pad = 0): { x: number; y: number; w: number; h: number } | null {
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+  SVG_PAIR_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = SVG_PAIR_RE.exec(d)) !== null) {
+    const x = Number(match[1]);
+    const y = Number(match[2]);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  if (!Number.isFinite(minX) || !Number.isFinite(minY)) return null;
+  return {
+    x: minX - pad,
+    y: minY - pad,
+    w: Math.max(0, maxX - minX) + pad * 2,
+    h: Math.max(0, maxY - minY) + pad * 2,
+  };
+}
+
+function rotatedNodeBox(n: FlowNode): { x: number; y: number; w: number; h: number } {
+  if (!n.rot) return { x: n.x, y: n.y, w: n.w, h: n.h };
+  const rad = (n.rot * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const cx = n.x + n.w / 2;
+  const cy = n.y + n.h / 2;
+  const corners = [
+    [n.x, n.y],
+    [n.x + n.w, n.y],
+    [n.x + n.w, n.y + n.h],
+    [n.x, n.y + n.h],
+  ].map(([px, py]) => {
+    const dx = px - cx;
+    const dy = py - cy;
+    return [cx + dx * cos - dy * sin, cy + dx * sin + dy * cos] as const;
+  });
+  const xs = corners.map((c) => c[0]);
+  const ys = corners.map((c) => c[1]);
+  const x0 = Math.min(...xs);
+  const y0 = Math.min(...ys);
+  return { x: x0, y: y0, w: Math.max(...xs) - x0, h: Math.max(...ys) - y0 };
+}
+
 export function boardContentBounds(
   graph: FlowGraph,
   mindStructure: MindLayoutKind = "logic",
   frames: readonly BoardFrame[] = [],
   mindCollapsed?: ReadonlySet<string>,
+  mindRelations?: readonly MindRelation[],
 ): { x: number; y: number; w: number; h: number } {
   const boxes: Array<{ x: number; y: number; w: number; h: number }> = [];
   if (graph.nodes.length || graph.strokes?.length || (graph.mind?.length && mindStructure === "logic")) {
     boxes.push(flowBounds(graph));
   }
-  if (graph.mind?.length && mindStructure !== "logic") {
+  for (const n of graph.nodes) {
+    if (n.rot) boxes.push(rotatedNodeBox(n));
+  }
+  if (graph.edges.length && graph.nodes.length) {
+    const byId = new Map(graph.nodes.map((n) => [n.id, n]));
+    for (const e of graph.edges) {
+      const a = byId.get(e.from);
+      const t = byId.get(e.to);
+      if (!a || !t) continue;
+      const routed = edgePath(e, a, t);
+      const pathBox = svgPathBounds(routed.d, 10);
+      if (pathBox) boxes.push(pathBox);
+      if (e.pts?.length) {
+        for (const pt of e.pts) boxes.push({ x: pt.x - 10, y: pt.y - 10, w: 20, h: 20 });
+      }
+      if (e.label) {
+        const halfW = Math.max(18, measureLabel(e.label, 0) / 2);
+        const halfH = 14;
+        boxes.push({ x: routed.mid.x - halfW, y: routed.mid.y - halfH, w: halfW * 2, h: halfH * 2 });
+      }
+    }
+  }
+  let placedMind: ReturnType<typeof layoutMindTopicsWithStructure> | null = null;
+  if (graph.mind?.length && (mindStructure !== "logic" || mindRelations?.length)) {
     const collapsed = mindCollapsed ?? new Set(graph.mindCollapsed ?? []);
-    const placed = layoutMindTopicsWithStructure(
+    placedMind = layoutMindTopicsWithStructure(
       graph.mind,
       mindStructure,
       collapsed,
@@ -144,10 +219,28 @@ export function boardContentBounds(
       graph.mindDescriptions,
       graph.mindDescriptionStyles,
     );
-    for (const p of placed) boxes.push({ x: p.x, y: p.y, w: p.w, h: p.h });
+    if (mindStructure !== "logic") {
+      for (const p of placedMind) boxes.push({ x: p.x, y: p.y, w: p.w, h: p.h });
+    }
+  }
+  if (placedMind && mindRelations?.length) {
+    const byTopic = new Map(placedMind.map((p) => [p.topic.id, p]));
+    for (const rel of mindRelations) {
+      const fromPos = byTopic.get(rel.fromId);
+      const toPos = byTopic.get(rel.toId);
+      if (!fromPos || !toPos) continue;
+      const relBox = svgPathBounds(mindRelationCurvePath(fromPos, toPos), 10);
+      if (relBox) boxes.push(relBox);
+      if (rel.label) {
+        const pt = mindRelationLabelPoint(fromPos, toPos);
+        const halfW = Math.max(18, measureLabel(rel.label, 0) / 2);
+        boxes.push({ x: pt.x - halfW, y: pt.y - 14, w: halfW * 2, h: 28 });
+      }
+    }
   }
   for (const f of frames) {
-    boxes.push({ x: f.x, y: f.y - 32, w: f.w, h: f.h + 32 });
+    const pillW = Math.max(74, Math.min(220, measureLabel(f.title || "Frame", 64)));
+    boxes.push({ x: f.x, y: f.y - 32, w: Math.max(f.w, pillW), h: f.h + 32 });
   }
   if (!boxes.length) return flowBounds(graph);
   const x0 = Math.min(...boxes.map((b) => b.x));
@@ -157,8 +250,8 @@ export function boardContentBounds(
   return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
 }
 
-export function FlowSvg({ graph, width, height, viewBox, selected, editing, frames, selectedFrameId, editingFrameId, onFrameHeaderDown, onFrameResizeDown, onFrameTitleDoubleClick, onFrameExport, onFrameDelete, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, mindStructure = "logic", mindRelations, mindRelationFrom, onRemoveMindRelation, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
-  graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string;
+export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "xMidYMid meet", selected, editing, frames, selectedFrameId, editingFrameId, onFrameHeaderDown, onFrameResizeDown, onFrameTitleDoubleClick, onFrameExport, onFrameDelete, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, mindStructure = "logic", mindRelations, mindRelationFrom, onRemoveMindRelation, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+  graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string; preserveAspectRatio?: string;
   selected?: Set<string>; editing?: string | null;
   frames?: readonly BoardFrame[];
   selectedFrameId?: string | null;
@@ -230,11 +323,11 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, fram
 }) {
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const b = boardContentBounds(graph, mindStructure, frames, mindCollapsed);
+  const b = boardContentBounds(graph, mindStructure, frames, mindCollapsed, mindRelations);
   const vb = viewBox ?? `${b.x - 40} ${b.y - 40} ${Math.max(200, b.w + 80)} ${Math.max(120, b.h + 80)}`;
   const filter = theme.sketch ? `url(#${idPrefix}-sketch)` : theme.shadow ? `url(#${idPrefix}-shadow)` : undefined;
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={vb} className={gpuBacked ? "relative z-[1]" : undefined} style={{ background: transparent ? "transparent" : theme.canvas, fontFamily: theme.font }} onPointerDown={onCanvasDown} data-flow-svg>
+    <svg xmlns="http://www.w3.org/2000/svg" width={width} height={height} viewBox={vb} preserveAspectRatio={preserveAspectRatio} className={cn("block max-w-full", gpuBacked && "relative z-[1]")} style={{ background: transparent ? "transparent" : theme.canvas, fontFamily: theme.font }} onPointerDown={onCanvasDown} data-flow-svg>
       <defs>
         <marker id={`${idPrefix}-arrow`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill={theme.edge} /></marker>
         <filter id={`${idPrefix}-sketch`} filterUnits="userSpaceOnUse" x="-20000" y="-20000" width="60000" height="60000"><feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="3" /><feDisplacementMap in="SourceGraphic" scale="2.2" /></filter>
@@ -490,8 +583,8 @@ export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, 
     [blockProps],
   );
   const previewPins = useMemo(() => resolveBoardCommentPins(comments, graph), [comments, graph]);
-  return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
-    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} width="100%" height="100%" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
+  return <div contentEditable={false} className="group/flow relative w-full max-w-full overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
+    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       {previewPins.length > 0 && <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border border-[#FFD591] bg-[#FFF7E6] px-2 text-[12px] font-medium text-[#B25900] shadow-sm hover:bg-[#FFECCC]" data-flow-preview-pins><MessageSquare size={12} />{previewPins.length}</button>}
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>

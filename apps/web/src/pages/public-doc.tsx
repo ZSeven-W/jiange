@@ -1,12 +1,105 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Lock } from "lucide-react";
+import { ApiError } from "@/lib/api";
+import { t } from "@/lib/i18n";
+import { verifyPublicLinkPassword } from "@/lib/share-password-api";
 import { ReadOnlyDoc } from "./read-only-doc";
 import { PublicDocumentCover } from "@/components/document-cover";
+import { DocumentWatermark } from "@/components/document-watermark";
 import { Logo } from "@/components/brand";
-import { fetchPublicDoc, initialPublicDocState, mayCopyPublicBlockLink, publicDocumentPermissions, updatePublicDocState, type PublicDocState, type PublicIssue } from "./public-doc-state";
+import { fetchPublicDoc, initialPublicDocState, mayCopyPublicBlockLink, publicDocumentPermissions, updatePublicDocState, type PublicDocState, type PublicIssue, type PublicSnapshot } from "./public-doc-state";
 import { publicBlockKey, publicBlockLink } from "./public-block-links";
+
+/** Sleek Feishu-style password gate card for encrypted share links. */
+export function PublicPasswordGate({
+  token,
+  onVerified,
+  title,
+  description,
+}: {
+  token: string;
+  onVerified: () => void;
+  title?: string;
+  description?: string;
+}) {
+  const [password, setPassword] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    const trimmed = password.trim();
+    if (!trimmed || submitting) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await verifyPublicLinkPassword(token, trimmed);
+      setPassword("");
+      onVerified();
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "invalid_password") {
+        setError(t("访问密码错误，请重新输入"));
+      } else if (e instanceof ApiError && e.status === 404) {
+        setError(t("链接已失效或已关闭分享"));
+      } else {
+        setError(e instanceof ApiError ? e.message : t("验证失败，请稍后重试"));
+      }
+    } finally {
+      setSubmitting(false);
+    }
+  };
+  return (
+    <div className="flex justify-center py-20">
+      <div
+        data-public-password-gate
+        className="w-full max-w-[380px] rounded-xl border bg-surface p-6 text-center shadow-[0_8px_24px_rgba(31,35,41,0.08)]"
+      >
+        <div className="mx-auto mb-3 grid size-11 place-items-center rounded-full bg-primary/10 text-primary">
+          <Lock size={20} />
+        </div>
+        <h2 className="text-[17px] font-semibold text-foreground">
+          {title ?? t("此分享链接已加密")}
+        </h2>
+        <p className="mt-1.5 text-[13px] text-muted-foreground">
+          {description ?? t("请输入访问密码（提取码）以查看文档")}
+        </p>
+        <form onSubmit={submit} className="mt-5 space-y-3 text-left">
+          <input
+            type="password"
+            data-public-password-input
+            autoFocus
+            autoComplete="off"
+            maxLength={32}
+            value={password}
+            onChange={(e) => { setPassword(e.target.value); if (error) setError(""); }}
+            disabled={submitting}
+            placeholder={t("请输入访问密码")}
+            aria-label={t("访问密码")}
+            className="h-10 w-full rounded-md border border-input bg-background px-3 text-[14px] outline-none placeholder:text-subtle focus:border-primary disabled:opacity-50"
+          />
+          {error && (
+            <p role="alert" data-public-password-error className="text-[12px] text-destructive">
+              {error}
+            </p>
+          )}
+          <button
+            type="submit"
+            data-public-password-submit
+            disabled={submitting || !password.trim()}
+            className="h-10 w-full rounded-md bg-primary text-[14px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {submitting ? t("正在验证…") : t("验证并访问")}
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
 
 /** Explain a failed public link without discarding its token on sign-in. */
 export function PublicDocMessage({ issue, token, onRetry }: { issue: PublicIssue; token: string; onRetry: () => void }) {
+  if (issue === "password_required") {
+    return <PublicPasswordGate token={token} onVerified={onRetry} />;
+  }
   return <div className="py-24 text-center">
     <p className="text-[15px] text-muted-foreground">{issue === "login" ? "此链接需要登录后访问" : issue === "expired" ? "链接已失效或已关闭分享" : issue === "unsupported_table" ? "当前版本无法安全显示此文档中的表格内容，请联系文档所有者。" : issue === "table_unavailable" ? "表格数据暂时无法安全显示，请稍后重试或联系文档所有者。" : "暂时无法连接服务器"}</p>
     {issue === "login" ? <a href={`#/s/${encodeURIComponent(token)}`} className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-[13px] text-white">登录后访问</a> : issue === "temporary" || issue === "table_unavailable" ? <button type="button" onClick={onRetry} className="mt-4 rounded-md bg-primary px-4 py-2 text-[13px] text-white">重试</button> : <a href="#/" className="mt-4 inline-block text-[13px] text-primary">返回主页</a>}
@@ -14,8 +107,10 @@ export function PublicDocMessage({ issue, token, onRetry }: { issue: PublicIssue
 }
 
 /** 匿名只读文档页：/#/p/{token}（链接分享角色为「任何人可读」时可用）。 */
-export function PublicDoc({ token }: { token: string }) {
-  const [state, setState] = useState(() => initialPublicDocState(token));
+export function PublicDoc({ token, initialSnapshot }: { token: string; initialSnapshot?: PublicSnapshot }) {
+  const [state, setState] = useState<PublicDocState>(() =>
+    initialSnapshot ? { token, snapshot: initialSnapshot, issue: null, recovery: 0 } : initialPublicDocState(token),
+  );
   const [verification, setVerification] = useState<{ token: string; inFlight: boolean }>({ token, inFlight: true });
   const [coverRecovery, setCoverRecovery] = useState<{ token: string; count: number }>({ token, count: 0 });
   const [notice, setNotice] = useState("");
@@ -34,22 +129,28 @@ export function PublicDoc({ token }: { token: string }) {
     return () => { window.removeEventListener("hashchange", changed); clear(); };
   }, [token]);
   useEffect(() => {
-    let active = true, inFlight = false;
+    let active = true, inFlight = false, pending = false;
     let controller: AbortController | null = null;
     const refresh = async () => {
-      if (inFlight) return;
-      inFlight = true;
-      if (active) setVerification({ token, inFlight: true });
-      const request = new AbortController();
-      controller = request;
-      const timeout = window.setTimeout(() => request.abort(), 15_000);
-      const result = await fetchPublicDoc(token, request.signal);
-      window.clearTimeout(timeout);
-      if (active) {
-        setState((previous) => updatePublicDocState(previous, token, result));
-        if ("snapshot" in result) setCoverRecovery((previous) => ({ token, count: previous.token === token ? previous.count + 1 : 1 }));
-        setVerification({ token, inFlight: document.visibilityState === "hidden" });
+      if (inFlight) {
+        pending = true;
+        return;
       }
+      inFlight = true;
+      do {
+        pending = false;
+        if (active) setVerification({ token, inFlight: true });
+        const request = new AbortController();
+        controller = request;
+        const timeout = window.setTimeout(() => request.abort(), 15_000);
+        const result = await fetchPublicDoc(token, request.signal);
+        window.clearTimeout(timeout);
+        if (active) {
+          setState((previous) => updatePublicDocState(previous, token, result));
+          if ("snapshot" in result) setCoverRecovery((previous) => ({ token, count: previous.token === token ? previous.count + 1 : 1 }));
+          setVerification({ token, inFlight: document.visibilityState === "hidden" });
+        }
+      } while (active && pending);
       inFlight = false;
     };
     refreshRef.current = () => { void refresh(); };
@@ -106,6 +207,7 @@ export function PublicDoc({ token }: { token: string }) {
         </a>
         <span className="ml-3 rounded bg-accent px-2 py-0.5 text-[12px] font-medium text-accent-foreground">只读分享</span>
       </header>
+      {snap && <DocumentWatermark copyProtected={!!snap.copyProtected} customText={snap.title || undefined} />}
       {snap && <PublicDocumentCover value={snap.cover} token={token} recovery={coverRecovery.token === token ? coverRecovery.count : 0} allowCopy={permissions.copy} allowPrint={permissions.download}/>}
       <div className="mx-auto max-w-[820px] px-10 pb-40 pt-16" data-document-print-restricted={!permissions.download ? "true" : undefined}>
         {issue && !snap && <PublicDocMessage issue={issue} token={token} onRetry={() => refreshRef.current()} />}

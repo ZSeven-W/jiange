@@ -77,6 +77,9 @@ func (s *Server) putLinkAtRevision(w http.ResponseWriter, r *http.Request) {
 		s.shareMutationError(w, r, err)
 		return
 	}
+	if in.Role == "none" {
+		s.clearLinkPasswordBestEffort(r.Context(), guard, d.ID)
+	}
 	current, docErr := s.Store.GetDoc(r.Context(), guard.UserID, d.ID)
 	user, sessionErr := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
 	if docErr != nil || current.Role != store.RoleManage || sessionErr != nil || user.ID != guard.UserID {
@@ -84,5 +87,11 @@ func (s *Server) putLinkAtRevision(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, link)
+	hasPass := false
+	if link.Role != "none" {
+		if hash, pErr := s.getLinkPasswordHash(r.Context(), d.ID); pErr == nil && hash != "" {
+			hasPass = true
+		}
+	}
+	httpx.JSON(w, http.StatusOK, linkWithPassword{Link: link, HasPassword: hasPass})
 }

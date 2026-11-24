@@ -5,6 +5,16 @@ import { bodyBlocks } from "@/editor/model";
 import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./doc-header-meta";
 import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from "@/lib/api";
 import { colorFor, type Presence } from "@/lib/presence";
+import {
+  createFollowScrollGuard,
+  createViewportBroadcaster,
+  detectTopVisibleBlockId,
+  findFollowPeer,
+  hasActiveEditCursor,
+  mergeViewportPresence,
+  resolveFollowTargetBlock,
+  VIEWPORT_BROADCAST_THROTTLE_MS,
+} from "@/lib/follow-mode";
 import { useSyncDoc, type RemotePeer } from "@/lib/use-sync-doc";
 import { CollabText } from "@/components/collab-text";
 import { Editor, type AtomicFindHistoryControl, type AtomicFindReplacer, type AtomicFindStatusEvent, type ExternalUndoRecorder, type FindBatchReplacer, type TableFindReplacer } from "@/editor/editor";
@@ -97,6 +107,7 @@ import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileEdit, F
 const TITLE: OpId = { client: 0, clock: 1 };
 
 export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobalSearch, onSearchGuardRegistrar }: { id: number; linkedVersion?: string | null; me: Me; sidebarDocked?: boolean; onGlobalSearch?: () => void; onSearchGuardRegistrar?: (capture: SearchGuardCapture | null) => void }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const meta = useQuery({
     queryKey: docMetaKey(id, me.user.id),
@@ -539,21 +550,142 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   // 没有标题时不占用正文左侧空间（与飞书一致）；手动打开的抽屉仍显示空态提示。
   const outlineVisible = outlineOpen && (outline.length > 0 || !outlineWide);
   const outlineFrame = useRef(0);
+  const [followingClientId, setFollowingClientId] = useState<number | null>(null);
+  const [followNotice, setFollowNotice] = useState<string | null>(null);
+  const followedPeerMetaRef = useRef<{ clientId: number; name: string } | null>(null);
+  const followNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const followScrollGuard = useMemo(() => createFollowScrollGuard(), []);
+  const lastAwarenessRef = useRef<Presence | null>(null);
+  const presenceRef = useRef(presence);
+  presenceRef.current = presence;
+  const syncClientRef = useRef(sync.client);
+  syncClientRef.current = sync.client;
+  const syncReadyRef = useRef(sync.ready);
+  syncReadyRef.current = sync.ready;
+  const viewportBroadcaster = useMemo(
+    () =>
+      createViewportBroadcaster((blockId) => {
+        const next = mergeViewportPresence(presenceRef.current, blockId, lastAwarenessRef.current);
+        lastAwarenessRef.current = next;
+        syncClientRef.current.setAwareness(next);
+      }, VIEWPORT_BROADCAST_THROTTLE_MS),
+    [sync.client],
+  );
+  useEffect(() => {
+    setFollowingClientId(null);
+    setFollowNotice(null);
+    followedPeerMetaRef.current = null;
+    followScrollGuard.reset();
+    viewportBroadcaster.reset();
+  }, [id, me.user.id, followScrollGuard, viewportBroadcaster]);
+  useEffect(() => () => {
+    if (followNoticeTimerRef.current) clearTimeout(followNoticeTimerRef.current);
+    followScrollGuard.dispose();
+    viewportBroadcaster.cancel();
+  }, [followScrollGuard, viewportBroadcaster]);
+  const followedPeer = useMemo(
+    () => findFollowPeer(sync.peers, followingClientId),
+    [sync.peers, followingClientId],
+  );
+  const followTargetBlock = useMemo(
+    () => resolveFollowTargetBlock(followedPeer ?? undefined),
+    [followedPeer],
+  );
+  const clearFollowNotice = useCallback(() => {
+    if (followNoticeTimerRef.current) {
+      clearTimeout(followNoticeTimerRef.current);
+      followNoticeTimerRef.current = null;
+    }
+    setFollowNotice(null);
+  }, []);
+  const exitFollowMode = useCallback(() => {
+    setFollowingClientId(null);
+    followedPeerMetaRef.current = null;
+    followScrollGuard.reset();
+  }, [followScrollGuard]);
+  const toggleFollowPeer = useCallback((clientId: number) => {
+    clearFollowNotice();
+    setFollowingClientId((current) => {
+      if (current === clientId) {
+        followedPeerMetaRef.current = null;
+        followScrollGuard.reset();
+        return null;
+      }
+      const peer = findFollowPeer(sync.peers, clientId);
+      if (peer) followedPeerMetaRef.current = { clientId: peer.clientId, name: peer.state.name };
+      followScrollGuard.reset();
+      return clientId;
+    });
+  }, [clearFollowNotice, followScrollGuard, sync.peers]);
+  useEffect(() => {
+    if (followingClientId === null) {
+      followScrollGuard.reset();
+      return;
+    }
+    if (followedPeer) {
+      followedPeerMetaRef.current = { clientId: followedPeer.clientId, name: followedPeer.state.name };
+      return;
+    }
+    const leftName =
+      followedPeerMetaRef.current?.clientId === followingClientId
+        ? followedPeerMetaRef.current.name
+        : t("协作者");
+    setFollowingClientId(null);
+    followedPeerMetaRef.current = null;
+    followScrollGuard.reset();
+    setFollowNotice(t("{name} 已离开文档，已退出跟随", { name: leftName }));
+    if (followNoticeTimerRef.current) clearTimeout(followNoticeTimerRef.current);
+    followNoticeTimerRef.current = setTimeout(() => {
+      followNoticeTimerRef.current = null;
+      setFollowNotice(null);
+    }, 3500);
+  }, [followingClientId, followedPeer, followScrollGuard, t]);
+  useEffect(() => {
+    if (!followedPeer || !followTargetBlock) return;
+    followScrollGuard.scrollToBlock(scrollArea.current, followedPeer.clientId, followTargetBlock);
+  }, [followedPeer, followTargetBlock, followScrollGuard, sync.version]);
+  useEffect(() => {
+    if (followingClientId === null) return;
+    const area = scrollArea.current;
+    const onManualScroll = (event: Event) => {
+      if (followScrollGuard.shouldExitOnEvent({ type: event.type })) exitFollowMode();
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (followScrollGuard.shouldExitOnEvent({ type: event.type, key: event.key })) exitFollowMode();
+    };
+    area?.addEventListener("wheel", onManualScroll, { passive: true });
+    area?.addEventListener("touchmove", onManualScroll, { passive: true });
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      area?.removeEventListener("wheel", onManualScroll);
+      area?.removeEventListener("touchmove", onManualScroll);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [followingClientId, followScrollGuard, exitFollowMode]);
   const onBodyScroll = useCallback(() => {
+    const area = scrollArea.current;
+    if (area && syncReadyRef.current) {
+      if (hasActiveEditCursor(area)) {
+        viewportBroadcaster.reset();
+      } else {
+        const topBlock = detectTopVisibleBlockId(area);
+        if (topBlock) viewportBroadcaster.push(topBlock);
+      }
+    }
     if (!outlineVisible || outlineFrame.current) return;
     outlineFrame.current = requestAnimationFrame(() => {
       outlineFrame.current = 0;
-      const area = scrollArea.current;
-      if (!area) return;
-      const base = area.getBoundingClientRect().top;
+      const currentArea = scrollArea.current;
+      if (!currentArea) return;
+      const base = currentArea.getBoundingClientRect().top;
       const tops: Record<string, number> = {};
       for (const it of outline) {
-        const el = area.querySelector<HTMLElement>(`[data-block="${it.id}"]`);
+        const el = currentArea.querySelector<HTMLElement>(`[data-block="${it.id}"]`);
         if (el) tops[it.id] = el.getBoundingClientRect().top - base;
       }
       setOutlineActive(activeOutlineId(outline, tops, 96, false));
     });
-  }, [outline, outlineVisible]);
+  }, [outline, outlineVisible, viewportBroadcaster]);
   useEffect(() => { onBodyScroll(); }, [onBodyScroll]);
   useEffect(() => () => { if (outlineFrame.current) cancelAnimationFrame(outlineFrame.current); }, []);
 
@@ -1168,7 +1300,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     qc.invalidateQueries({ queryKey: ["docs"] });
   }, [qc, id]);
   useEffect(() => {
-    sync.client.setAwareness({ ...presence, cursor: null });
+    const initial: Presence = { ...presence, cursor: null };
+    lastAwarenessRef.current = initial;
+    sync.client.setAwareness(initial);
   }, [sync.client, presence]);
 
   const live = sync.client.doc?.hasBlock(TITLE) ? sync.client.doc : null;
@@ -1563,6 +1697,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           draftConflict={sync.blocked === "history_changed"}
           peers={sync.peers}
           me={presence}
+          followingClientId={followingClientId}
+          onToggleFollow={toggleFollowPeer}
         />
         {prefs.locked && (
           <div role="status" data-doc-lock-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-[#DCE6FF] bg-[#F2F6FF] px-5 py-1.5 text-[12px] text-[#3370FF] dark:border-primary/30 dark:bg-primary/10">
@@ -1626,6 +1762,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
         {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
         {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+        {followedPeer && <FollowBanner peer={followedPeer} onExit={exitFollowMode} />}
+        {!followedPeer && followNotice && <FollowToast message={followNotice} />}
         <div ref={scrollArea} className={cn("min-h-0 flex-1 overflow-y-auto transition-colors", docPaperBgClass(prefs.paperBg), history ? "xl:pr-96" : aiOpen && runAI ? "xl:pr-[358px]" : commentsAvailable && commentsOpen && "xl:pr-[296px] min-[1720px]:pr-0")} onScroll={onBodyScroll} data-doc-scroll>
           <div className="flex min-h-full flex-col">
           <div className={cn("flex flex-1", showTemplates && "min-h-full")}>
@@ -1664,7 +1803,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 </div>
               </div>
             )}
-            <div className="group/doc-cover relative" data-outline-anchor data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
+            <div className="group/doc-cover relative" data-outline-anchor data-block={idKey(TITLE)} data-document-print-restricted={!downloadAllowed ? "true" : undefined} onCopy={(event) => { if (!contentCopyAllowed) event.preventDefault(); }} onCut={(event) => { if (!contentCopyAllowed) event.preventDefault(); }}>{addButton}<DocumentIconEditor id={id} userId={me.user.id} icon={meta.data?.icon} enabled={canEditContent} onRevalidate={() => { void meta.refetch(); }} onUpdated={async (icon) => {
               const key = docMetaKey(id, me.user.id);
               await publishDocumentIcon(qc, key, icon, () => {
                 const current = iconIdentity.current;
@@ -1817,6 +1956,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           </div>
           {findOpen && <div aria-hidden="true" className="h-[60dvh] min-[480px]:hidden" />}
         </div>
+        </div>
         {findOpen && <div ref={findPanel}>
           <FindReplacePanel
             mode={findMode}
@@ -1967,6 +2107,110 @@ const STATUS: Record<SyncStatus, { label: string; color: string }> = {
   offline: { label: "离线，恢复后自动同步", color: "#8F959E" },
 };
 
+export function FollowBanner({ peer, onExit }: { peer: RemotePeer; onExit: () => void }) {
+  const { t } = useI18n();
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
+      <div
+        role="status"
+        aria-live="polite"
+        data-follow-banner
+        className="pointer-events-auto inline-flex max-w-full items-center gap-2.5 rounded-full border bg-surface/95 px-3.5 py-1.5 text-[13px] text-foreground shadow-[0_6px_20px_rgba(31,35,41,0.12)] backdrop-blur-md dark:border-border"
+        style={{ borderColor: `${peer.state.color}66` }}
+      >
+        <span className="relative flex size-2.5 shrink-0 items-center justify-center" aria-hidden="true">
+          <span
+            className="absolute inline-flex size-full animate-ping rounded-full opacity-70"
+            style={{ background: peer.state.color }}
+          />
+          <span
+            className="relative inline-flex size-2 rounded-full"
+            style={{ background: peer.state.color }}
+          />
+        </span>
+        <span className="truncate font-medium">
+          {t("正在跟随 {name} 的视角", { name: peer.state.name })}
+        </span>
+        <button
+          type="button"
+          onClick={onExit}
+          data-follow-exit
+          className="shrink-0 rounded-full bg-hover px-2.5 py-0.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-[#E5E6EB] hover:text-foreground dark:hover:bg-muted"
+        >
+          {t("退出跟随")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function FollowToast({ message }: { message: string }) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 top-3 z-30 flex justify-center px-4">
+      <div
+        role="status"
+        aria-live="polite"
+        data-follow-toast
+        className="pointer-events-auto inline-flex max-w-full items-center rounded-full border border-[#DEE0E3] bg-surface/95 px-3.5 py-1.5 text-[12px] text-muted-foreground shadow-[0_4px_16px_rgba(31,35,41,0.10)] backdrop-blur-md dark:border-border"
+      >
+        <span className="truncate">{message}</span>
+      </div>
+    </div>
+  );
+}
+
+export function FollowPeerButton({
+  peer,
+  following,
+  onToggle,
+}: {
+  peer: RemotePeer;
+  following: boolean;
+  onToggle?: (clientId: number) => void;
+}) {
+  const { t } = useI18n();
+  const label = following
+    ? t("正在跟随 {name}，点击退出", { name: peer.state.name })
+    : t("点击跟随 {name} 的视角", { name: peer.state.name });
+  return (
+    <button
+      type="button"
+      data-follow-peer={peer.clientId}
+      aria-pressed={following}
+      aria-label={label}
+      title={label}
+      onClick={() => onToggle?.(peer.clientId)}
+      className={cn(
+        "relative rounded-full p-0 transition-transform hover:z-10 hover:scale-105 focus-visible:z-10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+        following && "z-10",
+      )}
+      style={
+        following
+          ? { boxShadow: `0 0 0 2px var(--surface, #FFFFFF), 0 0 0 4px ${peer.state.color}` }
+          : undefined
+      }
+    >
+      <Avatar name={peer.state.name} color={peer.state.color} size={26} ring={!following} title={label} />
+      {following && (
+        <span
+          aria-hidden="true"
+          data-follow-peer-live
+          className="pointer-events-none absolute -bottom-0.5 -right-0.5 flex size-2.5 items-center justify-center rounded-full bg-surface"
+        >
+          <span
+            className="absolute inline-flex size-2 animate-ping rounded-full opacity-75"
+            style={{ background: peer.state.color }}
+          />
+          <span
+            className="relative inline-flex size-1.5 rounded-full"
+            style={{ background: peer.state.color }}
+          />
+        </span>
+      )}
+    </button>
+  );
+}
+
 function TopBar({
   userId,
   sidebarDocked,
@@ -1980,6 +2224,8 @@ function TopBar({
   draftConflict = false,
   peers,
   me,
+  followingClientId = null,
+  onToggleFollow,
   shareAnchor,
   onShare,
   onComments,
@@ -2065,6 +2311,8 @@ function TopBar({
   draftConflict?: boolean;
   peers: RemotePeer[];
   me: Presence;
+  followingClientId?: number | null;
+  onToggleFollow?: (clientId: number) => void;
 }) {
   const s = STATUS[status];
   const [saved, setSaved] = useState({ doc: meta?.id, seenSynced: false, saved: false });
@@ -2123,7 +2371,14 @@ function TopBar({
         <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>
         <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label="协作者">
           <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
-          {peers.slice(0, 5).map((p) => <Avatar key={p.clientId} name={p.state.name} color={p.state.color} size={26} ring />)}
+          {peers.slice(0, 5).map((p) => (
+            <FollowPeerButton
+              key={p.clientId}
+              peer={p}
+              following={followingClientId === p.clientId}
+              onToggle={onToggleFollow}
+            />
+          ))}
           {peers.length > 5 && <span className="grid size-[26px] place-items-center rounded-full bg-hover text-[11px] ring-2 ring-white">+{peers.length - 5}</span>}
         </div>
       </div>

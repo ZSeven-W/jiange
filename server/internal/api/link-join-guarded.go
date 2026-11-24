@@ -31,7 +31,11 @@ func (s *Server) joinLinkGuarded(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusServiceUnavailable, "unavailable", "服务暂不支持安全打开链接")
 		return
 	}
-	id, err := st.JoinLinkGuarded(r.Context(), guard, r.PathValue("token"))
+	tok := r.PathValue("token")
+	if !s.requireJoinLinkPassword(w, r, guard.UserID, tok, "链接已失效或当前账号不在访问范围内") {
+		return
+	}
+	id, err := st.JoinLinkGuarded(r.Context(), guard, tok)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrForbidden) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效或当前账号不在访问范围内")
 		return

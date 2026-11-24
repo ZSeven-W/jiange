@@ -90,12 +90,31 @@ type Config struct {
 	Permissions *ViewPermissions `json:"permissions,omitempty"`
 	// GanttDeps persists directed task dependency edges for Gantt views.
 	GanttDeps []GanttDependency `json:"ganttDeps,omitempty"`
+	// FieldWidths persists per-column widths (fieldId -> px in [60, 1200]).
+	FieldWidths map[string]int `json:"fieldWidths,omitempty"`
+	// FieldStats persists per-column summary stat modes (fieldId -> stat key).
+	FieldStats map[string]string `json:"fieldStats,omitempty"`
 }
 
 var ops = map[string]bool{
 	"contains": true, "not_contains": true, "is": true, "is_not": true,
 	"empty": true, "not_empty": true, "gt": true, "gte": true, "lt": true, "lte": true,
 	"checked": true, "unchecked": true,
+}
+
+var validFieldStats = map[string]bool{
+	"none":        true,
+	"count":       true,
+	"empty":       true,
+	"filled":      true,
+	"unique":      true,
+	"sum":         true,
+	"avg":         true,
+	"min":         true,
+	"max":         true,
+	"checked":     true,
+	"unchecked":   true,
+	"pct_checked": true,
 }
 
 // ValidateFilters checks a filter conjunction and its rules against fields.
@@ -315,6 +334,50 @@ func Validate(fields []FieldSpec, cfg Config) error {
 			if state[node] == 0 && hasCycle(node) {
 				return fmt.Errorf("gantt dependencies contain a cycle")
 			}
+		}
+	}
+	if err := validateFieldWidths(cfg.FieldWidths); err != nil {
+		return err
+	}
+	if err := validateFieldStats(cfg.FieldStats); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validatePositiveFieldKey(fidStr string) error {
+	fid, err := strconv.ParseInt(fidStr, 10, 64)
+	if err != nil || fid <= 0 || strconv.FormatInt(fid, 10) != fidStr {
+		return fmt.Errorf("invalid field id %q", fidStr)
+	}
+	return nil
+}
+
+func validateFieldWidths(widths map[string]int) error {
+	if len(widths) > 200 {
+		return fmt.Errorf("too many fieldWidths entries (max 200)")
+	}
+	for fidStr, w := range widths {
+		if err := validatePositiveFieldKey(fidStr); err != nil {
+			return fmt.Errorf("fieldWidths: %w", err)
+		}
+		if w < 60 || w > 1200 {
+			return fmt.Errorf("fieldWidths[%s] must be between 60 and 1200", fidStr)
+		}
+	}
+	return nil
+}
+
+func validateFieldStats(stats map[string]string) error {
+	if len(stats) > 200 {
+		return fmt.Errorf("too many fieldStats entries (max 200)")
+	}
+	for fidStr, st := range stats {
+		if err := validatePositiveFieldKey(fidStr); err != nil {
+			return fmt.Errorf("fieldStats: %w", err)
+		}
+		if !validFieldStats[st] {
+			return fmt.Errorf("invalid field stat %q", st)
 		}
 	}
 	return nil

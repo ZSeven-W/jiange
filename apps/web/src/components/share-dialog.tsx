@@ -5,8 +5,9 @@ import { colorFor } from "@/lib/presence";
 import { Avatar } from "@/components/brand";
 import { AddIcon, ArrowRightIcon, BuildingIcon, HelpIcon, LinkIcon, SettingIcon } from "@/components/feishu-icons";
 import { FeishuSelect } from "@/components/feishu-select";
-import { Check, FolderTree, QrCode, Users, X } from "lucide-react";
+import { Check, FolderTree, Lock, QrCode, Users, X } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
+import { putLinkPassword } from "@/lib/share-password-api";
 import { ShareQRCode, verifiedDirectShareUrl, verifiedShareUrl } from "@/components/share-link";
 import { invitationConflict, inviteCandidates } from "@/components/share-invite";
 import { changeContentPermission, contentPermissions, copyProtectionError, SharePermissions } from "@/components/share-permissions";
@@ -33,6 +34,9 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   const [busy, setBusy] = useState(false);
   const [linkError, setLinkError] = useState("");
   const [linkNotice, setLinkNotice] = useState("");
+  const [linkPassword, setLinkPassword] = useState("");
+  const [linkPassError, setLinkPassError] = useState("");
+  const [linkPassNotice, setLinkPassNotice] = useState("");
   const [settingsError, setSettingsError] = useState("");
   const busyRef = useRef(false);
   const mountedRef = useRef(false);
@@ -106,7 +110,7 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
   const selectCandidate = (address: string) => { setEmail(address); setSuggestOpen(false); setSuggestIndex(-1); emailRef.current?.focus(); };
   // Serialize all changes from this dialog. Mutation responses are not written
   // into the query cache: only a fresh read may repopulate the link and roles.
-  const update = async (task: () => Promise<void>, kind: "invite" | "link" | "settings") => {
+  const update = async (task: () => Promise<void>, kind: "invite" | "link" | "settings" | "password") => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
@@ -116,12 +120,15 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
     setErr("");
     setLinkError("");
     setLinkNotice("");
+    setLinkPassError("");
+    setLinkPassNotice("");
     setSettingsError("");
     try {
       await qc.cancelQueries({ queryKey: key });
       await task();
     } catch (e) {
       if (kind === "link") setLinkError(e instanceof ApiError && e.status === 409 ? t("链接设置已被其他人修改，请确认最新设置后重试。") : e instanceof TypeError || e instanceof Error && e.name === "AbortError" ? t("网络连接中断，更新结果可能尚未确认，请查看最新设置。") : t("更新链接权限失败，请重试。"));
+      else if (kind === "password") setLinkPassError(e instanceof ApiError ? e.message : t("更新访问密码失败，请重试。"));
       else if (kind === "settings") setSettingsError(copyProtectionError(e));
       else setErr(e instanceof TypeError ? t("网络连接中断，更新结果可能尚未确认，请查看协作者列表。") : e instanceof Error ? e.message : t("更新协作者失败"));
     } finally {
@@ -151,8 +158,40 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
     setSuggestOpen(false);
   }, "invite");
   const linkRole = info.data?.link.role ?? "none";
+  const hasLinkPassword = Boolean((info.data as (ShareInfo & { hasPassword?: boolean }) | undefined)?.hasPassword);
   const linkRevision = info.data?.link.revision;
   const linkEditable = !!manage && !busy && !info.isFetching && Number.isSafeInteger(linkRevision) && linkRevision! >= 0 && linkRevision! < Number.MAX_SAFE_INTEGER && Number.isSafeInteger(userId) && userId > 0;
+  useEffect(() => {
+    if (linkRole === "none") {
+      setLinkPassword("");
+      setLinkPassError("");
+      setLinkPassNotice("");
+    }
+  }, [linkRole]);
+  const saveLinkPassword = () => {
+    const trimmed = linkPassword.trim();
+    const runeCount = Array.from(trimmed).length;
+    if (runeCount < 4 || runeCount > 32) {
+      setLinkPassError(t("访问密码需为 4–32 位字符"));
+      return;
+    }
+    void update(async () => {
+      await putLinkPassword(meta.id, { password: trimmed }, userId);
+      if (mountedRef.current) {
+        setLinkPassword("");
+        setLinkPassNotice(t("已保存访问密码，旧访问凭证已失效"));
+      }
+    }, "password");
+  };
+  const clearLinkPassword = () => {
+    void update(async () => {
+      await putLinkPassword(meta.id, { clear: true }, userId);
+      if (mountedRef.current) {
+        setLinkPassword("");
+        setLinkPassNotice(t("已取消访问密码"));
+      }
+    }, "password");
+  };
   const changeLink = (next: ShareInfo["link"]["role"]) => {
     if (!linkEditable || next === linkRole || linkRevision === undefined) return;
     const workspaceBoundary = linkRole !== "none" && next !== "none" && (linkRole.startsWith("workspace_") !== next.startsWith("workspace_"));
@@ -330,6 +369,63 @@ export function ShareDialog({ meta, userId, onClose, anchorRef }: { meta: DocMet
             {linkError && <p role="alert" className="pt-2 text-[12px] text-destructive">{linkError}</p>}
             {linkNotice && <p role="status" className="pt-2 text-[12px] text-subtle">{linkNotice}</p>}
             {manage && !info.isFetching && (!Number.isSafeInteger(linkRevision) || linkRevision! < 0 || linkRevision! >= Number.MAX_SAFE_INTEGER) && <p role="status" className="pt-2 text-[12px] text-subtle">{t("当前服务暂不支持安全修改链接权限，请更新服务。")}</p>}
+            {manage && linkRole !== "none" && (
+              <div data-link-password-section className="mt-4 rounded-md border bg-sidebar/40 px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-[13px] font-medium text-foreground">
+                    <Lock size={14} className="shrink-0 text-primary" />
+                    {t("访问密码（提取码）")}
+                  </span>
+                  <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${hasLinkPassword ? "bg-primary/10 text-primary" : "bg-black/5 text-subtle dark:bg-white/10"}`}>
+                    {hasLinkPassword ? t("已设置访问密码") : t("未设置")}
+                  </span>
+                </div>
+                <form
+                  className="mt-2.5 flex items-center gap-1.5"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    saveLinkPassword();
+                  }}
+                >
+                  <input
+                    type="text"
+                    data-link-password-input
+                    aria-label={t("访问密码")}
+                    autoComplete="off"
+                    maxLength={32}
+                    disabled={busy || info.isFetching}
+                    value={linkPassword}
+                    onChange={(e) => {
+                      setLinkPassword(e.target.value);
+                      if (linkPassError) setLinkPassError("");
+                    }}
+                    placeholder={hasLinkPassword ? t("输入新密码（4–32位字母或数字）") : t("设置 4–32 位字母或数字")}
+                    className="h-8 min-w-0 flex-1 rounded-md border border-input bg-surface px-2.5 text-[13px] outline-none placeholder:text-subtle focus:border-primary disabled:opacity-50"
+                  />
+                  <button
+                    type="submit"
+                    data-link-password-save
+                    disabled={busy || info.isFetching || Array.from(linkPassword.trim()).length < 4}
+                    className="h-8 shrink-0 rounded-md bg-primary px-2.5 text-[12px] font-medium text-white hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {t("保存密码")}
+                  </button>
+                  {hasLinkPassword && (
+                    <button
+                      type="button"
+                      data-link-password-clear
+                      disabled={busy || info.isFetching}
+                      onClick={clearLinkPassword}
+                      className="h-8 shrink-0 rounded-md border px-2.5 text-[12px] text-muted-foreground hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {t("取消密码")}
+                    </button>
+                  )}
+                </form>
+                {linkPassError && <p role="alert" className="mt-1.5 text-[12px] text-destructive">{linkPassError}</p>}
+                {linkPassNotice && <p role="status" className="mt-1.5 text-[12px] text-primary">{linkPassNotice}</p>}
+              </div>
+            )}
           </div>
           <footer className="flex min-h-[66px] items-center gap-2 bg-sidebar px-4 py-3">
             <button type="button" disabled={!url} title={!url ? t("无法验证分享链接") : linkRole === "none" ? t("已有文档访问权限的人可访问") : t("复制链接")} className="inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-[13px] hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50" onClick={async () => { try { if (!navigator.clipboard) throw new Error("clipboard unavailable"); await navigator.clipboard.writeText(url); setCopyError(false); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopyError(true); } }}>{copied ? <Check size={14}/> : <LinkIcon className="size-[14px]"/>}{copied ? t("已复制") : t("复制链接")}</button>

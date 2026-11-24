@@ -6,6 +6,8 @@ export interface Presence {
   cursor?: { block: OpId; anchor: Anchor; focus?: Anchor } | null;
   /** Pointer and selection inside a flowchart block's editor (block = idKey). */
   flow?: { block: string; x?: number; y?: number; sel?: string[] } | null;
+  /** Topmost visible block key in the peer's reading viewport (for collaborative follow mode). */
+  viewportBlock?: string;
 }
 
 // first entries are the design tokens primary, peer-1, peer-2, peer-3

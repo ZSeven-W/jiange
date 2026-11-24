@@ -22,14 +22,19 @@ import { recordMenuTargets, sameRecordTargets } from "./record-menu-targets";
 import { BaseGridGpuLayer } from "./base-gpu-layer";
 import { FeishuSelect } from "@/components/feishu-select";
 
-/** Column widths per field, persisted locally so they survive refresh. */
-function loadWidths(baseId: number): Record<number, number> {
-  try {
-    return JSON.parse(localStorage.getItem(`jiange:fieldWidths:${baseId}`) ?? "{}");
-  } catch {
-    return {};
-  }
-}
+const STAT_LABEL: Record<string, string> = {
+  sum: "求和",
+  avg: "平均",
+  min: "最小值",
+  max: "最大值",
+  count: "计数",
+  filled: "已填写",
+  empty: "空值",
+  unique: "唯一值",
+  checked: "已勾选",
+  unchecked: "未勾选",
+  pct_checked: "勾选率",
+};
 
 interface Edit {
   rid: number;
@@ -61,6 +66,10 @@ export function Grid({
   rowHeight,
   fills,
   frozen,
+  fieldWidths,
+  fieldStats,
+  onFieldWidthsChange,
+  onFieldStatsChange,
   undo,
 }: {
   baseId: number;
@@ -94,6 +103,14 @@ export function Grid({
   fills?: FillRule[];
   /** Leading visible fields kept frozen (sticky) while scrolling; default 1. */
   frozen?: number;
+  /** Cloud-persisted per-column widths from the active view config. */
+  fieldWidths?: Record<string, number>;
+  /** Cloud-persisted per-column summary stats from the active view config. */
+  fieldStats?: Record<string, string>;
+  /** Called on column resize end to persist updated field widths to the view config. */
+  onFieldWidthsChange?: (widths: Record<string, number>) => void;
+  /** Called when column summary stat selection changes to persist to the view config. */
+  onFieldStatsChange?: (stats: Record<string, string>) => void;
 }) {
   const { ledger } = useWriteLedger(baseId);
   const [edit, setEditState] = useState<Edit | null>(null);
@@ -111,7 +128,14 @@ export function Grid({
   const checkedRef = useRef(checked);
   checkedRef.current = checked;
   const [editField, setEditField] = useState<Field | null>(null);
-  const [widths, setWidths] = useState<Record<number, number>>(() => loadWidths(baseId));
+  const [widths, setWidths] = useState<Record<string, number>>(() => ({ ...(fieldWidths ?? {}) }));
+  const widthsRef = useRef(widths);
+  widthsRef.current = widths;
+  const resizingRef = useRef(false);
+  const fieldWidthsKey = JSON.stringify(fieldWidths ?? {});
+  useEffect(() => {
+    if (!resizingRef.current) setWidths({ ...(fieldWidths ?? {}) });
+  }, [fieldWidthsKey]);
   const [drag, setDrag] = useState<{ fid: number; at: number | null; order: number[]; allOrder: number[] }>({ fid: 0, at: null, order: [], allOrder: [] });
   const [dragError, setDragError] = useState<string | null>(null);
   const [sel, setSel] = useState<GridSelection | null>(null);
@@ -139,13 +163,13 @@ export function Grid({
     onDetailVisibilityChange?.(false);
   }, [detailId, detailAccessReady, detail, onDetailVisibilityChange]);
   useEffect(() => () => { onDetailVisibilityChange?.(false); }, [onDetailVisibilityChange]);
-  const [stats, setStats] = useState<Record<number, string>>(() => {
-    try {
-      return JSON.parse(localStorage.getItem(`jiange:stats:${baseId}`) ?? "{}");
-    } catch {
-      return {};
-    }
-  });
+  const [stats, setStats] = useState<Record<string, string>>(() => ({ ...(fieldStats ?? {}) }));
+  const statsRef = useRef(stats);
+  statsRef.current = stats;
+  const fieldStatsKey = JSON.stringify(fieldStats ?? {});
+  useEffect(() => {
+    setStats({ ...(fieldStats ?? {}) });
+  }, [fieldStatsKey]);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   useEffect(() => {
     setChecked((prev) => {
@@ -196,14 +220,7 @@ export function Grid({
     };
   }, []);
 
-  const width = (f: Field) => widths[f.id] ?? (f.isPrimary ? 280 : REGISTRY[f.type].width);
-  const saveWidth = (fid: number, w: number) => {
-    setWidths((prev) => {
-      const next = { ...prev, [fid]: w };
-      localStorage.setItem(`jiange:fieldWidths:${baseId}`, JSON.stringify(next));
-      return next;
-    });
-  };
+  const width = (f: Field) => widths[String(f.id)] ?? (f.isPrimary ? 280 : REGISTRY[f.type].width);
 
   // refresh the formula cache for the visible dataset (cheap: memoized per record)
   for (const rec of records) setFormulaCache(rec, evalFormulas(fields, rec, members));
@@ -676,10 +693,21 @@ export function Grid({
     e.stopPropagation();
     const startX = e.clientX;
     const startW = width(f);
-    const move2 = (ev: MouseEvent) => saveWidth(f.id, Math.min(600, Math.max(80, Math.round(startW + ev.clientX - startX))));
+    let latestW = startW;
+    resizingRef.current = true;
+    const move2 = (ev: MouseEvent) => {
+      latestW = Math.min(1200, Math.max(60, Math.round(startW + ev.clientX - startX)));
+      setWidths((prev) => ({ ...prev, [String(f.id)]: latestW }));
+    };
     const up = () => {
+      resizingRef.current = false;
       window.removeEventListener("mousemove", move2);
       window.removeEventListener("mouseup", up);
+      if (latestW !== startW) {
+        const next = { ...widthsRef.current, [String(f.id)]: latestW };
+        setWidths(next);
+        onFieldWidthsChange?.(next);
+      }
     };
     window.addEventListener("mousemove", move2);
     window.addEventListener("mouseup", up);
@@ -692,34 +720,51 @@ export function Grid({
     setDrag({ fid: 0, at: null, order: [], allOrder: [] });
   };
 
-  // --- column statistics (sum/avg/count/empty), chosen per column ---
+  // --- column statistics (sum/avg/min/max/count/empty/unique/checked), persisted in view config ---
   const saveStat = (fid: number, fn: string) => {
-    setStats((prev) => {
-      const next = { ...prev };
-      if (fn) next[fid] = fn;
-      else delete next[fid];
-      localStorage.setItem(`jiange:stats:${baseId}`, JSON.stringify(next));
-      return next;
-    });
+    const next = { ...statsRef.current };
+    if (fn && fn !== "none") next[String(fid)] = fn;
+    else delete next[String(fid)];
+    setStats(next);
+    onFieldStatsChange?.(next);
   };
   const statValue = (f: Field, fn: string, rows: BaseRecord[]): string => {
     const vals = rows.map((r) => displayValue(r, f, members));
-    const present = vals.filter((v) => v !== undefined && v !== "" && !(Array.isArray(v) && v.length === 0));
+    const present = vals.filter((v) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0));
     const empty = rows.length - present.length;
+    const nums = present.map((v) => Number(v)).filter((n) => Number.isFinite(n));
     switch (fn) {
       case "sum":
-        return `${present.reduce((a: number, v) => a + Number(v ?? 0), 0)}`;
+        return `${nums.reduce((a, v) => a + v, 0)}`;
       case "avg":
-        return `${present.length ? (present.reduce((a: number, v) => a + Number(v ?? 0), 0) / present.length).toFixed(2) : "—"}`;
+        return `${nums.length ? (nums.reduce((a, v) => a + v, 0) / nums.length).toFixed(2) : "—"}`;
+      case "min":
+        return nums.length ? `${Math.min(...nums)}` : "—";
+      case "max":
+        return nums.length ? `${Math.max(...nums)}` : "—";
       case "count":
+      case "filled":
         return `${present.length}`;
       case "empty":
         return `${empty}`;
+      case "unique":
+        return `${new Set(present.map((v) => (Array.isArray(v) ? JSON.stringify(v) : String(v)))).size}`;
+      case "checked":
+        return `${vals.filter((v) => v === true).length}`;
+      case "unchecked":
+        return `${vals.filter((v) => v !== true).length}`;
+      case "pct_checked":
+        return rows.length ? `${((vals.filter((v) => v === true).length / rows.length) * 100).toFixed(1)}%` : "0%";
       default:
         return "";
     }
   };
-  const statFns = (f: Field) => (f.type === "number" ? ["sum", "avg", "count", "empty"] : ["count", "empty"]);
+  const statFns = (f: Field) =>
+    f.type === "number" || f.type === "rating"
+      ? ["sum", "avg", "min", "max", "count", "empty"]
+      : f.type === "checkbox"
+        ? ["checked", "unchecked", "pct_checked", "count", "empty"]
+        : ["count", "empty", "unique"];
 
   // --- grid grouping (any field) ---
   const groupField = fields.find((f) => f.id === groupBy);
@@ -1097,14 +1142,15 @@ export function Grid({
           <tr className="group/stats sticky bottom-0 z-10 h-8 bg-surface text-[12px] text-muted-foreground" data-stats-row>
             <td className="sticky left-0 z-10 w-14 border-x-0 border-b-0 border-t bg-surface px-2.5" />
             {winFields.map((f, wi) => {
-              const fn = stats[f.id] ?? "";
-              const fnLabel = fn === "sum" ? t("求和") : fn === "avg" ? t("平均") : fn === "count" ? t("计数") : fn === "empty" ? t("空值") : "";
+              const rawFn = stats[String(f.id)] ?? "";
+              const fn = rawFn === "none" ? "" : rawFn;
+              const fnLabel = fn ? t(STAT_LABEL[fn] ?? fn) : "";
               const fnVal = fn ? statValue(f, fn, records) : "";
               const statOptions = [
                 { value: "", label: t("无") },
                 ...statFns(f).map((x) => ({
                   value: x,
-                  label: x === "sum" ? t("求和") : x === "avg" ? t("平均") : x === "count" ? t("计数") : t("空值"),
+                  label: t(STAT_LABEL[x] ?? x),
                 })),
               ];
               return (

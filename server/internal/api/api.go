@@ -92,6 +92,7 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/docs/{id}/inheritance":                      s.putInheritance,
 		"PUT /api/docs/{id}/link":                             s.putLink,
 		"PUT /api/docs/{id}/link-guarded":                     s.putLinkAtRevision,
+		"PUT /api/docs/{id}/link-password":                    s.putLinkPassword,
 		"POST /api/share/{token}":                             s.joinLink,
 		"POST /api/share/{token}/join-guarded":                s.joinLinkGuarded,
 		"GET /api/share/{token}/paste-target":                 s.pasteShareTarget,
@@ -287,6 +288,10 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/sheets/{id}/comments":              s.createSheetComment,
 		"PATCH /api/sheets/{id}/comments/{cid}":       s.patchSheetComment,
 		"DELETE /api/sheets/{id}/comments/{cid}":      s.deleteSheetComment,
+		"GET /api/sheets/{id}/versions":               s.listSheetVersions,
+		"POST /api/sheets/{id}/versions":              s.createSheetVersion,
+		"POST /api/sheets/{id}/versions/{vid}/restore": s.restoreSheetVersion,
+		"GET /api/sheets/{id}/cell-history":           s.listSheetCellHistory,
 
 		// 企业组织架构（成员角色 / 部门 / 用户组）
 		"GET /api/workspaces/{wsId}/org":                              s.getWorkspaceOrg,
@@ -344,6 +349,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/public/surveys/{token}", http.HandlerFunc(s.getPublicSurvey))
 	mux.Handle("POST /api/public/surveys/{token}/submit", http.HandlerFunc(s.submitPublicSurvey))
 	mux.Handle("GET /api/public/{token}", http.HandlerFunc(s.getPublic))
+	mux.Handle("POST /api/public/{token}/verify-password", http.HandlerFunc(s.verifyPublicLinkPassword))
 	mux.Handle("GET /api/public/{token}/cover/image", http.HandlerFunc(s.getPublicCoverImage))
 	mux.Handle("GET /api/public/{token}/files/{id}", http.HandlerFunc(s.getPublicFile))
 	// public form endpoints (anonymous visitors)

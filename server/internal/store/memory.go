@@ -23,6 +23,8 @@ type Memory struct {
 	wiki             memWiki
 	sso              memSSO
 	enterprise       memEnterprise
+	linkPasswords    memLinkPasswords
+	sheetHistory     memSheetHistory
 	sessions         map[string]session
 	d                memDocs
 	sh               memShare

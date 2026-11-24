@@ -74,6 +74,11 @@ func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
 			subjects = loaded
 		}
 	}
+	linkPassHash, err := s.getLinkPasswordHash(r.Context(), d.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 	user, err := s.Store.SessionUser(r.Context(), guard.SessionHash, s.now())
 	if errors.Is(err, store.ErrNotFound) || err == nil && user.ID != guard.UserID {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
@@ -99,6 +104,7 @@ func (s *Server) getShares(w http.ResponseWriter, r *http.Request) {
 		"members":          shares,
 		"subjects":         subjects,
 		"link":             link,
+		"hasPassword":      linkPassHash != "",
 		"role":             d.Role,
 		"inheritParentAcl": d.InheritParentACL,
 		"workspaceId":      d.WorkspaceID,
@@ -185,6 +191,11 @@ func (s *Server) shareResultAfterMutation(w http.ResponseWriter, r *http.Request
 	if subjects == nil {
 		subjects = []store.SubjectShare{}
 	}
+	linkPassHash, err := s.getLinkPasswordHash(r.Context(), docID)
+	if err != nil {
+		empty()
+		return
+	}
 	d, err = s.Store.GetDoc(r.Context(), guard.UserID, docID)
 	if err != nil || store.RoleRank(d.Role) < store.RoleRank(store.RoleView) {
 		empty()
@@ -202,6 +213,7 @@ func (s *Server) shareResultAfterMutation(w http.ResponseWriter, r *http.Request
 		"members":          shares,
 		"subjects":         subjects,
 		"link":             link,
+		"hasPassword":      linkPassHash != "",
 		"role":             d.Role,
 		"inheritParentAcl": d.InheritParentACL,
 		"workspaceId":      d.WorkspaceID,
@@ -246,6 +258,9 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		s.shareMutationError(w, r, err)
 		return
 	}
+	if in.Role == "none" {
+		s.clearLinkPasswordBestEffort(r.Context(), guard, d.ID)
+	}
 	s.recordAudit(r, d.WorkspaceID, "share.link_update", d.Kind, d.ID, d.Title, map[string]any{"linkRole": in.Role})
 	// The mutation is already committed. A concurrent logout or permission
 	// revocation must not turn it into a failure or expose a bearer token.
@@ -257,7 +272,13 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, l)
+	hasPass := false
+	if l.Role != "none" {
+		if hash, pErr := s.getLinkPasswordHash(r.Context(), d.ID); pErr == nil && hash != "" {
+			hasPass = true
+		}
+	}
+	httpx.JSON(w, http.StatusOK, linkWithPassword{Link: l, HasPassword: hasPass})
 }
 
 func (s *Server) shareMutationError(w http.ResponseWriter, r *http.Request, err error) {
@@ -280,7 +301,8 @@ func (s *Server) shareMutationError(w http.ResponseWriter, r *http.Request, err 
 func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 	// Cached snapshots must not bypass a subsequent link revocation.
 	w.Header().Set("Cache-Control", "no-store")
-	id, role, err := s.Store.DocByToken(r.Context(), r.PathValue("token"))
+	tok := r.PathValue("token")
+	id, role, err := s.Store.DocByToken(r.Context(), tok)
 	if errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
 		return
@@ -291,6 +313,9 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 	if role != "anon" {
 		// 非 anon 链接仍要求登录协作（走 /#/s/token），不给匿名快照
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "此链接需要登录后加入协作")
+		return
+	}
+	if !s.requireLinkPassword(w, r, id, tok) {
 		return
 	}
 	d, err := s.Store.GetDocSystem(r.Context(), id)
@@ -394,12 +419,19 @@ func (s *Server) getPublic(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusConflict, "table_unavailable", "表格数据暂无法安全显示，请联系文档所有者")
 		return
 	}
+	if !s.requireLinkPassword(w, r, id, tok) {
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{"title": d.Title, "updatedAt": d.UpdatedAt, "copyProtected": d.CopyProtected, "copyMinRole": d.CopyMinRole, "downloadMinRole": d.DownloadMinRole, "permissionsRevision": d.PermissionsRevision, "cover": cover, "view": view})
 }
 
 func (s *Server) joinLink(w http.ResponseWriter, r *http.Request) {
 	u, _ := UserFrom(r.Context())
-	id, err := s.Store.JoinLink(r.Context(), r.PathValue("token"), u.ID)
+	tok := r.PathValue("token")
+	if !s.requireJoinLinkPassword(w, r, u.ID, tok, "链接已失效") {
+		return
+	}
+	id, err := s.Store.JoinLink(r.Context(), tok, u.ID)
 	if errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")
 		return
@@ -612,7 +644,9 @@ func (s *Server) serveFile(w http.ResponseWriter, r *http.Request, f store.FileM
 }
 
 func (s *Server) fileAccessError(w http.ResponseWriter, r *http.Request, err error) {
-	if errors.Is(err, store.ErrNotFound) {
+	if errors.Is(err, errLinkPasswordRequired) {
+		httpx.Error(w, http.StatusForbidden, "password_required", "此分享链接已加密，请输入访问密码")
+	} else if errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "file not found")
 	} else {
 		s.fail(w, r, err)

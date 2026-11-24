@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
 import {
   ApiError,
   docsApi,
@@ -37,7 +39,7 @@ import { ask, askText } from "@/components/ui/ask";
 import { ResourceTypeNotice } from "@/pages/resource-type-notice";
 import { ResourceReferencesButton } from "@/pages/resource-references-button";
 import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
-import { ChevronRight, Filter, Home, Lock, MoreHorizontal, Pin, Search, Share2, X } from "lucide-react";
+import { ChevronRight, Clock, Columns3, Eraser, Filter, History, Home, Lock, MessageSquare, MoreHorizontal, Pin, Printer, Rows3, Search, Share2, Tag, X } from "lucide-react";
 import { FenwickVirtualizer } from "@jiange/render-gpu";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
 import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
@@ -90,6 +92,8 @@ import {
   type RemoteCollaborator,
 } from "./sheet-collab";
 import { SheetConflictBar } from "./sheet-conflict-bar";
+import { loadStoredDefinedNames, parseDefinedNameTarget, saveStoredDefinedNames } from "./sheet-history-panel";
+import { SheetPrintDialog } from "./sheet-print-dialog";
 
 const DEFAULT_COL_WIDTH = 105;
 const DEFAULT_ROW_HEIGHT = 27;
@@ -299,12 +303,20 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [importing, setImporting] = useState(false);
   const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
   const [activePanel, setActivePanel] = useState<SheetPanelMode | null>(null);
+  const [definedNames, setDefinedNames] = useState<SheetDefinedName[]>(() => loadStoredDefinedNames(sheetId));
+  const [printOpen, setPrintOpen] = useState(false);
+  const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number; row: number; col: number } | null>(null);
   const [dropdownCell, setDropdownCell] = useState<{ sheetId: number; row: number; col: number } | null>(null);
   const [gridScrollTop, setGridScrollTop] = useState(0);
   const [gridViewportHeight, setGridViewportHeight] = useState(0);
 
+  useEffect(() => {
+    setDefinedNames(loadStoredDefinedNames(sheetId));
+  }, [sheetId]);
+
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
+  const cellContextMenuRef = useRef<HTMLDivElement>(null);
   const gridRef = useRef<HTMLDivElement>(null);
   const cellInputRef = useRef<HTMLInputElement>(null);
   const formulaInputRef = useRef<HTMLInputElement>(null);
@@ -456,7 +468,28 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     return () => document.removeEventListener("mousedown", onDown);
   }, [moreMenuOpen]);
 
-  const evaluatedWorkbook = useMemo(() => calculateWorkbook(sheets), [sheets]);
+  useEffect(() => {
+    if (!cellContextMenu) return;
+    const close = () => setCellContextMenu(null);
+    const onDown = (e: PointerEvent) => {
+      if (!cellContextMenuRef.current?.contains(e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", close);
+    window.addEventListener("scroll", close, true);
+    return () => {
+      document.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+    };
+  }, [cellContextMenu]);
+
+  const evaluatedWorkbook = useMemo(() => calculateWorkbook(sheets, { definedNames }), [sheets, definedNames]);
   const activeEvalMap = useMemo(() => (activeSheet ? evaluatedWorkbook.get(activeSheet.id) ?? {} : {}), [activeSheet, evaluatedWorkbook]);
 
   const gridMap = useMemo(
@@ -734,6 +767,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         }
         if (appliedUpdates.length > 0) {
           applyLocalWriteResult(targetWS.id, res.workbookRevision, appliedUpdates);
+          void qc.invalidateQueries({ queryKey: ["sheet-cell-history", sheetId, userId, targetWS.id] });
         }
 
         const committedKeys = new Set(res.cells.map((c) => `${c.rowId}:${c.columnId}`));
@@ -1267,6 +1301,61 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
   const handleTogglePanel = (mode: SheetPanelMode) => {
     setActivePanel((cur) => (cur === mode ? null : mode));
+  };
+
+  const handleUpdateDefinedNames = (next: SheetDefinedName[]) => {
+    setDefinedNames(next);
+    saveStoredDefinedNames(sheetId, next);
+    setStatusMessage(t("已更新定义名称"));
+  };
+
+  const handleJumpToNamedRange = (dn: SheetDefinedName) => {
+    if (!activeSheet) return;
+    const target = parseDefinedNameTarget(dn, sheets, activeSheet);
+    if (!target) {
+      setStatusMessage(t("该名称不是有效的单元格区域引用"));
+      return;
+    }
+    if (target.sheetId !== activeSheet.id) {
+      setActiveSheetId(target.sheetId);
+    }
+    setSelection({
+      anchor: { row: target.rect.top, col: target.rect.left },
+      focus: { row: target.rect.bottom, col: target.rect.right },
+    });
+    gridRef.current?.focus();
+  };
+
+  const handleVersionRestored = (snapshot: SheetSnapshot) => {
+    qc.setQueryData<SheetSnapshot>(workbookQueryKey, snapshot);
+    if (snapshot.sheets.length > 0 && !snapshot.sheets.some((s) => s.id === activeSheetId)) {
+      setActiveSheetId(snapshot.sheets[0].id);
+    }
+    setSelection({ anchor: { row: 0, col: 0 }, focus: { row: 0, col: 0 } });
+    setEditing(null);
+    setUndoStack([]);
+    setRedoStack([]);
+    setCellConflicts([]);
+    setMergeConflict(null);
+    void qc.invalidateQueries({ queryKey: commentsQueryKey });
+    void qc.invalidateQueries({ queryKey: ["sheet-cell-history", sheetId, userId] });
+    setStatusMessage(t("已恢复历史版本，并已自动备份恢复前内容"));
+  };
+
+  const handleClearSelectedCells = async () => {
+    if (!canEdit || !activeSheet) return;
+    const b = selectionBounds(selection);
+    const edits: { row: number; col: number; raw: string }[] = [];
+    for (let r = b.top; r <= b.bottom; r++) {
+      for (let c = b.left; c <= b.right; c++) {
+        if ((gridMap.cellByKey.get(`${r}:${c}`)?.raw ?? "") !== "") {
+          edits.push({ row: r, col: c, raw: "" });
+        }
+      }
+    }
+    if (edits.length > 0) {
+      await commitCellEdits(edits);
+    }
   };
 
   const matchingMerge = useMemo(() => {
@@ -1954,6 +2043,22 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         <ResourceReferencesButton id={sheetId} userId={userId} title={titleText || t("未命名电子表格")} kind="sheet" />
 
         <button
+          type="button"
+          aria-label={t("历史版本")}
+          title={t("历史版本")}
+          data-sheet-history-btn
+          onClick={() => handleTogglePanel("versions")}
+          className={`inline-flex h-8 shrink-0 items-center gap-1 rounded-md px-2 text-[13px] transition-colors ${
+            activePanel === "versions"
+              ? "bg-[#e8efff] font-medium text-[#3370ff]"
+              : "text-[#646a73] hover:bg-[#f2f3f5] hover:text-[#1f2329]"
+          }`}
+        >
+          <History size={15} />
+          <span className="hidden md:inline">{t("历史版本")}</span>
+        </button>
+
+        <button
           ref={shareBtnRef}
           type="button"
           aria-label={t("分享")}
@@ -1980,7 +2085,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             <div role="menu" className="absolute right-0 top-10 z-50 w-44 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-lg">
               {canEdit && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); fileInputRef.current?.click(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导入 XLSX")}</button>}
               {canDownload && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); handleExportXlsx(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("导出 XLSX")}</button>}
+              {canDownload && <button type="button" role="menuitem" data-sheet-print-trigger onClick={() => { setMoreMenuOpen(false); setPrintOpen(true); }} className="flex h-9 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"><Printer size={14} />{t("打印 / 导出 PDF")}</button>}
               {canDownload && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleDuplicate(); }} className="flex h-9 w-full items-center px-3 text-left hover:bg-[#f2f3f5]">{t("创建副本")}</button>}
+              <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); handleTogglePanel("versions"); }} className="flex h-9 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"><History size={14} />{t("历史版本")}</button>
               {meta.data.role === "manage" && <button type="button" role="menuitem" onClick={() => { setMoreMenuOpen(false); void handleTrash(); }} className="flex h-9 w-full items-center px-3 text-left text-[#d83931] hover:bg-[#fff2f0]">{t("移至回收站")}</button>}
             </div>
           )}
@@ -2038,6 +2145,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         importing={importing}
         onTriggerImport={() => fileInputRef.current?.click()}
         onExport={canDownload ? handleExportXlsx : undefined}
+        onOpenPrint={canDownload ? () => setPrintOpen(true) : undefined}
         onDuplicate={canDownload ? () => void handleDuplicate() : undefined}
         onUndo={() => void runUndoRedo("undo")}
         onRedo={() => void runUndoRedo("redo")}
@@ -2082,6 +2190,15 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
+              const trimmedName = nameBoxText.trim().toLowerCase();
+              const matchedDefined =
+                definedNames.find(
+                  (d) => d.name.toLowerCase() === trimmedName && d.sheetName?.toLowerCase() === activeSheet.title.toLowerCase(),
+                ) ?? definedNames.find((d) => d.name.toLowerCase() === trimmedName && !d.sheetName);
+              if (matchedDefined) {
+                handleJumpToNamedRange(matchedDefined);
+                return;
+              }
               const parsed = parseRangeInput(nameBoxText);
               if (parsed) {
                 const clamp = (p: SheetPoint) =>
@@ -2574,6 +2691,23 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                         onDoubleClick={() => {
                           if (canEdit) beginEdit(point, undefined, "cell");
                         }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (!selected(selection, point)) {
+                            setSelection({ anchor: point, focus: point });
+                          }
+                          const menuW = 208;
+                          const menuH = 264;
+                          const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+                          const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+                          setCellContextMenu({
+                            x: Math.max(8, Math.min(e.clientX, vw - menuW - 8)),
+                            y: Math.max(8, Math.min(e.clientY, vh - menuH - 8)),
+                            row: rowIdx,
+                            col: colIdx,
+                          });
+                        }}
                         className={`absolute left-0 top-0 flex items-center border-b border-r px-1.5 ${
                           gpuCell ? "border-transparent" : "border-[#e8e9eb]"
                         } ${
@@ -2814,6 +2948,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             }`}
           >
             <SheetSidePanel
+              sheetId={sheetId}
               mode={activePanel}
               onChangeMode={setActivePanel}
               onClose={() => setActivePanel(null)}
@@ -2844,6 +2979,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               onCreateComment={handleCreateComment}
               onToggleResolveComment={handleToggleResolveComment}
               onDeleteComment={handleDeleteComment}
+              definedNames={definedNames}
+              onUpdateDefinedNames={handleUpdateDefinedNames}
+              onJumpToNamedRange={handleJumpToNamedRange}
+              onVersionRestored={handleVersionRestored}
+              onVersionSaved={(v) => setStatusMessage(t("已保存版本「{label}」", { label: v.label }))}
             />
           </div>
         </>
@@ -3017,6 +3157,143 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             </div>
           </section>
         </div>
+      )}
+
+      {cellContextMenu && typeof document !== "undefined" && createPortal(
+        <div
+          ref={cellContextMenuRef}
+          role="menu"
+          data-sheet-cell-context-menu
+          style={{ left: cellContextMenu.x, top: cellContextMenu.y }}
+          className="fixed z-[130] w-52 rounded-lg border border-[#dee0e3] bg-white py-1 text-[13px] text-[#1f2329] shadow-[0_8px_28px_rgba(31,35,41,0.16)]"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            data-ctx-cell-history
+            onClick={() => {
+              const target = { row: cellContextMenu.row, col: cellContextMenu.col };
+              setCellContextMenu(null);
+              setSelection({ anchor: target, focus: target });
+              setActivePanel("cell-history");
+            }}
+            className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+          >
+            <Clock size={14} className="text-[#3370ff]" />
+            <span>{t("查看单元格修改记录")}</span>
+          </button>
+          {canComment && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                const target = { row: cellContextMenu.row, col: cellContextMenu.col };
+                setCellContextMenu(null);
+                setSelection({ anchor: target, focus: target });
+                setActivePanel("comments");
+              }}
+              className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+            >
+              <MessageSquare size={14} className="text-[#646a73]" />
+              <span>{t("添加单元格评论")}</span>
+            </button>
+          )}
+          {canEdit && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setCellContextMenu(null);
+                setActivePanel("names");
+              }}
+              className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+            >
+              <Tag size={14} className="text-[#646a73]" />
+              <span>{t("定义名称")}</span>
+            </button>
+          )}
+          {canEdit && (
+            <>
+              <div className="my-1 border-t border-[#eceef2]" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const row = cellContextMenu.row;
+                  setCellContextMenu(null);
+                  void handleAxisOp({ op: "insert_row", index: row, count: 1 });
+                }}
+                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+              >
+                <Rows3 size={14} className="text-[#646a73]" />
+                <span>{t("上方插入行")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const row = cellContextMenu.row;
+                  setCellContextMenu(null);
+                  void handleAxisOp({ op: "insert_row", index: row + 1, count: 1 });
+                }}
+                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+              >
+                <Rows3 size={14} className="text-[#646a73]" />
+                <span>{t("下方插入行")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const col = cellContextMenu.col;
+                  setCellContextMenu(null);
+                  void handleAxisOp({ op: "insert_col", index: col, count: 1 });
+                }}
+                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+              >
+                <Columns3 size={14} className="text-[#646a73]" />
+                <span>{t("左侧插入列")}</span>
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  const col = cellContextMenu.col;
+                  setCellContextMenu(null);
+                  void handleAxisOp({ op: "insert_col", index: col + 1, count: 1 });
+                }}
+                className="flex h-8 w-full items-center gap-2 px-3 text-left hover:bg-[#f2f3f5]"
+              >
+                <Columns3 size={14} className="text-[#646a73]" />
+                <span>{t("右侧插入列")}</span>
+              </button>
+              <div className="my-1 border-t border-[#eceef2]" />
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setCellContextMenu(null);
+                  void handleClearSelectedCells();
+                }}
+                className="flex h-8 w-full items-center gap-2 px-3 text-left text-[#d83931] hover:bg-[#fff2f0]"
+              >
+                <Eraser size={14} />
+                <span>{t("清除内容")}</span>
+              </button>
+            </>
+          )}
+        </div>,
+        document.body,
+      )}
+
+      {printOpen && activeSheet && (
+        <SheetPrintDialog
+          workbookTitle={titleText}
+          sheet={activeSheet}
+          evalMap={activeEvalMap}
+          selectionRect={selectionBounds(selection)}
+          onClose={() => setPrintOpen(false)}
+        />
       )}
 
       {shareOpen && meta.data && (
