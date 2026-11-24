@@ -45,6 +45,155 @@ export function personRuleIDs(v: unknown): number[] {
   return [];
 }
 
+export const CURRENCY_CODES = ["CNY", "USD", "EUR", "GBP", "JPY", "HKD"] as const;
+export type CurrencyCode = (typeof CURRENCY_CODES)[number];
+
+export const CURRENCY_SYMBOLS: Record<CurrencyCode, string> = {
+  CNY: "¥",
+  USD: "$",
+  EUR: "€",
+  GBP: "£",
+  JPY: "¥",
+  HKD: "HK$",
+};
+
+export function currencyOptions(f: Pick<Field, "options">): { code: CurrencyCode; precision: number } {
+  const rawCode = (f.options?.[0] ?? "CNY").toUpperCase();
+  const code = (CURRENCY_CODES as readonly string[]).includes(rawCode) ? (rawCode as CurrencyCode) : "CNY";
+  const rawPrec = f.options?.[1];
+  const parsed = rawPrec !== undefined && rawPrec !== "" ? Number(rawPrec) : 2;
+  const precision = Number.isInteger(parsed) && parsed >= 0 && parsed <= 4 ? parsed : 2;
+  return { code, precision };
+}
+
+export function formatCurrency(v: number, f: Pick<Field, "options">): string {
+  if (!Number.isFinite(v)) return "";
+  const { code, precision } = currencyOptions(f);
+  const sym = CURRENCY_SYMBOLS[code] ?? "¥";
+  const abs = Math.abs(v);
+  const formatted = abs.toLocaleString("en-US", {
+    minimumFractionDigits: precision,
+    maximumFractionDigits: precision,
+  });
+  return v < 0 ? `-${sym}${formatted}` : `${sym}${formatted}`;
+}
+
+export type ProgressStyle = "bar" | "ring" | "percent";
+
+export function progressStyle(f: Pick<Field, "options">): ProgressStyle {
+  const s = f.options?.[0];
+  return s === "ring" || s === "percent" ? s : "bar";
+}
+
+export function clampProgress(v: number): number {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(100, Math.round(v * 100) / 100));
+}
+
+export function autonumberOptions(f: Pick<Field, "options">): { prefix: string; digits: number } {
+  const prefix = f.options?.[0] ?? "";
+  const rawDigits = f.options?.[1];
+  const parsed = rawDigits !== undefined && rawDigits !== "" ? Number(rawDigits) : 4;
+  const digits = Number.isInteger(parsed) && parsed >= 1 && parsed <= 10 ? parsed : 4;
+  return { prefix, digits };
+}
+
+export function formatAutonumber(v: number, f: Pick<Field, "options">): string {
+  if (!Number.isFinite(v)) return "";
+  const { prefix, digits } = autonumberOptions(f);
+  const n = Math.max(0, Math.trunc(v));
+  return `${prefix}${String(n).padStart(digits, "0")}`;
+}
+
+export type ButtonActionKind = "open_url" | "copy_row" | "webhook";
+
+export function buttonOptions(f: Pick<Field, "options">): { label: string; action: ButtonActionKind; target: string } {
+  const label = f.options?.[0]?.trim() || "执行";
+  const rawAction = f.options?.[1];
+  const action: ButtonActionKind = rawAction === "copy_row" || rawAction === "webhook" ? rawAction : "open_url";
+  const target = f.options?.[2] ?? "";
+  return { label, action, target };
+}
+
+export function isSafeHttpUrl(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === "https:" || parsed.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+export function interpolateButtonTemplate(
+  template: string,
+  rec: BaseRecord,
+  fields: readonly Field[],
+  members: User[],
+): string {
+  return template.replace(/\{([^{}]+)\}/g, (_match, rawName: string) => {
+    const name = rawName.trim().toLowerCase();
+    if (name === "id" || name === "record_id") return String(rec.id);
+    const f = fields.find((item) => item.name.trim().toLowerCase() === name);
+    if (!f) return "";
+    const val = displayValue(rec, f, members);
+    return REGISTRY[f.type].format(val, f, members);
+  });
+}
+
+export interface ParsedLocation {
+  address: string;
+  coords: string;
+  lat?: number;
+  lng?: number;
+}
+
+export function parseLocation(raw: string): ParsedLocation {
+  const text = raw.trim();
+  if (!text) return { address: "", coords: "" };
+  const sepIdx = text.lastIndexOf("|");
+  if (sepIdx >= 0) {
+    const address = text.slice(0, sepIdx).trim();
+    const coordStr = text.slice(sepIdx + 1).trim();
+    const m = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.exec(coordStr);
+    if (m) {
+      const lat = Number(m[1]);
+      const lng = Number(m[2]);
+      if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+        return { address: address || coordStr, coords: `${lat},${lng}`, lat, lng };
+      }
+    }
+  }
+  const bare = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.exec(text);
+  if (bare) {
+    const lat = Number(bare[1]);
+    const lng = Number(bare[2]);
+    if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      return { address: text, coords: `${lat},${lng}`, lat, lng };
+    }
+  }
+  return { address: text, coords: "" };
+}
+
+export function formatLocationValue(address: string, coords: string): string {
+  const a = address.trim();
+  const c = coords.trim();
+  if (!a && !c) return "";
+  if (a && c) return `${a} | ${c}`;
+  return a || c;
+}
+
+export function locationMapUrl(loc: ParsedLocation): string | null {
+  if (loc.lat !== undefined && loc.lng !== undefined) {
+    return `https://www.openstreetmap.org/?mlat=${encodeURIComponent(String(loc.lat))}&mlon=${encodeURIComponent(String(loc.lng))}#map=15/${encodeURIComponent(String(loc.lat))}/${encodeURIComponent(String(loc.lng))}`;
+  }
+  if (loc.address) {
+    return `https://www.openstreetmap.org/search?query=${encodeURIComponent(loc.address)}`;
+  }
+  return null;
+}
+
 export const REGISTRY: Record<FieldType, FieldTypeDef> = {
   text: {
     icon: LetterText,
@@ -257,6 +406,62 @@ export const REGISTRY: Record<FieldType, FieldTypeDef> = {
       return sa.localeCompare(sb, zh);
     },
   },
+  currency: {
+    icon: CircleDollarSign,
+    label: "货币",
+    width: 160,
+    parse: (t) => {
+      const cleaned = t.replace(/HK\$|[¥$€£,\s]/gi, "").trim();
+      if (cleaned === "") return null;
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? n : undefined;
+    },
+    format: (v, f) => (typeof v === "number" && Number.isFinite(v) ? formatCurrency(v, f) : ""),
+    compare: (a, b) => Number(a) - Number(b),
+  },
+  progress: {
+    icon: Gauge,
+    label: "进度",
+    width: 170,
+    parse: (t) => {
+      const cleaned = t.trim().replace(/%$/, "").trim();
+      if (cleaned === "") return null;
+      const n = Number(cleaned);
+      return Number.isFinite(n) && n >= 0 && n <= 100 ? clampProgress(n) : undefined;
+    },
+    format: (v) => (typeof v === "number" && Number.isFinite(v) ? `${Math.round(clampProgress(v))}%` : ""),
+    compare: (a, b) => Number(a) - Number(b),
+  },
+  autonumber: {
+    icon: ListOrdered,
+    label: "自动编号",
+    width: 140,
+    readonly: true,
+    parse: () => undefined,
+    format: (v, f) => (typeof v === "number" && Number.isFinite(v) ? formatAutonumber(v, f) : ""),
+    compare: (a, b) => Number(a) - Number(b),
+  },
+  button: {
+    icon: MousePointerClick,
+    label: "按钮",
+    width: 140,
+    readonly: true,
+    parse: () => undefined,
+    format: (_v, f) => buttonOptions(f).label,
+    compare: () => 0,
+  },
+  location: {
+    icon: MapPin,
+    label: "地理位置",
+    width: 220,
+    parse: (t) => {
+      const trimmed = t.trim();
+      if (trimmed === "") return null;
+      return [...trimmed].length <= 500 ? trimmed : undefined;
+    },
+    format: (v) => (typeof v === "string" ? v : ""),
+    compare: (a, b) => String(a).localeCompare(String(b), zh),
+  },
 };
 
 export const FIELD_TYPES = Object.keys(REGISTRY) as FieldType[];
@@ -325,6 +530,11 @@ export function displayValue(rec: BaseRecord | undefined, f: Field | undefined, 
       if (aggregated === null || aggregated === undefined) return undefined;
       return [String(aggregated)];
     }
+    case "autonumber": {
+      const raw = rec.cells[f.id];
+      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+      return rec.id;
+    }
     default:
       return rec.cells[f.id];
   }
@@ -368,6 +578,10 @@ export function recordTitle(record: BaseRecord | undefined, fields: Field[], mem
   }
   if (field.type === "created_by") return memberName(typeof value === "number" ? value : undefined, members);
   if (field.type === "created_at" || field.type === "modified_at") return formatTime(typeof value === "string" ? value : undefined);
+  if (field.type === "currency" && typeof value === "number") return formatCurrency(value, field);
+  if (field.type === "progress" && typeof value === "number") return `${Math.round(clampProgress(value))}%`;
+  if (field.type === "autonumber" && typeof value === "number") return formatAutonumber(value, field);
+  if (field.type === "location" && typeof value === "string") return parseLocation(value).address || value;
   if (Array.isArray(value)) return value.map((item) => typeof item === "string" ? item : typeof item === "object" && item && "name" in item ? String(item.name) : "").filter(Boolean).join(", ");
   return String(value);
 }
@@ -463,6 +677,11 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
       }
       return items.length ? items.map((x) => String(x)).join(",") : null;
     }
+    case "autonumber": {
+      const raw = rec.cells[f.id];
+      if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+      return rec.id;
+    }
     default: {
       const v = rec.cells[f.id];
       if (v === undefined) return null;
@@ -474,4 +693,4 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
 
 import { evalFormula, FormulaError, formulaRefs, type FormulaEnv, type FormulaValue } from "./formula";
 import { aggregateRollupValues, getLookupRollup } from "./rollup";
-import { ArrowLeftRight, CalendarDays, CircleChevronDown, CircleEllipsis, Clock3, FunctionSquare, Hash, Link2, Mail, Paperclip, PenLine, Phone, Search, SquareCheck, Star, LetterText, User as UserIcon } from "lucide-react";
+import { ArrowLeftRight, CalendarDays, CircleChevronDown, CircleDollarSign, CircleEllipsis, Clock3, FunctionSquare, Gauge, Hash, Link2, ListOrdered, Mail, MapPin, MousePointerClick, Paperclip, PenLine, Phone, Search, SquareCheck, Star, LetterText, User as UserIcon } from "lucide-react";

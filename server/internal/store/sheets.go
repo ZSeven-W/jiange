@@ -113,6 +113,8 @@ type SheetWorksheet struct {
 	ProtectedRanges    []SheetProtectedRange    `json:"protectedRanges"`
 	Charts             []SheetChart             `json:"charts"`
 	PivotTables        []SheetPivotTable        `json:"pivotTables"`
+	Sparklines         []SheetSparkline         `json:"sparklines"`
+	OutlineGroups      []SheetOutlineGroup      `json:"outlineGroups"`
 	Revision           int64                    `json:"revision"`
 	Rows               []SheetAxis              `json:"rows"`
 	Columns            []SheetAxis              `json:"columns"`
@@ -181,6 +183,8 @@ type WorksheetPatch struct {
 	ProtectedRanges    *[]SheetProtectedRange    `json:"protectedRanges,omitempty"`
 	Charts             *[]SheetChart             `json:"charts,omitempty"`
 	PivotTables        *[]SheetPivotTable        `json:"pivotTables,omitempty"`
+	Sparklines         *[]SheetSparkline         `json:"sparklines,omitempty"`
+	OutlineGroups      *[]SheetOutlineGroup      `json:"outlineGroups,omitempty"`
 	ExpectedRevision   *int64                    `json:"expectedRevision,omitempty"`
 }
 
@@ -638,6 +642,8 @@ func cloneSheetWorksheet(w SheetWorksheet) SheetWorksheet {
 	w.ProtectedRanges = cloneSheetProtectedRanges(w.ProtectedRanges)
 	w.Charts = cloneSheetCharts(w.Charts)
 	w.PivotTables = cloneSheetPivotTables(w.PivotTables)
+	w.Sparklines = cloneSheetSparklines(w.Sparklines)
+	w.OutlineGroups = cloneSheetOutlineGroups(w.OutlineGroups)
 	cells := make([]SheetCell, len(w.Cells))
 	for i, c := range w.Cells {
 		c.Style = cloneSheetStyle(c.Style)

@@ -26,12 +26,23 @@ export interface SlideShapeAnimation {
   trigger?: SlideShapeAnimationTrigger;
 }
 
+export interface SlideMasterMeta {
+  brandName?: string;
+  footerText?: string;
+  showPageNumber?: boolean;
+  logoUrl?: string;
+  accentColor?: string;
+  fontFamily?: string;
+  headerRule?: boolean;
+}
+
 export interface SlidePageMeta {
   titleStyle?: SlideFieldTextStyleMeta;
   bodyStyle?: SlideFieldTextStyleMeta;
   transition?: "none" | "fade" | "push" | "wipe";
   shapeGroups?: Record<string, string[]>;
   animations?: Record<string, SlideShapeAnimation>;
+  master?: SlideMasterMeta;
 }
 
 export type SlidesPage = SdkSlidesPage & {
@@ -218,7 +229,12 @@ export type FieldType =
   | "rating"
   | "formula"
   | "link"
-  | "lookup";
+  | "lookup"
+  | "currency"
+  | "progress"
+  | "autonumber"
+  | "button"
+  | "location";
 export interface BaseTable {
   id: number;
   baseId: number;
@@ -308,6 +324,10 @@ export interface ViewConfig {
   filters?: { conj: "and" | "or"; rules: FilterRule[] };
   sorts?: { f: number; asc: boolean }[];
   group?: number;
+  /** Multi-level grouping field IDs in priority order (first matches legacy `group`). */
+  groups?: number[];
+  /** Self-link field ID used by hierarchy view to build parent-child trees. */
+  parentField?: number;
   /** 日历/甘特视图可选结束时间字段 ID */
   endField?: number;
   hidden?: number[];
@@ -354,7 +374,7 @@ export interface View {
   baseId: number;
   tableId?: number;
   ownerId?: number;
-  type: "grid" | "kanban" | "gallery" | "calendar" | "form" | "gantt";
+  type: "grid" | "kanban" | "gallery" | "calendar" | "form" | "gantt" | "hierarchy";
   name: string;
   config: ViewConfig;
   pos: number;
@@ -1178,7 +1198,7 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
-const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "line", "line-arrow", "line-arrow-filled", "line-dot", "line-double-arrow", "text", "image", "table", "chart"]);
+const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "line", "line-arrow", "line-arrow-filled", "line-dot", "line-double-arrow", "text", "image", "table", "chart", "video", "audio"]);
 export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "5", "X-Jiange-User-Id": String(userId) }).then((r) => {
@@ -1201,7 +1221,7 @@ export const slidesApi = {
   reorder: (deckId: number, userId: number, expected: { id: number; pos: number }[], pageId: number, to: number) => request<{ positions: unknown }>("POST", `/api/slides/${deckId}/pages/reorder`, { expected, pageId, to }, undefined, { "X-Jiange-User-Id": String(userId) }),
   patchPageMeta: (deckId: number, pageId: number, userId: number, meta: SlidePageMeta) =>
     request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pageId}/meta`, { meta }, undefined, { "X-Jiange-User-Id": String(userId) }),
-  batchPagesMeta: (deckId: number, userId: number, meta: Partial<Pick<SlidePageMeta, "titleStyle" | "bodyStyle" | "transition">>) =>
+  batchPagesMeta: (deckId: number, userId: number, meta: Partial<Pick<SlidePageMeta, "titleStyle" | "bodyStyle" | "transition" | "master">>) =>
     request<{ pages: SlidesPage[] }>("POST", `/api/slides/${deckId}/pages-meta`, { meta }, undefined, { "X-Jiange-User-Id": String(userId) }),
   uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {
     const data = new FormData(); data.append("file", file);
@@ -1387,6 +1407,30 @@ export interface SheetPivotTable {
   destCol?: number;
 }
 
+export type SheetSparklineType = "line" | "bar" | "winloss";
+
+export interface SheetSparkline {
+  id: string;
+  row: number;
+  col: number;
+  sourceTop: number;
+  sourceLeft: number;
+  sourceBottom: number;
+  sourceRight: number;
+  type: SheetSparklineType;
+  color?: string;
+  negativeColor?: string;
+  showMarkers?: boolean;
+}
+
+export interface SheetOutlineGroup {
+  id: string;
+  axis: "row" | "col";
+  start: number;
+  end: number;
+  collapsed?: boolean;
+}
+
 export interface SheetWorksheet {
   id: number;
   nodeId: number;
@@ -1401,6 +1445,8 @@ export interface SheetWorksheet {
   protectedRanges?: SheetProtectedRange[];
   charts?: SheetChart[];
   pivotTables?: SheetPivotTable[];
+  sparklines?: SheetSparkline[];
+  outlineGroups?: SheetOutlineGroup[];
   revision: number;
   rows: SheetAxis[];
   columns: SheetAxis[];
@@ -1516,6 +1562,8 @@ export interface WorksheetPatch {
   protectedRanges?: SheetProtectedRange[];
   charts?: SheetChart[];
   pivotTables?: SheetPivotTable[];
+  sparklines?: SheetSparkline[];
+  outlineGroups?: SheetOutlineGroup[];
   expectedRevision?: number;
 }
 

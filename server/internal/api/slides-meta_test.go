@@ -275,4 +275,19 @@ func TestSlidesMetaAPI(t *testing.T) {
 	if len(viewerPages) != 3 || len(viewerPages[0].Meta) == 0 {
 		t.Fatalf("viewer should see cloud meta: %+v", viewerPages)
 	}
+
+	// Master Brand Kit API test: apply across all pages and reject unsafe master logo URL.
+	if r, data := doReq(owner, "POST", batchPath, ownerID, `{"meta":{"master":{"logoUrl":"javascript:alert(1)"}}}`); r.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unsafe batch master logoUrl: %d %s want 400", r.StatusCode, data)
+	}
+	if r, data := doReq(owner, "POST", batchPath, ownerID, `{"meta":{"master":{"brandName":"Jiange Brand","footerText":"2026 Review","showPageNumber":true,"accentColor":"#3370ff","fontFamily":"sans","headerRule":true}}}`); r.StatusCode != http.StatusOK {
+		t.Fatalf("batch master apply: %d %s", r.StatusCode, data)
+	}
+	pagesAfterMaster, _ := listPages(owner)
+	for _, pg := range pagesAfterMaster {
+		var pm store.SlidePageMeta
+		if err := json.Unmarshal(pg.Meta, &pm); err != nil || pm.Master == nil || *pm.Master.BrandName != "Jiange Brand" || !*pm.Master.HeaderRule {
+			t.Fatalf("page %d missing applied master: %s", pg.ID, pg.Meta)
+		}
+	}
 }

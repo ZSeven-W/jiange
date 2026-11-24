@@ -34,7 +34,7 @@ type viewInput struct {
 	Pos        *float64         `json:"pos"`
 }
 
-var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true, "gantt": true}
+var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true, "gantt": true, "hierarchy": true}
 
 func viewPermissionsActive(p *btquery.ViewPermissions) bool {
 	if p == nil {
@@ -127,8 +127,13 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 	if in.TableID != nil && *in.TableID > 0 {
 		v.TableID = *in.TableID
 	}
-	if in.Type != nil && *in.Type == "kanban" {
-		v.Name = "看板视图"
+	if in.Type != nil {
+		switch *in.Type {
+		case "kanban":
+			v.Name = "看板视图"
+		case "hierarchy":
+			v.Name = "层级视图"
+		}
 	}
 	if !in.apply(w, &v) {
 		return
@@ -562,7 +567,7 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 	unsafe := map[int64]bool{}
 	for _, field := range read.fields {
 		switch field.Type {
-		case "link", "lookup", "formula", "created_by", "created_at", "modified_at":
+		case "link", "lookup", "formula", "created_by", "created_at", "modified_at", "button":
 			unsafe[field.ID] = true
 		}
 	}

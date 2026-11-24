@@ -272,4 +272,28 @@ func TestSheetAPILifecycleAndSecurity(t *testing.T) {
 	} else {
 		r.Body.Close()
 	}
+
+	// Patch sparklines & outlineGroups via HTTP API and verify round-trip.
+	wsIDStr := strconv64(ws1.ID)
+	patchRes := sheetReq(t, c1, http.MethodPatch, ts.URL+"/api/sheets/"+idStr+"/worksheets/"+wsIDStr, uid1, "1", map[string]any{
+		"sparklines": []map[string]any{
+			{"id": "sp-api-1", "row": 0, "col": 4, "sourceTop": 0, "sourceLeft": 0, "sourceBottom": 0, "sourceRight": 3, "type": "bar", "color": "#3370FF"},
+		},
+		"outlineGroups": []map[string]any{
+			{"id": "og-api-1", "axis": "row", "start": 1, "end": 4, "collapsed": true},
+		},
+	})
+	var patchBody struct {
+		Worksheet store.SheetWorksheet `json:"worksheet"`
+	}
+	if err = json.NewDecoder(patchRes.Body).Decode(&patchBody); err != nil {
+		t.Fatal(err)
+	}
+	patchRes.Body.Close()
+	if patchRes.StatusCode != http.StatusOK || len(patchBody.Worksheet.Sparklines) != 1 || len(patchBody.Worksheet.OutlineGroups) != 1 {
+		t.Fatalf("patch sparklines/outlineGroups: status=%d ws=%+v", patchRes.StatusCode, patchBody.Worksheet)
+	}
+	if patchBody.Worksheet.Sparklines[0].Type != "bar" || !patchBody.Worksheet.OutlineGroups[0].Collapsed {
+		t.Fatalf("unexpected patched sparkline/outlineGroup: %+v %+v", patchBody.Worksheet.Sparklines, patchBody.Worksheet.OutlineGroups)
+	}
 }

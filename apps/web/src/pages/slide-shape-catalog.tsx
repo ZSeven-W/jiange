@@ -1,6 +1,6 @@
 import type { SlideShape } from "@/lib/api";
 
-export type BasicSlideShape = Exclude<SlideShape["kind"], "text" | "image" | "table" | "chart">;
+export type BasicSlideShape = Exclude<SlideShape["kind"], "text" | "image" | "table" | "chart" | "video" | "audio">;
 export const SLIDE_SHAPES: { kind: BasicSlideShape; label: string; group: "基础" | "线条" | "箭头" }[] = [
   { kind: "rectangle", label: "矩形", group: "基础" }, { kind: "rounded-rectangle", label: "圆角矩形", group: "基础" },
   { kind: "parallelogram", label: "平行四边形", group: "基础" }, { kind: "ellipse", label: "椭圆", group: "基础" },

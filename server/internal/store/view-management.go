@@ -78,7 +78,7 @@ func guardedViewValid(role string, callerID int64, v View, fields []Field) error
 	if v.Name == "" || !utf8.ValidString(v.Name) || utf8.RuneCountInString(v.Name) > 100 {
 		return ErrConflict
 	}
-	if v.Type != "grid" && v.Type != "kanban" && v.Type != "gallery" && v.Type != "calendar" && v.Type != "form" && v.Type != "gantt" {
+	if v.Type != "grid" && v.Type != "kanban" && v.Type != "gallery" && v.Type != "calendar" && v.Type != "form" && v.Type != "gantt" && v.Type != "hierarchy" {
 		return ErrConflict
 	}
 	var cfg btquery.Config

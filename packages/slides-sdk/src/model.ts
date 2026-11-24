@@ -19,7 +19,16 @@ export type SlideShapeKind =
   | "text"
   | "image"
   | "table"
-  | "chart";
+  | "chart"
+  | "video"
+  | "audio";
+
+export interface SlideImageCrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
 
 export interface SlideTextRun {
   text: string;
@@ -101,6 +110,11 @@ export type SlideShape = {
   strokeColor?: string;
   strokeWidth?: number;
   opacity?: number;
+  mediaUrl?: string;
+  posterUrl?: string;
+  autoplay?: boolean;
+  loop?: boolean;
+  crop?: SlideImageCrop;
 };
 
 export type SlideLayout = "" | "title" | "blank" | "blank-title";

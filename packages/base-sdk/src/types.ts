@@ -16,7 +16,12 @@ export type FieldType =
   | "rating"
   | "formula"
   | "link"
-  | "lookup";
+  | "lookup"
+  | "currency"
+  | "progress"
+  | "autonumber"
+  | "button"
+  | "location";
 
 export interface BaseTable {
   id: number;
@@ -99,6 +104,8 @@ export interface ViewConfig {
   filters?: { conj: "and" | "or"; rules: FilterRule[] };
   sorts?: { f: number; asc: boolean }[];
   group?: number;
+  groups?: number[];
+  parentField?: number;
   endField?: number;
   hidden?: number[];
   locked?: boolean;
@@ -109,7 +116,7 @@ export interface ViewConfig {
   card?: { fields?: number[]; cover?: number | null };
 }
 
-export type BaseViewType = "grid" | "kanban" | "gallery" | "calendar" | "form" | "gantt";
+export type BaseViewType = "grid" | "kanban" | "gallery" | "calendar" | "form" | "gantt" | "hierarchy";
 
 export interface BaseView {
   id: number;

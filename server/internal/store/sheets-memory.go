@@ -44,6 +44,8 @@ type memWorksheet struct {
 	protectedRanges    []SheetProtectedRange
 	charts             []SheetChart
 	pivotTables        []SheetPivotTable
+	sparklines         []SheetSparkline
+	outlineGroups      []SheetOutlineGroup
 	revision           int64
 	rows               []SheetAxis
 	columns            []SheetAxis
@@ -144,6 +146,8 @@ func (w *memWorksheet) toModel() SheetWorksheet {
 		ProtectedRanges:    w.protectedRanges,
 		Charts:             w.charts,
 		PivotTables:        w.pivotTables,
+		Sparklines:         w.sparklines,
+		OutlineGroups:      w.outlineGroups,
 		Revision:           w.revision,
 		Rows:               w.rows,
 		Columns:            w.columns,
@@ -611,6 +615,22 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 			return SheetWorksheet{}, 0, ErrConflict
 		}
 	}
+	nextSparklines := cloneSheetSparklines(ws.sparklines)
+	if patch.Sparklines != nil {
+		var ok bool
+		nextSparklines, ok = validateAndNormalizeSheetSparklines(*patch.Sparklines, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
+	nextOutlineGroups := cloneSheetOutlineGroups(ws.outlineGroups)
+	if patch.OutlineGroups != nil {
+		var ok bool
+		nextOutlineGroups, ok = validateAndNormalizeSheetOutlineGroups(*patch.OutlineGroups, len(ws.rows), len(ws.columns))
+		if !ok {
+			return SheetWorksheet{}, 0, ErrConflict
+		}
+	}
 	if err := driveMemoryEnd(ctx, g, expires); err != nil {
 		return SheetWorksheet{}, 0, err
 	}
@@ -637,6 +657,8 @@ func (m *Memory) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, nodeID
 	ws.protectedRanges = nextProtected
 	ws.charts = nextCharts
 	ws.pivotTables = nextPivots
+	ws.sparklines = nextSparklines
+	ws.outlineGroups = nextOutlineGroups
 	ws.revision++
 	wb.revision++
 	d.meta.UpdatedAt = time.Now()
@@ -724,6 +746,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.protectedRanges = adjustSheetProtectedInsert(ws.protectedRanges, "row", op.Index, count)
 		ws.charts = adjustSheetChartsInsert(ws.charts, "row", op.Index, count)
 		ws.pivotTables = adjustSheetPivotsInsert(ws.pivotTables, ws.id, "row", op.Index, count)
+		ws.sparklines = adjustSheetSparklinesInsert(ws.sparklines, "row", op.Index, count)
+		ws.outlineGroups = adjustSheetOutlineGroupsInsert(ws.outlineGroups, "row", op.Index, count)
 	case "delete_row":
 		if count < 1 || count > 50 || op.Index < 0 || op.Index+count > len(ws.rows) || len(ws.rows)-count < 1 {
 			return SheetWorksheet{}, 0, ErrConflict
@@ -760,6 +784,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.protectedRanges = adjustSheetProtectedDelete(ws.protectedRanges, "row", op.Index, count)
 		ws.charts = adjustSheetChartsDelete(ws.charts, "row", op.Index, count)
 		ws.pivotTables = adjustSheetPivotsDelete(ws.pivotTables, ws.id, "row", op.Index, count)
+		ws.sparklines = adjustSheetSparklinesDelete(ws.sparklines, "row", op.Index, count)
+		ws.outlineGroups = adjustSheetOutlineGroupsDelete(ws.outlineGroups, "row", op.Index, count)
 		if ws.frozenRows > len(ws.rows)-1 {
 			ws.frozenRows = max(0, len(ws.rows)-1)
 		}
@@ -798,6 +824,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.protectedRanges = adjustSheetProtectedInsert(ws.protectedRanges, "col", op.Index, count)
 		ws.charts = adjustSheetChartsInsert(ws.charts, "col", op.Index, count)
 		ws.pivotTables = adjustSheetPivotsInsert(ws.pivotTables, ws.id, "col", op.Index, count)
+		ws.sparklines = adjustSheetSparklinesInsert(ws.sparklines, "col", op.Index, count)
+		ws.outlineGroups = adjustSheetOutlineGroupsInsert(ws.outlineGroups, "col", op.Index, count)
 	case "delete_col":
 		if count < 1 || count > 50 || op.Index < 0 || op.Index+count > len(ws.columns) || len(ws.columns)-count < 1 {
 			return SheetWorksheet{}, 0, ErrConflict
@@ -834,6 +862,8 @@ func (m *Memory) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, wo
 		ws.protectedRanges = adjustSheetProtectedDelete(ws.protectedRanges, "col", op.Index, count)
 		ws.charts = adjustSheetChartsDelete(ws.charts, "col", op.Index, count)
 		ws.pivotTables = adjustSheetPivotsDelete(ws.pivotTables, ws.id, "col", op.Index, count)
+		ws.sparklines = adjustSheetSparklinesDelete(ws.sparklines, "col", op.Index, count)
+		ws.outlineGroups = adjustSheetOutlineGroupsDelete(ws.outlineGroups, "col", op.Index, count)
 		if ws.frozenCols > len(ws.columns)-1 {
 			ws.frozenCols = max(0, len(ws.columns)-1)
 		}
@@ -1031,6 +1061,8 @@ func (m *Memory) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (Do
 		dstWS.protectedRanges = cloneSheetProtectedRanges(srcWS.protectedRanges)
 		dstWS.charts = cloneSheetCharts(srcWS.charts)
 		dstWS.pivotTables = cloneSheetPivotTables(srcWS.pivotTables)
+		dstWS.sparklines = cloneSheetSparklines(srcWS.sparklines)
+		dstWS.outlineGroups = cloneSheetOutlineGroups(srcWS.outlineGroups)
 		for k, cell := range srcWS.cells {
 			if cell.Raw == "" && cell.Style == (SheetCellStyle{}) {
 				continue

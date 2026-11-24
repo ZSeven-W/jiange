@@ -74,11 +74,13 @@ type GanttDependency struct {
 
 // Config is what a saved view keeps in bt_views.config.
 type Config struct {
-	Filters  *Filters `json:"filters,omitempty"`
-	Sorts    []Sort   `json:"sorts,omitempty"`
-	Group    *int64   `json:"group,omitempty"`
-	EndField *int64   `json:"endField,omitempty"`
-	Hidden   []int64  `json:"hidden,omitempty"`
+	Filters     *Filters `json:"filters,omitempty"`
+	Sorts       []Sort   `json:"sorts,omitempty"`
+	Group       *int64   `json:"group,omitempty"`
+	Groups      []int64  `json:"groups,omitempty"`
+	ParentField int64    `json:"parentField,omitempty"`
+	EndField    *int64   `json:"endField,omitempty"`
+	Hidden      []int64  `json:"hidden,omitempty"`
 	// Locked marks an admin data-permission view: its filters act as a mandatory
 	// row predicate and its hidden fields are stripped for non-manage roles.
 	Locked bool `json:"locked,omitempty"`
@@ -94,6 +96,50 @@ type Config struct {
 	FieldWidths map[string]int `json:"fieldWidths,omitempty"`
 	// FieldStats persists per-column summary stat modes (fieldId -> stat key).
 	FieldStats map[string]string `json:"fieldStats,omitempty"`
+}
+
+// GroupFields returns the normalized ordered grouping field IDs (up to 3 levels),
+// staying backwards-compatible with legacy single-field Config.Group.
+func (c Config) GroupFields() []int64 {
+	if len(c.Groups) > 0 {
+		out := make([]int64, 0, len(c.Groups))
+		seen := make(map[int64]bool, len(c.Groups))
+		for _, id := range c.Groups {
+			if id > 0 && !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+				if len(out) == 3 {
+					break
+				}
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	if c.Group != nil && *c.Group > 0 {
+		return []int64{*c.Group}
+	}
+	return nil
+}
+
+// NormalizeGroups deduplicates Config.Groups (max 3) and synchronizes legacy
+// Config.Group with Groups[0] so older clients remain fully compatible.
+func (c *Config) NormalizeGroups() {
+	if c == nil {
+		return
+	}
+	fields := c.GroupFields()
+	if len(fields) == 0 {
+		c.Group = nil
+		c.Groups = nil
+		return
+	}
+	first := fields[0]
+	c.Group = &first
+	if len(c.Groups) > 0 {
+		c.Groups = fields
+	}
 }
 
 var ops = map[string]bool{
@@ -144,7 +190,7 @@ func validateFiltersMap(byID map[int64]FieldSpec, filters Filters) error {
 		if !ok {
 			return fmt.Errorf("unknown field %d", r.F)
 		}
-		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+		if numericField(f.Type) || f.Type == "person" {
 			switch r.Op {
 			case "is", "is_not", "gt", "gte", "lt", "lte":
 				value, ok := toFloat(r.V)
@@ -282,6 +328,29 @@ func Validate(fields []FieldSpec, cfg Config) error {
 			return fmt.Errorf("unknown field %d", *cfg.Group)
 		}
 	}
+	if len(cfg.Groups) > 3 {
+		return fmt.Errorf("too many grouping levels (max 3)")
+	}
+	if len(cfg.Groups) > 0 {
+		seenGroups := make(map[int64]bool, len(cfg.Groups))
+		for _, id := range cfg.Groups {
+			if _, ok := byID[id]; !ok {
+				return fmt.Errorf("unknown field %d", id)
+			}
+			if seenGroups[id] {
+				return fmt.Errorf("duplicate group field %d", id)
+			}
+			seenGroups[id] = true
+		}
+	}
+	if cfg.ParentField < 0 {
+		return fmt.Errorf("invalid parent field %d", cfg.ParentField)
+	}
+	if cfg.ParentField > 0 {
+		if _, ok := byID[cfg.ParentField]; !ok {
+			return fmt.Errorf("unknown field %d", cfg.ParentField)
+		}
+	}
 	if cfg.EndField != nil {
 		if _, ok := byID[*cfg.EndField]; !ok {
 			return fmt.Errorf("unknown field %d", *cfg.EndField)
@@ -401,20 +470,20 @@ func ValidateLocked(fields []FieldSpec, cfg Config) error {
 		field := byID[rule.F]
 		if rule.Op == "empty" || rule.Op == "not_empty" {
 			switch field.Type {
-			case "text", "select", "date", "url", "phone", "email", "number", "rating", "person", "checkbox", "multi_select", "attachment":
+			case "text", "select", "date", "url", "phone", "email", "location", "number", "rating", "currency", "progress", "autonumber", "person", "checkbox", "multi_select", "attachment":
 				continue
 			}
 			return fmt.Errorf("locked filter on %s is not supported", field.Type)
 		}
 		switch field.Type {
-		case "text", "select", "date", "url", "phone", "email":
+		case "text", "select", "date", "url", "phone", "email", "location":
 			if rule.Op == "checked" || rule.Op == "unchecked" {
 				return fmt.Errorf("operator %s is not supported for %s in a locked filter", rule.Op, field.Type)
 			}
 			if _, ok := rule.V.(string); !ok {
 				return fmt.Errorf("locked filter value for %s must be text", field.Type)
 			}
-		case "number", "rating", "person":
+		case "number", "rating", "currency", "progress", "autonumber", "person":
 			switch rule.Op {
 			case "is", "is_not", "gt", "gte", "lt", "lte":
 			default:
@@ -484,7 +553,15 @@ func key(f FieldSpec) string { return strconv.FormatInt(f.ID, 10) }
 
 func stringField(t string) bool {
 	switch t {
-	case "text", "select", "date", "url", "phone", "email":
+	case "text", "select", "date", "url", "phone", "email", "location":
+		return true
+	}
+	return false
+}
+
+func numericField(t string) bool {
+	switch t {
+	case "number", "rating", "currency", "progress", "autonumber":
 		return true
 	}
 	return false
@@ -521,7 +598,7 @@ func ruleSQL(f FieldSpec, r Rule, next func(any) string) string {
 		}
 		return fmt.Sprintf("(%s IS NULL OR %s)", cell, pred)
 	case "is":
-		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+		if numericField(f.Type) || f.Type == "person" {
 			value, _ := toFloat(r.V)
 			return fmt.Sprintf("(jsonb_typeof(cells -> '%s') = 'number' AND (%s)::float8 = (%s)::float8)", key(f), cell, next(value))
 		}
@@ -538,7 +615,7 @@ func ruleSQL(f FieldSpec, r Rule, next func(any) string) string {
 		}
 		return pred
 	case "is_not":
-		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+		if numericField(f.Type) || f.Type == "person" {
 			value, _ := toFloat(r.V)
 			return fmt.Sprintf("(%s IS NULL OR (jsonb_typeof(cells -> '%s') = 'number' AND (%s)::float8 <> (%s)::float8))", cell, key(f), cell, next(value))
 		}
@@ -562,7 +639,7 @@ func ruleSQL(f FieldSpec, r Rule, next func(any) string) string {
 		return fmt.Sprintf("(%s IS NULL OR (%s AND %s = 'false'))", cell, validBool, cell)
 	case "gt", "gte", "lt", "lte":
 		op := map[string]string{"gt": ">", "gte": ">=", "lt": "<", "lte": "<="}[r.Op]
-		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+		if numericField(f.Type) || f.Type == "person" {
 			// compare numerically only when the cell really is a json number
 			value, _ := toFloat(r.V)
 			return fmt.Sprintf("(jsonb_typeof(cells -> '%s') = 'number' AND (%s)::float8 %s (%s)::float8)",
@@ -584,7 +661,7 @@ func sortSQL(f FieldSpec, asc bool) string {
 	}
 	cell := "(cells ->> '" + key(f) + "')"
 	switch f.Type {
-	case "number":
+	case "number", "rating", "currency", "progress", "autonumber":
 		return fmt.Sprintf("(%s)::float8 %s NULLS LAST", cell, dir)
 	case "checkbox":
 		return fmt.Sprintf("(%s = 'true') %s NULLS LAST", cell, dir)
@@ -773,14 +850,14 @@ func matchRule(field FieldSpec, r Rule, raw json.RawMessage) bool {
 	case "not_contains":
 		return !ok || !strings.Contains(s, toString(r.V))
 	case "is":
-		if field.Type == "number" || field.Type == "rating" || field.Type == "person" {
+		if numericField(field.Type) || field.Type == "person" {
 			a, aok := v.(float64)
 			b, bok := toFloat(r.V)
 			return ok && aok && bok && a == b
 		}
 		return ok && s == toString(r.V)
 	case "is_not":
-		if field.Type == "number" || field.Type == "rating" || field.Type == "person" {
+		if numericField(field.Type) || field.Type == "person" {
 			if !ok {
 				return true
 			}
@@ -797,7 +874,7 @@ func matchRule(field FieldSpec, r Rule, raw json.RawMessage) bool {
 		if !ok {
 			return false
 		}
-		if field.Type == "number" || field.Type == "rating" || field.Type == "person" {
+		if numericField(field.Type) || field.Type == "person" {
 			a, aok := v.(float64)
 			b, bok := toFloat(r.V)
 			if aok && bok {
@@ -903,14 +980,24 @@ func SortIndexes(fields []FieldSpec, cfg Config, n int, cellsOf func(i int) map[
 			sj, _ := cellText(cj, s.F)
 			var c int
 			switch f.Type {
-			case "number":
+			case "number", "rating", "currency", "progress", "autonumber":
 				x, _ := toFloat(rawToAny(ci[key(f)]))
 				y, _ := toFloat(rawToAny(cj[key(f)]))
-				c = int(x - y)
+				switch {
+				case x < y:
+					c = -1
+				case x > y:
+					c = 1
+				}
 			case "person", "created_by":
 				x, _ := toFloat(personFirstID(ci[key(f)]))
 				y, _ := toFloat(personFirstID(cj[key(f)]))
-				c = int(x - y)
+				switch {
+				case x < y:
+					c = -1
+				case x > y:
+					c = 1
+				}
 			case "checkbox":
 				c = int(btoi(si == "true") - btoi(sj == "true"))
 			case "select":

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ZSeven-W/jiange/server/collab"
 )
@@ -14,6 +15,9 @@ import (
 var publicTextColor = regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
 var publicCharID = regexp.MustCompile(`^(0|[1-9][0-9]*):(0|[1-9][0-9]*)$`)
 var publicShareLink = regexp.MustCompile(`^#/(s|p)/[A-Za-z0-9_-]{1,256}$`)
+var publicInternalFileURL = regexp.MustCompile(`^/api/files/[1-9][0-9]*(\?version=[1-9][0-9]*)?$`)
+var publicPollVoteKey = regexp.MustCompile(`^vote\.[A-Za-z0-9_-]{1,64}$`)
+var publicShortID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 
 // publicCommonBlock projects properties used by public and saved-version
 // renderers, including the semantic projection of flowchart registers.
@@ -83,8 +87,45 @@ func publicCommonBlock(block collab.BlockView, children map[string]bool, columnC
 		if size, err := strconv.ParseUint(props["size"], 10, 53); err == nil {
 			clean["size"] = strconv.FormatUint(size, 10)
 		}
-	case "video":
-		keep("url", "name")
+	case "audio", "video":
+		if publicSafeMediaURL(props["url"]) {
+			clean["url"] = props["url"]
+		}
+		if id := publicFileID(props["fileId"]); id != "" {
+			clean["fileId"] = id
+		}
+		keep("name", "title")
+	case "poll":
+		keep("question")
+		if props["multiple"] == "true" || props["multiple"] == "false" {
+			clean["multiple"] = props["multiple"]
+		}
+		var validOpts map[string]bool
+		if opts, ids := publicPollOptions(props["options"]); opts != "" {
+			clean["options"] = opts
+			validOpts = ids
+		}
+		for key, val := range props {
+			if !publicPollVoteKey.MatchString(key) {
+				continue
+			}
+			if sanitized := publicPollVoteValue(val, validOpts); sanitized != "" {
+				clean[key] = sanitized
+			}
+		}
+	case "countdown":
+		keep("title")
+		if targetAt := publicCountdownTarget(props["targetAt"]); targetAt != "" {
+			clean["targetAt"] = targetAt
+		}
+		switch props["theme"] {
+		case "blue", "orange", "green", "purple":
+			clean["theme"] = props["theme"]
+		}
+	case "tabs":
+		if tabs := publicTabsJSON(props["tabs"]); tabs != "" {
+			clean["tabs"] = tabs
+		}
 	case "bookmark":
 		keep("url", "name", "title")
 	case "embed":
@@ -108,7 +149,7 @@ func publicCommonBlock(block collab.BlockView, children map[string]bool, columnC
 	}
 	block.Props = clean
 	switch block.Type {
-	case "image", "file", "video", "bookmark", "flowchart", "divider", "columns", "embed", "reminder", "synced", "subpages":
+	case "image", "file", "video", "audio", "poll", "countdown", "tabs", "bookmark", "flowchart", "divider", "columns", "embed", "reminder", "synced", "subpages":
 		// These renderers do not display the block's text, which may be left
 		// over after a type conversion. Child blocks are handled separately.
 		block.Spans = []collab.Span{}
@@ -223,5 +264,118 @@ func publicColumnWidths(raw string, children map[string]bool) string {
 		return ""
 	}
 	data, _ := json.Marshal(visible)
+	return string(data)
+}
+
+func publicSafeMediaURL(value string) bool {
+	if value == "" {
+		return false
+	}
+	return publicInternalFileURL.MatchString(value) || publicSafeLink(value)
+}
+
+type publicPollOption struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+func publicPollOptions(raw string) (string, map[string]bool) {
+	if raw == "" || len(raw) > 64000 {
+		return "", nil
+	}
+	var items []publicPollOption
+	if json.Unmarshal([]byte(raw), &items) != nil || len(items) == 0 {
+		return "", nil
+	}
+	seen := make(map[string]bool, len(items))
+	out := make([]publicPollOption, 0, len(items))
+	for i, item := range items {
+		if len(out) >= 30 {
+			break
+		}
+		id := item.ID
+		if !publicShortID.MatchString(id) {
+			id = "opt-" + strconv.Itoa(i+1)
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, publicPollOption{ID: id, Text: item.Text})
+	}
+	if len(out) == 0 {
+		return "", nil
+	}
+	data, _ := json.Marshal(out)
+	return string(data), seen
+}
+
+func publicPollVoteValue(raw string, validIDs map[string]bool) string {
+	if raw == "" || len(raw) > 2048 {
+		return ""
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		id := strings.TrimSpace(part)
+		if id == "" || !publicShortID.MatchString(id) || seen[id] {
+			continue
+		}
+		if len(validIDs) > 0 && !validIDs[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return strings.Join(out, ",")
+}
+
+func publicCountdownTarget(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || len(trimmed) > 64 {
+		return ""
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04"} {
+		if _, err := time.Parse(layout, trimmed); err == nil {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+type publicTabItem struct {
+	ID      string `json:"id"`
+	Label   string `json:"label"`
+	Content string `json:"content"`
+}
+
+func publicTabsJSON(raw string) string {
+	if raw == "" || len(raw) > 256000 {
+		return ""
+	}
+	var items []publicTabItem
+	if json.Unmarshal([]byte(raw), &items) != nil || len(items) == 0 {
+		return ""
+	}
+	seen := make(map[string]bool, len(items))
+	out := make([]publicTabItem, 0, len(items))
+	for i, item := range items {
+		if len(out) >= 20 {
+			break
+		}
+		id := item.ID
+		if !publicShortID.MatchString(id) {
+			id = "tab-" + strconv.Itoa(i+1)
+		}
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, publicTabItem{ID: id, Label: item.Label, Content: item.Content})
+	}
+	if len(out) == 0 {
+		return ""
+	}
+	data, _ := json.Marshal(out)
 	return string(data)
 }

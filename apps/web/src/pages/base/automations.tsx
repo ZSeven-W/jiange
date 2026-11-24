@@ -92,6 +92,9 @@ function opsFor(type: string): string[] {
   switch (type) {
     case "number":
     case "rating":
+    case "currency":
+    case "progress":
+    case "autonumber":
       return ["is", "is_not", "gt", "gte", "lt", "lte", "empty", "not_empty"];
     case "checkbox":
       return ["checked", "unchecked"];
@@ -743,7 +746,7 @@ function RuleListEditor({
                     const isTemplate = raw.includes("{{");
                     next[i] = {
                       ...rule,
-                      v: !isTemplate && (f?.type === "number" || f?.type === "rating") && raw !== "" && !Number.isNaN(Number(raw))
+                      v: !isTemplate && (f?.type === "number" || f?.type === "rating" || f?.type === "currency" || f?.type === "progress" || f?.type === "autonumber") && raw !== "" && !Number.isNaN(Number(raw))
                         ? Number(raw)
                         : raw,
                     };

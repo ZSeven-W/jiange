@@ -1,5 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { displayValue, recordTitle, recordTitleField, REGISTRY } from "./registry";
+import {
+  displayValue,
+  evalFormulas,
+  formatAutonumber,
+  formatCurrency,
+  interpolateButtonTemplate,
+  isSafeHttpUrl,
+  locationMapUrl,
+  parseLocation,
+  recordTitle,
+  recordTitleField,
+  REGISTRY,
+} from "./registry";
 import type { BaseRecord, Field } from "@/lib/api";
 
 const field = (type: Field["type"], options?: string[]): Field => ({ id: 1, name: "f", type, options, position: 1 });
@@ -48,5 +60,53 @@ describe("field type registry", () => {
   });
   it("checkbox compares false before true", () => {
     expect(REGISTRY.checkbox.compare(false, true, field("checkbox"))).toBeLessThan(0);
+  });
+
+  it("supports currency, progress, autonumber, button, and location field types in registry and formulas", () => {
+    const curF: Field = { id: 10, name: "金额", type: "currency", options: ["USD", "2"], position: 1 };
+    const progF: Field = { id: 11, name: "进度", type: "progress", options: ["bar"], position: 2 };
+    const autoF: Field = { id: 12, name: "编号", type: "autonumber", options: ["TASK-", "4"], position: 3 };
+    const btnF: Field = { id: 13, name: "操作", type: "button", options: ["查看详情", "open_url", "https://example.com/{编号}"], position: 4 };
+    const locF: Field = { id: 14, name: "地点", type: "location", position: 5 };
+    const formulaF: Field = { id: 15, name: "实收", type: "formula", formula: "ROUND([金额] * [进度] / 100, 2)", position: 6 };
+
+    // Currency
+    expect(formatCurrency(1234.5, curF)).toBe("$1,234.50");
+    expect(formatCurrency(-99, { options: ["CNY", "0"] })).toBe("-¥99");
+    expect(REGISTRY.currency.parse("$1,234.50", curF)).toBe(1234.5);
+    expect(REGISTRY.currency.parse("bad", curF)).toBeUndefined();
+    expect(REGISTRY.currency.parse("", curF)).toBeNull();
+
+    // Progress
+    expect(REGISTRY.progress.parse("75%", progF)).toBe(75);
+    expect(REGISTRY.progress.parse("120", progF)).toBeUndefined();
+    expect(REGISTRY.progress.parse("-1", progF)).toBeUndefined();
+    expect(REGISTRY.progress.format(75, progF)).toBe("75%");
+
+    // Autonumber (including graceful fallback to record.id when pre-existing record lacks cell)
+    expect(REGISTRY.autonumber.readonly).toBe(true);
+    expect(formatAutonumber(7, autoF)).toBe("TASK-0007");
+    expect(displayValue(rec({}), autoF, [])).toBe(2);
+    expect(displayValue(rec({ 12: 15 }), autoF, [])).toBe(15);
+
+    // Button interpolation & URL safety
+    expect(REGISTRY.button.readonly).toBe(true);
+    const row = rec({ 10: 200, 11: 50, 12: 7, 14: "北京市海淀区 | 39.98,116.31" });
+    expect(interpolateButtonTemplate("https://example.com/item/{编号}?id={id}", row, [curF, progF, autoF, btnF, locF], [])).toBe(
+      "https://example.com/item/TASK-0007?id=2",
+    );
+    expect(isSafeHttpUrl("https://example.com")).toBe(true);
+    expect(isSafeHttpUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeHttpUrl("")).toBe(false);
+
+    // Location parsing & map URL
+    const parsedLoc = parseLocation("北京市海淀区 | 39.98,116.31");
+    expect(parsedLoc).toEqual({ address: "北京市海淀区", coords: "39.98,116.31", lat: 39.98, lng: 116.31 });
+    expect(locationMapUrl(parsedLoc)).toContain("mlat=39.98");
+    expect(locationMapUrl(parseLocation("上海市"))).toContain("search?query=");
+
+    // Formula evaluates currency + progress as numbers
+    const evaluated = evalFormulas([curF, progF, autoF, formulaF], row, []);
+    expect(evaluated.get(15)).toBe(100);
   });
 });

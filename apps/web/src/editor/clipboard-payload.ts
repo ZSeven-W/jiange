@@ -21,7 +21,7 @@ export function blockClipboardPlain(block: ClipBlock): string {
     const rows = parseTableData(tableDataOf(block.props));
     if (rows.length && rows[0]?.length) return formatTableTSV(rows, { r0: 0, r1: rows.length - 1, c0: 0, c1: rows[0].length - 1 }, parseMerges(block.props.tableMerges, rows.length, rows[0].length));
   }
-  return block.props.caption || block.props.name || block.props.url || ({ image: "[图片]", file: "[附件]", table: "[表格]", divider: "---", bookmark: "[网页卡片]", video: "[视频]", flowchart: "[流程图]" } as Record<string, string>)[block.type] || "[文档块]";
+  return block.props.caption || block.props.title || block.props.question || block.props.name || block.props.url || ({ image: "[图片]", file: "[附件]", table: "[表格]", divider: "---", bookmark: "[网页卡片]", video: "[视频]", audio: "[音频]", poll: "[投票]", countdown: "[倒计时]", tabs: "[标签页]", flowchart: "[流程图]" } as Record<string, string>)[block.type] || "[文档块]";
 }
 
 function base64Utf8(value: string): string | null {

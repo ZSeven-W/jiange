@@ -243,8 +243,9 @@ func (m *Memory) SubmitPublicForm(ctx context.Context, baseID, viewID int64, has
 	for key, value := range cells {
 		cloned[key] = slices.Clone(value)
 	}
+	applyAutonumbers(cloned, m.autonumberSeedsLocked(baseID, view.TableID))
 	now := time.Now()
-	rec := Record{ID: m.id(), BaseID: baseID, Cells: cloned, CreatedAt: &now, UpdatedAt: &now}
+	rec := Record{ID: m.id(), BaseID: baseID, TableID: view.TableID, Cells: cloned, CreatedAt: &now, UpdatedAt: &now}
 	rec.Position = float64(rec.ID)
 	body, err := recordEvent(baseID, "add", rec, 0)
 	if err != nil {
@@ -507,7 +508,16 @@ func (p *Postgres) SubmitPublicForm(ctx context.Context, baseID, viewID int64, h
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		result, err = scanRecord(tx.QueryRow(ctx, `INSERT INTO base_records (base_id,cells,position) VALUES ($1,$2,COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1),0)+1) RETURNING `+recordCols, baseID, cells))
+		finalCells := make(map[string]json.RawMessage, len(cells))
+		for k, v := range cells {
+			finalCells[k] = v
+		}
+		seeds, err := pgAutonumberSeeds(ctx, tx, baseID, view.TableID)
+		if err != nil {
+			return err
+		}
+		applyAutonumbers(finalCells, seeds)
+		result, err = scanRecord(tx.QueryRow(ctx, `INSERT INTO base_records (base_id,cells,position) VALUES ($1,$2,COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1),0)+1) RETURNING `+recordCols, baseID, finalCells))
 		if err != nil {
 			return err
 		}

@@ -933,11 +933,18 @@ func coerceAutomationCellValue(f store.Field, val any, env *automationExecEnv) j
 	if str, ok := val.(string); ok {
 		rendered := interpolateTemplate(str, env)
 		switch f.Type {
-		case "text", "url", "phone", "email", "date", "select":
+		case "text", "url", "phone", "email", "date", "select", "location":
 			return marshalValid(rendered)
-		case "number":
+		case "number", "currency":
 			n, err := strconv.ParseFloat(strings.TrimSpace(rendered), 64)
 			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) {
+				return nil
+			}
+			return marshalValid(n)
+		case "progress":
+			cleaned := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(rendered), "%"))
+			n, err := strconv.ParseFloat(cleaned, 64)
+			if err != nil || math.IsNaN(n) || math.IsInf(n, 0) || n < 0 || n > 100 {
 				return nil
 			}
 			return marshalValid(n)

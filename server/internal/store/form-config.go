@@ -22,7 +22,7 @@ type PublicFormConfigBuilder func(View, []Field) (json.RawMessage, error)
 // requiring user, file or linked-record authorization cannot yet be exposed.
 func PublicFormSupportsField(typ string) bool {
 	switch typ {
-	case "text", "number", "select", "multi_select", "checkbox", "date", "url", "phone", "email", "rating":
+	case "text", "number", "select", "multi_select", "checkbox", "date", "url", "phone", "email", "rating", "currency", "progress", "location":
 		return true
 	default:
 		return false

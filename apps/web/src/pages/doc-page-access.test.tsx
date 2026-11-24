@@ -120,4 +120,20 @@ describe("document access errors", () => {
     state.blocked = null;
     state.unacked = 0;
   });
+
+  it("renders the track-changes mode toggle pill with open suggestion count badge in the top action bar", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } });
+    const key = docMetaKey(7, 1);
+    qc.setQueryData(key, metadata);
+    qc.setQueryData(["suggestions", 7], [
+      { id: 1, docId: 7, blockId: "1:2", authorId: 2, authorName: "李明", kind: "replace", originalText: "旧", proposedText: "新", note: "", status: "open", createdAt: "2026-11-24T00:00:00Z", updatedAt: "2026-11-24T00:00:00Z" },
+      { id: 2, docId: 7, blockId: "1:3", authorId: 3, authorName: "王芳", kind: "replace", originalText: "A", proposedText: "B", note: "", status: "open", createdAt: "2026-11-24T00:00:00Z", updatedAt: "2026-11-24T00:00:00Z" },
+      { id: 3, docId: 7, blockId: "1:4", authorId: 3, authorName: "王芳", kind: "replace", originalText: "C", proposedText: "D", note: "", status: "accepted", createdAt: "2026-11-24T00:00:00Z", updatedAt: "2026-11-24T00:00:00Z" },
+    ]);
+    const html = renderToStaticMarkup(<QueryClientProvider client={qc}><DocPage id={7} me={me} /></QueryClientProvider>);
+    expect(html).toContain("data-track-changes-toggle");
+    expect(html).toContain("修订模式");
+    expect(html).toContain("data-track-changes-badge");
+    expect(html).toMatch(/data-track-changes-badge="true"[^>]*>2<\/span>/);
+  });
 });

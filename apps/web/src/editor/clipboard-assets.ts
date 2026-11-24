@@ -13,7 +13,7 @@ function fileID(value: unknown): number | null {
 
 function references(block: ClipBlock): number[] | null {
   const ids: number[] = [];
-  if ((block.type === "image" || block.type === "file") && block.props.fileId) {
+  if ((block.type === "image" || block.type === "file" || block.type === "audio" || block.type === "video") && block.props.fileId) {
     const id = fileID(block.props.fileId); if (id === null) return null; ids.push(id);
   }
   if (block.type === "flowchart") for (const [key, value] of Object.entries(block.props)) {
@@ -60,7 +60,7 @@ export function remapClipboardAssets(blocks: readonly ClipBlock[], assets: Clipb
   try {
     return blocks.map((block) => {
       const props = { ...block.props };
-      if ((block.type === "image" || block.type === "file") && props.fileId) props.fileId = String(mapping[props.fileId]);
+      if ((block.type === "image" || block.type === "file" || block.type === "audio" || block.type === "video") && props.fileId) props.fileId = String(mapping[props.fileId]);
       if (block.type === "flowchart") for (const [key, value] of Object.entries(props)) {
         if (!key.startsWith("fc.n.") || !value) continue;
         const node = JSON.parse(value) as Record<string, unknown>;

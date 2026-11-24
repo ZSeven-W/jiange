@@ -592,6 +592,20 @@ export class Base {
             for (const [k, v] of Object.entries(normalized)) {
               if (v !== null && v !== undefined) finalCells[k] = v;
             }
+            // Server-style monotonic sequential autonumber assignment (protected against manual overwrite)
+            for (const f of tableFields) {
+              if (f.type !== "autonumber") continue;
+              const fk = String(f.id);
+              let maxSeq = 0;
+              for (const existing of this.records) {
+                if (existing.tableId !== tid) continue;
+                const val = existing.cells[fk];
+                if (typeof val === "number" && Number.isFinite(val) && Math.trunc(val) > maxSeq) {
+                  maxSeq = Math.trunc(val);
+                }
+              }
+              finalCells[fk] = maxSeq + 1;
+            }
             const now = new Date().toISOString();
             this.records.push({
               id,
@@ -609,8 +623,12 @@ export class Base {
           case "updateRecord": {
             const rec = this.records.find((r) => r.id === op.recordId);
             if (!rec) throw new Error(`record ${op.recordId} not found`);
+            const autonumberKeys = new Set(
+              this.fields.filter((f) => f.tableId === rec.tableId && f.type === "autonumber").map((f) => String(f.id)),
+            );
             const normalized = this.normalizeCellsInput(rec.tableId, op.cells);
             for (const [k, v] of Object.entries(normalized)) {
+              if (autonumberKeys.has(k)) continue;
               if (v === null) delete rec.cells[k];
               else rec.cells[k] = v;
             }

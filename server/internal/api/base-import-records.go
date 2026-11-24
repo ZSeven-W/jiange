@@ -108,7 +108,7 @@ func (s *Server) importBaseRecords(w http.ResponseWriter, r *http.Request) {
 				return store.BaseImportPlan{}, store.ErrConflict
 			}
 			switch f.Type {
-			case "text", "number", "checkbox", "date", "select", "multi_select", "url", "phone", "email", "rating":
+			case "text", "number", "checkbox", "date", "select", "multi_select", "url", "phone", "email", "rating", "currency", "progress", "location":
 			default:
 				return store.BaseImportPlan{}, store.ErrConflict
 			}

@@ -111,6 +111,9 @@ const CURATED_SPECS: readonly FormulaFunctionSpec[] = [
   { name: "TEXT", category: "text", args: ["数值", "格式代码"], description: "按指定数字格式将数值转为文本", popular: true },
   { name: "VALUE", category: "text", args: ["文本"], description: "将表示数字的文本转换为数值" },
   { name: "SPLIT", category: "text", args: ["文本", "分隔符"], description: "按分隔符将文本拆分为数组" },
+  { name: "REGEXMATCH", category: "text", args: ["文本", "正则表达式"], description: "判断文本是否匹配正则表达式", popular: true },
+  { name: "REGEXREPLACE", category: "text", args: ["文本", "正则表达式", "替换文本"], description: "使用正则表达式替换文本中的匹配内容" },
+  { name: "REGEXEXTRACT", category: "text", args: ["文本", "正则表达式"], description: "使用正则表达式提取首个匹配子串或捕获组" },
 
   // Date & Time
   { name: "TODAY", category: "date", args: [], description: "返回当前系统日期", popular: true },
@@ -133,6 +136,11 @@ const CURATED_SPECS: readonly FormulaFunctionSpec[] = [
   { name: "SORTBY", category: "array", args: ["数组", "依据数组1", "[排序顺序1]", "..."], description: "按另一区域的值对数组进行排序" },
   { name: "UNIQUE", category: "array", args: ["数组", "[按列比较]", "[仅出现一次]"], description: "提取区域或数组中的唯一值列表", popular: true },
   { name: "SEQUENCE", category: "array", args: ["行数", "[列数]", "[起始值]", "[步长]"], description: "生成等差连续数字序列数组" },
+  { name: "ARRAYFORMULA", category: "array", args: ["数组公式"], description: "启用数组运算并自动溢出多行多列结果", popular: true },
+  { name: "QUERY", category: "array", args: ["数据区域", "查询语句", "[表头行数]"], description: "使用类 SQL 语句筛选、分组、聚合和排序区域数据", popular: true },
+  { name: "LET", category: "logic", args: ["名称1", "值1", "...", "计算表达式"], description: "在公式内定义局部变量并复用中间计算结果", popular: true },
+  { name: "LAMBDA", category: "logic", args: ["[参数1]", "...", "函数体"], description: "定义可立即调用或配合 LET 复用的匿名函数" },
+  { name: "IMAGE", category: "info", args: ["图片地址", "[替代文本]", "[缩放模式]"], description: "在单元格内嵌显示安全图片缩略图" },
 
   // Finance
   { name: "PMT", category: "finance", args: ["利率", "期数", "现值", "[终值]", "[类型]"], description: "计算等额分期付款的每期金额" },

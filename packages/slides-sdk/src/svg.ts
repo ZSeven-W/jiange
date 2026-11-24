@@ -341,10 +341,64 @@ function renderShapeSvg(
       const asset = shape.mediaId ? media?.[shape.mediaId] : undefined;
       if (asset) {
         const href = `data:${asset.mimeType};base64,${bytesToBase64(asset.data)}`;
-        inner = `<image x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" href="${href}" preserveAspectRatio="xMidYMid meet"/>`;
+        const crop = shape.crop;
+        const hasCrop =
+          crop &&
+          Number.isFinite(crop.x) &&
+          Number.isFinite(crop.y) &&
+          Number.isFinite(crop.w) &&
+          Number.isFinite(crop.h) &&
+          crop.x >= 0 &&
+          crop.y >= 0 &&
+          crop.w > 0 &&
+          crop.h > 0 &&
+          crop.x + crop.w <= 1.001 &&
+          crop.y + crop.h <= 1.001 &&
+          (crop.x > 0 || crop.y > 0 || crop.w < 1 || crop.h < 1);
+        if (hasCrop) {
+          const imgW = w / crop.w;
+          const imgH = h / crop.h;
+          const imgX = -(crop.x / crop.w) * w;
+          const imgY = -(crop.y / crop.h) * h;
+          inner =
+            `<svg x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" viewBox="0 0 ${w.toFixed(1)} ${h.toFixed(1)}" overflow="hidden">` +
+            `<image x="${imgX.toFixed(1)}" y="${imgY.toFixed(1)}" width="${imgW.toFixed(1)}" height="${imgH.toFixed(1)}" href="${href}" preserveAspectRatio="none"/>` +
+            `</svg>`;
+        } else {
+          inner = `<image x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" href="${href}" preserveAspectRatio="xMidYMid meet"/>`;
+        }
       } else {
         inner = `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="#e2e8f0" stroke="#94a3b8" stroke-dasharray="6 4"/>`;
       }
+      break;
+    }
+    case "video": {
+      const playR = Math.max(12, Math.min(w, h) * 0.14);
+      const triPts = `${(cx - playR * 0.35).toFixed(1)},${(cy - playR * 0.55).toFixed(1)} ${(cx + playR * 0.65).toFixed(1)},${cy.toFixed(1)} ${(cx - playR * 0.35).toFixed(1)},${(cy + playR * 0.55).toFixed(1)}`;
+      const label = shape.mediaUrl ? shape.mediaUrl.slice(0, 48) : "Video";
+      inner =
+        `<g data-kind="video">` +
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="8" fill="#181a1f" stroke="${escapeXml(color)}" stroke-width="1.5"/>` +
+        `<circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${playR.toFixed(1)}" fill="rgba(51,112,255,0.9)"/>` +
+        `<polygon points="${triPts}" fill="#ffffff"/>` +
+        `<text x="${cx.toFixed(1)}" y="${(y + h - 14).toFixed(1)}" font-family="${escapeXml(fontFamily)}" font-size="13" fill="#cbd5e1" text-anchor="middle">${escapeXml(label)}</text>` +
+        `</g>`;
+      break;
+    }
+    case "audio": {
+      const badgeR = Math.max(12, Math.min(h * 0.32, 22));
+      const badgeCx = x + badgeR + 14;
+      const barStart = badgeCx + badgeR + 14;
+      const barEnd = Math.max(barStart + 20, x + w - 18);
+      const label = shape.mediaUrl ? shape.mediaUrl.slice(0, 42) : "Audio";
+      inner =
+        `<g data-kind="audio">` +
+        `<rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" rx="10" fill="#f0f5ff" stroke="${escapeXml(color)}" stroke-width="1.5"/>` +
+        `<circle cx="${badgeCx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${badgeR.toFixed(1)}" fill="${escapeXml(color)}"/>` +
+        `<polygon points="${(badgeCx - badgeR * 0.28).toFixed(1)},${(cy - badgeR * 0.42).toFixed(1)} ${(badgeCx + badgeR * 0.48).toFixed(1)},${cy.toFixed(1)} ${(badgeCx - badgeR * 0.28).toFixed(1)},${(cy + badgeR * 0.42).toFixed(1)}" fill="#ffffff"/>` +
+        `<line x1="${barStart.toFixed(1)}" y1="${(cy + 8).toFixed(1)}" x2="${barEnd.toFixed(1)}" y2="${(cy + 8).toFixed(1)}" stroke="#c8d4f4" stroke-width="4" stroke-linecap="round"/>` +
+        `<text x="${barStart.toFixed(1)}" y="${(cy - 2).toFixed(1)}" font-family="${escapeXml(fontFamily)}" font-size="13" font-weight="600" fill="#1f2329">${escapeXml(label)}</text>` +
+        `</g>`;
       break;
     }
   }

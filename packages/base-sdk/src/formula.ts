@@ -431,6 +431,11 @@ export function evalRecordFormulas(
             if (computedOverrides && refField.id in computedOverrides) {
               return cellToFormulaValue(computedOverrides[refField.id]);
             }
+            if (refField.type === "autonumber") {
+              const raw = record.cells[String(refField.id)];
+              if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+              return record.id;
+            }
             return cellToFormulaValue(record.cells[String(refField.id)]);
           },
         });

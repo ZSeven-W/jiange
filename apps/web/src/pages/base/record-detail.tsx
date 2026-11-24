@@ -24,6 +24,9 @@ function placeholderFor(type: Field["type"]): string {
   if (type === "date") return t("年/月/日");
   if (type === "person") return t("请选择人员");
   if (type === "attachment") return t("上传附件");
+  if (type === "currency") return t("请输入金额");
+  if (type === "progress") return t("输入 0–100 进度");
+  if (type === "location") return t("请输入地址或坐标");
   return t("请输入内容");
 }
 import { CELL_UNKNOWN, cellDraft, isAuthoredCellType, refreshWrites, useWriteLedger, WriteIssues, type WriteLedger } from "./write-safety";
@@ -183,6 +186,7 @@ export function RecordDetail({
                     field={f}
                     record={row}
                     members={members}
+                    allFields={fields}
                     canEdit={canEdit && !def.readonly && !ledger.blocked("batch") && !ledger.blocked(`cell:${row.id}:${f.id}`)}
                     onToggle={canEdit && !def.readonly && !ledger.blocked("batch") && !ledger.blocked(`cell:${row.id}:${f.id}`) ? (v) => void setCell(f, v) : undefined}
                     onEdit={() => setEditing({ rid: row.id, fid: f.id, draft: displayValue(row, f, members) ?? null, dirty: false, authorization: ledger.capture(`cell:${row.id}:${f.id}`, isAuthoredCellType(f.type)), authored: isAuthoredCellType(f.type) })}

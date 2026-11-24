@@ -101,7 +101,7 @@ import { DocumentMentionsDialog } from "./document-mentions-dialog";
 import { PendingDraftPreview } from "./pending-draft-preview";
 import { collectDocumentMentions } from "./document-mentions";
 import { useI18n } from "@/lib/i18n";
-import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDown, FileEdit, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, Lock, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2, Unlock } from "lucide-react";
+import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDiff, FileDown, FileEdit, FileText, FileType, FileUp, FolderInput, History, Info, LayoutTemplate, Link2, ListTree, Lock, MessageSquare, PanelsTopLeft, Pin, Presentation, Printer, Search, Sparkles, SpellCheck, Star, Trash2, Unlock } from "lucide-react";
 
 // Every document starts with these two blocks (server: syncsrv.InitialOps).
 const TITLE: OpId = { client: 0, clock: 1 };
@@ -322,6 +322,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const [templatesHidden, setTemplatesHidden] = useState(false);
   const [templateError, setTemplateError] = useState("");
   const [docMode, setDocMode] = useState<"edit" | "suggest" | "read">("edit");
+  const [trackChangesMode, setTrackChangesMode] = useState(false);
   const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [suggestionBusy, setSuggestionBusy] = useState(false);
   const [retryingSync, setRetryingSync] = useState(false);
@@ -998,7 +999,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     enabled: metadataVerified,
   });
   const suggestionsList = suggestionsQuery.data ?? [];
-  const openSuggestionsCount = useMemo(() => suggestionsList.filter((s) => s.status === "open").length, [suggestionsList]);
+  const openSuggestionsList = useMemo(() => suggestionsList.filter((s) => s.status === "open"), [suggestionsList]);
+  const openSuggestionsCount = openSuggestionsList.length;
+  const trackChangesActive = trackChangesMode || docMode === "suggest";
   const suggestionBlocks: SuggestionBlockOption[] = useMemo(() => {
     const doc = sync.client.doc;
     if (!doc) return [];
@@ -1026,8 +1029,21 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   }, [canEditRole, sync.client]);
   const handleModeChange = useCallback((next: "edit" | "suggest" | "read") => {
     setDocMode(next);
-    if (next === "suggest") setSuggestionsOpen(true);
+    if (next === "suggest") {
+      setTrackChangesMode(true);
+      setSuggestionsOpen(true);
+    } else if (next === "edit") {
+      setTrackChangesMode(false);
+    }
   }, []);
+  const handleToggleTrackChanges = useCallback(() => {
+    if (trackChangesMode || docMode === "suggest") {
+      setTrackChangesMode(false);
+      if (docMode === "suggest" && canEditRole) setDocMode("edit");
+    } else {
+      setTrackChangesMode(true);
+    }
+  }, [canEditRole, docMode, trackChangesMode]);
   const handleCreateSuggestion = useCallback(async (input: { blockId: string; originalText: string; proposedText: string; note: string }) => {
     setSuggestionBusy(true);
     try {
@@ -1649,6 +1665,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           onSaveTemplate={aiAvailable ? () => void saveTemplate(docMarkdown()) : undefined}
           docMode={docMode}
           onDocModeChange={handleModeChange}
+          trackChangesMode={trackChangesActive}
+          onToggleTrackChanges={handleToggleTrackChanges}
           suggestionsOpen={suggestionsOpen}
           openSuggestionsCount={openSuggestionsCount}
           onToggleSuggestions={() => setSuggestionsOpen((v) => !v)}
@@ -1717,11 +1735,29 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           <div role="status" data-suggest-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50/80 px-5 py-2 text-[13px] text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
             <span className="flex items-center gap-2">
               <FileEdit size={15} className="text-emerald-600" />
-              <span>当前处于<strong>修订建议模式</strong>：在右侧面板选择段落发起修订，审阅接受后将自动写入正文。</span>
+              <span>当前处于<strong>修订建议模式</strong>：在右侧面板或正文段落下方发起修订，审阅接受后将自动写入正文。</span>
             </span>
             <span className="flex items-center gap-3">
               {!suggestionsOpen && <button type="button" onClick={() => setSuggestionsOpen(true)} className="font-medium text-emerald-700 underline dark:text-emerald-300">打开修订面板 ({openSuggestionsCount})</button>}
               {canEditRole && <button type="button" onClick={() => handleModeChange("edit")} className="text-emerald-700 hover:underline dark:text-emerald-300">退出修订模式</button>}
+            </span>
+          </div>
+        )}
+        {trackChangesMode && docMode !== "suggest" && (
+          <div role="status" data-track-changes-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50/70 px-5 py-1.5 text-[12px] text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
+            <span className="flex items-center gap-2">
+              <FileDiff size={14} className="text-emerald-600" />
+              <span>{t("已开启修订模式：文档正文下方将内联显示红删绿增修订对比，可直接一键接受或拒绝。")}</span>
+            </span>
+            <span className="flex items-center gap-3">
+              {!suggestionsOpen && (
+                <button type="button" onClick={() => setSuggestionsOpen(true)} className="font-medium text-emerald-700 underline dark:text-emerald-300">
+                  {t("修订面板")} ({openSuggestionsCount})
+                </button>
+              )}
+              <button type="button" onClick={handleToggleTrackChanges} className="text-emerald-700 hover:underline dark:text-emerald-300">
+                {t("关闭修订模式")}
+              </button>
             </span>
           </div>
         )}
@@ -1874,6 +1910,14 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 onShareBlock={metadataVerified ? (link) => { void navigator.clipboard?.writeText(link).catch(() => {}); setSharing(true); setPageNotice({ ok: true, text: "已复制该段落的链接，可在分享面板中设置访问权限。" }); } : undefined}
                 onSaveTemplate={aiAvailable ? (md) => void saveTemplate(md) : undefined}
                 people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name, email: m.email || undefined, role: m.id === meta.data?.creatorId ? "所有者" : "协作者" }))}
+                trackChangesMode={trackChangesActive}
+                openSuggestions={trackChangesActive ? openSuggestionsList : undefined}
+                canAcceptSuggestions={canEditRole && !sync.blocked && !sync.client.projectionOnly && !prefs.locked}
+                canSuggestInline={canSuggest && !prefs.locked && !history && !presenting}
+                suggestionBusy={suggestionBusy}
+                onAcceptSuggestion={handleAcceptSuggestion}
+                onRejectSuggestion={handleRejectSuggestion}
+                onCreateSuggestion={handleCreateSuggestion}
               />
             </div>
             {pendingStarter && <div className="mt-4 rounded-md border bg-sidebar/50 p-3 text-[13px]" role="status">
@@ -2235,6 +2279,8 @@ function TopBar({
   onSaveTemplate,
   docMode,
   onDocModeChange,
+  trackChangesMode,
+  onToggleTrackChanges,
   suggestionsOpen,
   openSuggestionsCount,
   onToggleSuggestions,
@@ -2276,6 +2322,8 @@ function TopBar({
   onSaveTemplate?: () => void;
   docMode: "edit" | "suggest" | "read";
   onDocModeChange: (mode: "edit" | "suggest" | "read") => void;
+  trackChangesMode: boolean;
+  onToggleTrackChanges: () => void;
   suggestionsOpen: boolean;
   openSuggestionsCount: number;
   onToggleSuggestions: () => void;
@@ -2314,6 +2362,7 @@ function TopBar({
   followingClientId?: number | null;
   onToggleFollow?: (clientId: number) => void;
 }) {
+  const { t } = useI18n();
   const s = STATUS[status];
   const [saved, setSaved] = useState({ doc: meta?.id, seenSynced: false, saved: false });
   const savedFlag = saved.doc === meta?.id ? saved : { doc: meta?.id, seenSynced: false, saved: false };
@@ -2367,6 +2416,36 @@ function TopBar({
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
         {onAI && <button onClick={onAI} title="AI 助手" aria-label="AI 助手" aria-pressed={!!aiOpen} className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", aiOpen ? "text-primary" : "text-muted-foreground")} data-doc-ai><Sparkles size={16} /><span className="hidden text-[13px] xl:inline">AI</span></button>}
+        <button
+          type="button"
+          onClick={onToggleTrackChanges}
+          title={t("修订模式")}
+          aria-label={t("修订模式")}
+          aria-pressed={trackChangesMode}
+          data-track-changes-toggle
+          className={cn(
+            "inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-[12px] font-medium transition-colors",
+            trackChangesMode
+              ? "border-emerald-300 bg-emerald-50 text-emerald-700 hover:bg-emerald-100/80 dark:border-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-300"
+              : "border-border bg-surface text-muted-foreground hover:bg-hover hover:text-foreground",
+          )}
+        >
+          <FileDiff size={14} />
+          <span className="hidden md:inline">{t("修订模式")}</span>
+          {openSuggestionsCount > 0 && (
+            <span
+              data-track-changes-badge
+              className={cn(
+                "rounded-full px-1.5 py-px text-[11px] font-semibold",
+                trackChangesMode
+                  ? "bg-emerald-600 text-white"
+                  : "bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300",
+              )}
+            >
+              {openSuggestionsCount}
+            </span>
+          )}
+        </button>
         <button onClick={onToggleSuggestions} title="修订建议" aria-label="修订建议" aria-pressed={suggestionsOpen} data-doc-suggestions-btn className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", suggestionsOpen ? "text-emerald-600" : "text-muted-foreground")}><FileEdit size={16} /><span className="hidden text-[13px] xl:inline">修订</span>{openSuggestionsCount > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{openSuggestionsCount}</span>}</button>
         <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>
         <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label="协作者">

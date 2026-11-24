@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight, Eraser, MousePointer2, Pause, PenTool, Play, Radio, RotateCcw, X } from "lucide-react";
-import type { SlidesPage } from "@/lib/api";
+import { ChevronLeft, ChevronRight, Eraser, MousePointer2, Pause, PenTool, Play, Radio, RotateCcw, Wifi, WifiOff, X } from "lucide-react";
+import type { SlideMasterMeta, SlidesPage } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import type { SlideContent } from "./slides-draft";
 import { SlideShapes } from "./slides-shapes";
 import { hasLargeSlideTitle } from "./slides-layout";
 import { SlidesGpuLayer } from "./slides-gpu-layer";
+import { resolveSlideMasterFontFamily, SlideMasterOverlay, type SlideMasterMap } from "./slides-master";
 import type { SlidePageTextStyles, SlideTextStyleMap } from "./slides-text-style";
 import {
   buildAnimationSteps,
@@ -23,6 +25,16 @@ import {
 type VisibleSlide = Pick<SlideContent, "title" | "body" | "background" | "layout" | "shapes">;
 
 export type PresenterTool = "pointer" | "laser" | "ink";
+
+export interface RemotePresenterState {
+  presenterId: number;
+  presenterName: string;
+  active: boolean;
+  pageId: number;
+  animStep: number;
+  laserX?: number;
+  laserY?: number;
+}
 
 export interface PresenterPoint {
   x: number;
@@ -158,20 +170,28 @@ export function isDarkSlideBackground(bg: string | undefined): boolean {
 export function SlideSurface({
   content,
   textStyle,
+  master,
+  slideIndex,
+  totalSlides,
   animations,
   animationStep,
   inkStrokes,
   laserTrail,
   showPlaceholder = false,
+  interactiveMedia = false,
   gpu = false,
 }: {
   content: VisibleSlide;
   textStyle?: SlidePageTextStyles;
+  master?: SlideMasterMeta;
+  slideIndex?: number;
+  totalSlides?: number;
   animations?: SlidePageShapeAnimations;
   animationStep?: number;
   inkStrokes?: readonly PresenterInkStroke[];
   laserTrail?: readonly PresenterPoint[];
   showPlaceholder?: boolean;
+  interactiveMedia?: boolean;
   gpu?: boolean;
 }) {
   const [gpuActive, setGpuActive] = useState(false);
@@ -182,6 +202,7 @@ export function SlideSurface({
   const largeTitle = hasLargeSlideTitle(content.layout);
   const titleField = textStyle?.title;
   const bodyField = textStyle?.body;
+  const masterFontFamily = resolveSlideMasterFontFamily(master?.fontFamily);
   const titleInlineStyle: CSSProperties = {
     fontSize: titleField?.fontSize !== undefined ? `${titleField.fontSize / 9.6}cqw` : largeTitle ? "5.625cqw" : "3.75cqw",
     minHeight: largeTitle ? undefined : "5.729cqw",
@@ -205,8 +226,9 @@ export function SlideSurface({
   );
   const hasInk = (inkStrokes?.length ?? 0) > 0;
   const hasLaser = (laserTrail?.length ?? 0) > 0;
-  return <div className="relative aspect-video w-full overflow-hidden bg-white px-[6%] py-[5%]" style={{ backgroundColor: gpu && gpuActive ? "transparent" : content.background || "#fff", containerType: "inline-size" }}>
+  return <div className="relative aspect-video w-full overflow-hidden bg-white px-[6%] py-[5%]" style={{ backgroundColor: gpu && gpuActive ? "transparent" : content.background || "#fff", containerType: "inline-size", ...(masterFontFamily ? { fontFamily: masterFontFamily } : {}) }}>
     {gpu && <SlidesGpuLayer background={content.background} shapes={gpuShapes} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />}
+    <SlideMasterOverlay master={master} slideIndex={slideIndex} totalSlides={totalSlides} dark={dark} />
     {emptyGuide && (
       <div aria-hidden="true" className="pointer-events-none absolute inset-[10%] z-[1] flex flex-col justify-center gap-[8%]">
         <div className={largeTitle ? "mx-auto h-[22%] w-[78%] rounded-[2px] border border-dashed border-[#d0d3d6]" : "h-[18%] w-[62%] rounded-[2px] border border-dashed border-[#d0d3d6]"} />
@@ -222,6 +244,7 @@ export function SlideSurface({
         selected={null}
         animations={animations}
         animationStep={animationStep}
+        interactiveMedia={interactiveMedia}
         gpuBacked={gpu && gpuActive}
       />
     </div>
@@ -504,6 +527,7 @@ export function PresenterView({
   content,
   contentFor,
   textStyles,
+  masters,
   transitions,
   animations,
   animStep: controlledAnimStep,
@@ -516,6 +540,8 @@ export function PresenterView({
   onLaserTrailChange,
   inkByPage: controlledInkByPage,
   onInkByPageChange,
+  syncAudience,
+  onToggleSyncAudience,
   externalKeyNav = false,
   onSelect,
   onExit,
@@ -525,6 +551,7 @@ export function PresenterView({
   content: SlideContent;
   contentFor: (page: SlidesPage) => SlideContent;
   textStyles?: SlideTextStyleMap;
+  masters?: SlideMasterMap;
   transitions?: SlideTransitionMap;
   animations?: SlideDeckShapeAnimations;
   animStep?: number;
@@ -537,10 +564,13 @@ export function PresenterView({
   onLaserTrailChange?: (trail: PresenterPoint[]) => void;
   inkByPage?: Record<number, PresenterInkStroke[]>;
   onInkByPageChange?: (next: Record<number, PresenterInkStroke[]>) => void;
+  syncAudience?: boolean;
+  onToggleSyncAudience?: () => void;
   externalKeyNav?: boolean;
   onSelect: (id: number) => void;
   onExit: () => void;
 }) {
+  const { t } = useI18n();
   const [seconds, setSeconds] = useState(0);
   const [running, setRunning] = useState(true);
   const [timerEpoch, setTimerEpoch] = useState(0);
@@ -655,6 +685,22 @@ export function PresenterView({
     <style>{`${SLIDE_TRANSITION_KEYFRAMES_CSS}\n${SLIDE_ANIMATION_KEYFRAMES_CSS}`}</style>
     <header className="flex h-16 shrink-0 items-center gap-3 px-4">
       <button type="button" onClick={onExit} aria-label="退出演示者视图" className="grid size-9 place-items-center rounded-lg bg-[#2b2d30] hover:bg-[#3b3d42]"><X size={18}/></button>
+      {onToggleSyncAudience && (
+        <button
+          type="button"
+          data-presenter-sync-toggle
+          aria-pressed={!!syncAudience}
+          onClick={onToggleSyncAudience}
+          className={`flex h-9 items-center gap-1.5 rounded-lg px-3 text-[12px] font-medium transition-colors ${
+            syncAudience
+              ? "bg-[#3370ff] text-white hover:bg-[#245bdb]"
+              : "bg-[#292a2d] text-[#c9cdd4] hover:bg-[#3b3d42]"
+          }`}
+        >
+          {syncAudience ? <Wifi size={14} /> : <WifiOff size={14} />}
+          <span>{syncAudience ? t("已同步放映给观众") : t("同步放映给观众")}</span>
+        </button>
+      )}
       <div className="ml-auto flex h-9 items-center gap-2 rounded-lg bg-[#292a2d] px-3 text-[13px] tabular-nums" aria-label="演示计时"><span>{formatPresentationTime(seconds)}</span><button type="button" aria-label={running ? "暂停计时" : "继续计时"} onClick={() => setRunning((value) => !value)}>{running ? <Pause size={15}/> : <Play size={15}/>}</button><button type="button" aria-label="重置计时" onClick={() => { setSeconds(0); setTimerEpoch((epoch) => epoch + 1); }}><RotateCcw size={15}/></button></div>
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 md:flex-row">
@@ -674,10 +720,14 @@ export function PresenterView({
                 <SlideSurface
                   content={content}
                   textStyle={textStyles?.[currentId]}
+                  master={masters?.[currentId]}
+                  slideIndex={index >= 0 ? index : 0}
+                  totalSlides={pages.length}
                   animations={currentPageAnims}
                   animationStep={totalAnimSteps > 0 ? animStep : undefined}
                   inkStrokes={currentInkStrokes}
                   laserTrail={tool === "laser" ? laserTrail : undefined}
+                  interactiveMedia={tool === "pointer"}
                   gpu
                 />
               </div>
@@ -707,7 +757,7 @@ export function PresenterView({
             onClearInk={() => setInkByPage((prev) => clearSlideInk(prev, currentId))}
           />
         </div>
-        <div className="flex max-h-24 shrink-0 justify-center gap-2 overflow-x-auto pb-1" aria-label="放映页面">{pages.map((page, i) => <button key={page.id} type="button" aria-label={`跳转到第 ${i + 1} 张`} aria-current={page.id === currentId ? "true" : undefined} onClick={() => { onSelect(page.id); setAnimStep(0); }} className={`w-28 shrink-0 overflow-hidden rounded border-2 ${page.id === currentId ? "border-[#3370ff]" : "border-transparent"}`}><SlideSurface content={contentFor(page)} textStyle={textStyles?.[page.id]}/></button>)}</div>
+        <div className="flex max-h-24 shrink-0 justify-center gap-2 overflow-x-auto pb-1" aria-label="放映页面">{pages.map((page, i) => <button key={page.id} type="button" aria-label={`跳转到第 ${i + 1} 张`} aria-current={page.id === currentId ? "true" : undefined} onClick={() => { onSelect(page.id); setAnimStep(0); }} className={`w-28 shrink-0 overflow-hidden rounded border-2 ${page.id === currentId ? "border-[#3370ff]" : "border-transparent"}`}><SlideSurface content={contentFor(page)} textStyle={textStyles?.[page.id]} master={masters?.[page.id]} slideIndex={i} totalSlides={pages.length}/></button>)}</div>
       </div>
       <aside className="min-h-32 min-w-0 flex-[2] overflow-auto rounded-xl bg-[#252629] p-4 text-[14px] text-[#dee0e3]" aria-label="演示者备注"><div className="border-b border-white/10 pb-3 font-medium">演示者备注</div><p className="mt-4 whitespace-pre-wrap break-words">{content.notes || "暂无备注"}</p></aside>
     </div>

@@ -106,8 +106,128 @@ func TestPublicColumnChildUsesTextRenderer(t *testing.T) {
 	if out.Blocks[1].Spans[0].Text != "栏中文字" || out.Blocks[1].Spans[0].Marks["bold"] != "true" || out.Blocks[1].Props["align"] != "right" || out.Blocks[1].Props["caption"] != "" {
 		t.Fatalf("image column child: %#v", out.Blocks[1])
 	}
-	if out.Blocks[2].Spans[0].Text != "第二栏文字" || out.Blocks[2].Props["tableData"] != "" {
+	if got := out.Blocks[2].Spans[0].Text; got != "第二栏文字" || out.Blocks[2].Props["tableData"] != "" {
 		t.Fatalf("table column child: %#v", out.Blocks[2])
+	}
+}
+
+func TestPublicCommonBlockProjectsInteractiveAndMediaBlocks(t *testing.T) {
+	view := collab.DocView{Blocks: []collab.BlockView{
+		{
+			ID: "1:1", Parent: "0:0", Type: "audio",
+			Props: map[string]string{
+				"url":    "/api/files/88",
+				"fileId": "88",
+				"name":   "会议录音.mp3",
+				"title":  "Q4 评审录音",
+				"secret": "AUDIO-SECRET",
+			},
+			Spans: []collab.Span{{Text: "AUDIO-LEFTOVER-TEXT"}},
+		},
+		{
+			ID: "1:2", Parent: "0:0", Type: "audio",
+			Props: map[string]string{
+				"url":    "javascript:AUDIO-XSS",
+				"fileId": "../../bad",
+				"title":  "非法音频",
+			},
+		},
+		{
+			ID: "1:3", Parent: "0:0", Type: "video",
+			Props: map[string]string{
+				"url":    "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+				"fileId": "99",
+				"name":   "演示.mp4",
+				"title":  "产品演示",
+				"secret": "VIDEO-SECRET",
+			},
+			Spans: []collab.Span{{Text: "VIDEO-LEFTOVER-TEXT"}},
+		},
+		{
+			ID: "1:4", Parent: "0:0", Type: "poll",
+			Props: map[string]string{
+				"question":      "发布窗口选哪天？",
+				"options":       `[{"id":"opt-1","text":"周一","hidden":"POLL-OPT-SECRET"},{"id":"opt-2","text":"周三"}]`,
+				"multiple":      "true",
+				"vote.12":       "opt-1,opt-2,invalid-opt",
+				"vote.34":       "opt-2",
+				"vote.bad key!": "opt-1",
+				"extra":         "POLL-EXTRA-SECRET",
+			},
+			Spans: []collab.Span{{Text: "POLL-LEFTOVER-TEXT"}},
+		},
+		{
+			ID: "1:5", Parent: "0:0", Type: "countdown",
+			Props: map[string]string{
+				"title":    "大促上线",
+				"targetAt": "2026-12-31T16:00:00Z",
+				"theme":    "purple",
+				"secret":   "COUNTDOWN-SECRET",
+			},
+			Spans: []collab.Span{{Text: "COUNTDOWN-LEFTOVER-TEXT"}},
+		},
+		{
+			ID: "1:6", Parent: "0:0", Type: "countdown",
+			Props: map[string]string{
+				"title":    "非法倒计时",
+				"targetAt": "not-a-timestamp-SECRET",
+				"theme":    "neon-invalid",
+			},
+		},
+		{
+			ID: "1:7", Parent: "0:0", Type: "tabs",
+			Props: map[string]string{
+				"tabs":   `[{"id":"tab-1","label":"方案 A","content":"细节 A","secret":"TAB-ITEM-SECRET"},{"id":"tab-2","label":"方案 B","content":"细节 B"}]`,
+				"secret": "TABS-EXTRA-SECRET",
+			},
+			Spans: []collab.Span{{Text: "TABS-LEFTOVER-TEXT"}},
+		},
+	}}
+
+	out, err := publicTableView(view)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(out)
+	for _, secret := range []string{
+		"AUDIO-SECRET", "AUDIO-LEFTOVER-TEXT", "AUDIO-XSS", "../../bad",
+		"VIDEO-SECRET", "VIDEO-LEFTOVER-TEXT",
+		"POLL-OPT-SECRET", "POLL-EXTRA-SECRET", "POLL-LEFTOVER-TEXT", "invalid-opt", "bad key!",
+		"COUNTDOWN-SECRET", "COUNTDOWN-LEFTOVER-TEXT", "not-a-timestamp-SECRET", "neon-invalid",
+		"TAB-ITEM-SECRET", "TABS-EXTRA-SECRET", "TABS-LEFTOVER-TEXT",
+	} {
+		if bytes.Contains(encoded, []byte(secret)) {
+			t.Fatalf("leaked %q: %s", secret, encoded)
+		}
+	}
+
+	// Audio valid
+	if got := out.Blocks[0].Props; got["url"] != "/api/files/88" || got["fileId"] != "88" || got["name"] != "会议录音.mp3" || got["title"] != "Q4 评审录音" || len(out.Blocks[0].Spans) != 0 {
+		t.Fatalf("audio valid: %#v", out.Blocks[0])
+	}
+	// Audio invalid url/fileId stripped
+	if got := out.Blocks[1].Props; got["url"] != "" || got["fileId"] != "" || got["title"] != "非法音频" {
+		t.Fatalf("audio invalid: %#v", out.Blocks[1])
+	}
+	// Video valid
+	if got := out.Blocks[2].Props; got["url"] != "https://www.youtube.com/watch?v=dQw4w9WgXcQ" || got["fileId"] != "99" || got["name"] != "演示.mp4" || got["title"] != "产品演示" || len(out.Blocks[2].Spans) != 0 {
+		t.Fatalf("video valid: %#v", out.Blocks[2])
+	}
+	// Poll valid + per-user CRDT vote keys preserved
+	if got := out.Blocks[3].Props; got["question"] != "发布窗口选哪天？" || got["multiple"] != "true" || got["vote.12"] != "opt-1,opt-2" || got["vote.34"] != "opt-2" || len(out.Blocks[3].Spans) != 0 {
+		t.Fatalf("poll: %#v", out.Blocks[3])
+	}
+	// Countdown valid
+	if got := out.Blocks[4].Props; got["title"] != "大促上线" || got["targetAt"] != "2026-12-31T16:00:00Z" || got["theme"] != "purple" || len(out.Blocks[4].Spans) != 0 {
+		t.Fatalf("countdown valid: %#v", out.Blocks[4])
+	}
+	// Countdown invalid fields stripped
+	if got := out.Blocks[5].Props; got["targetAt"] != "" || got["theme"] != "" || got["title"] != "非法倒计时" {
+		t.Fatalf("countdown invalid: %#v", out.Blocks[5])
+	}
+	// Tabs sanitized
+	if got := out.Blocks[6].Props; got["tabs"] != `[{"id":"tab-1","label":"方案 A","content":"细节 A"},{"id":"tab-2","label":"方案 B","content":"细节 B"}]` || len(out.Blocks[6].Spans) != 0 {
+		t.Fatalf("tabs: %#v", out.Blocks[6])
 	}
 }
 

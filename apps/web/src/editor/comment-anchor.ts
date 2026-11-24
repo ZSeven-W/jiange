@@ -30,6 +30,10 @@ const BLOCK_LABEL: Record<string, string> = {
   file: "附件",
   table: "表格",
   video: "视频",
+  audio: "音频",
+  poll: "投票",
+  countdown: "倒计时",
+  tabs: "标签页",
   bookmark: "网页卡片",
   math: "公式",
   diagram: "图表",
@@ -53,7 +57,7 @@ export function blockCommentAnchor(doc: Doc, block: OpId): CommentSelection {
     if (!parent || parent.parent !== idKey(ROOT) || parent.type !== "columns") return { ok: false, reason: "invalid" };
   }
   const label = BLOCK_LABEL[info.type] ?? "块";
-  const name = info.props.caption || info.props.title || info.props.label || info.props.name || "";
+  const name = info.props.caption || info.props.title || info.props.question || info.props.label || info.props.name || "";
   return { ok: true, anchor: { block: idKey(block), startChar: "", endChar: "", quote: (name ? `[${label}] ${name}` : `[${label}]`).slice(0, 200) } };
 }
 

@@ -357,3 +357,120 @@ func TestValidateFieldWidthsAndStats(t *testing.T) {
 		t.Fatal(">200 fieldStats accepted")
 	}
 }
+
+func TestExtendedFieldsFilterAndSort(t *testing.T) {
+	extFields := []FieldSpec{
+		{ID: 10, Type: "currency"},
+		{ID: 11, Type: "progress"},
+		{ID: 12, Type: "autonumber"},
+		{ID: 13, Type: "location"},
+		{ID: 14, Type: "button"},
+	}
+	cfg := Config{
+		Filters: &Filters{
+			Conj: "and",
+			Rules: []Rule{
+				{F: 10, Op: "gte", V: 12.5},
+				{F: 11, Op: "lte", V: 80},
+				{F: 12, Op: "gt", V: 1},
+				{F: 13, Op: "contains", V: "北京"},
+			},
+		},
+		Sorts: []Sort{
+			{F: 10, Asc: true},
+			{F: 12, Asc: false},
+		},
+	}
+	where, args, order, err := Compile(extFields, cfg)
+	if err != nil {
+		t.Fatalf("compile extended fields: %v", err)
+	}
+	if len(args) != 4 {
+		t.Fatalf("expected 4 args, got %d: %v", len(args), args)
+	}
+	if !strings.Contains(where, "float8") || !strings.Contains(where, "strpos") {
+		t.Fatalf("unexpected where SQL: %s", where)
+	}
+	if !strings.Contains(order, "(cells ->> '10'))::float8 ASC NULLS LAST") || !strings.Contains(order, "(cells ->> '12'))::float8 DESC NULLS LAST") {
+		t.Fatalf("unexpected sort SQL: %s", order)
+	}
+	if err := ValidateLocked(extFields, cfg); err != nil {
+		t.Fatalf("ValidateLocked rejected extended fields: %v", err)
+	}
+
+	// Non-numeric filter on currency/progress/autonumber must fail.
+	for _, fid := range []int64{10, 11, 12} {
+		bad := Config{Filters: &Filters{Conj: "and", Rules: []Rule{{F: fid, Op: "gt", V: "nope"}}}}
+		if err := Validate(extFields, bad); err == nil {
+			t.Fatalf("expected numeric validation error for field %d", fid)
+		}
+	}
+
+	// In-memory Match & decimal-accurate SortIndexes.
+	recs := []map[string]json.RawMessage{
+		{"10": num("12.9"), "11": num("75"), "12": num("3"), "13": cell("北京市海淀区 | 39.98,116.31")},
+		{"10": num("12.5"), "11": num("50"), "12": num("2"), "13": cell("北京市朝阳区")},
+		{"10": num("9.9"), "11": num("90"), "12": num("1"), "13": cell("上海市浦东新区")},
+	}
+	var matched []int
+	for _, idx := range SortIndexes(extFields, cfg, len(recs), func(i int) map[string]json.RawMessage { return recs[i] }) {
+		if Match(extFields, cfg, recs[idx]) {
+			matched = append(matched, idx)
+		}
+	}
+	if len(matched) != 2 || matched[0] != 1 || matched[1] != 0 {
+		t.Fatalf("expected decimal-sorted matches [1, 0], got %v", matched)
+	}
+}
+
+func TestGroupsAndParentFieldConfig(t *testing.T) {
+	spec := []FieldSpec{
+		{ID: 1, Type: "text", IsPrimary: true},
+		{ID: 2, Type: "select", Options: []string{"A", "B"}},
+		{ID: 3, Type: "person"},
+		{ID: 4, Type: "currency"},
+		{ID: 5, Type: "link"},
+	}
+
+	// 1..3 levels valid + ParentField valid.
+	g1 := int64(2)
+	valid := Config{Group: &g1, Groups: []int64{2, 3, 4}, ParentField: 5}
+	if err := Validate(spec, valid); err != nil {
+		t.Fatalf("valid multi-group + parentField rejected: %v", err)
+	}
+	if got := valid.GroupFields(); len(got) != 3 || got[0] != 2 || got[1] != 3 || got[2] != 4 {
+		t.Fatalf("GroupFields: %v", got)
+	}
+
+	// Legacy Group-only stays backward-compatible.
+	legacy := Config{Group: &g1}
+	if got := legacy.GroupFields(); len(got) != 1 || got[0] != 2 {
+		t.Fatalf("legacy GroupFields: %v", got)
+	}
+	// NormalizeGroups syncs Group with Groups[0].
+	syncCfg := Config{Groups: []int64{3, 4}}
+	syncCfg.NormalizeGroups()
+	if syncCfg.Group == nil || *syncCfg.Group != 3 {
+		t.Fatalf("NormalizeGroups did not sync Group: %+v", syncCfg)
+	}
+
+	// >3 grouping levels rejected.
+	if err := Validate(spec, Config{Groups: []int64{1, 2, 3, 4}}); err == nil {
+		t.Fatal(">3 grouping levels accepted")
+	}
+	// Duplicate group field rejected.
+	if err := Validate(spec, Config{Groups: []int64{2, 2}}); err == nil {
+		t.Fatal("duplicate group field accepted")
+	}
+	// Unknown group field rejected.
+	if err := Validate(spec, Config{Groups: []int64{2, 999}}); err == nil {
+		t.Fatal("unknown group field accepted")
+	}
+	// Unknown or negative ParentField rejected.
+	if err := Validate(spec, Config{ParentField: 999}); err == nil {
+		t.Fatal("unknown parentField accepted")
+	}
+	if err := Validate(spec, Config{ParentField: -1}); err == nil {
+		t.Fatal("negative parentField accepted")
+	}
+}

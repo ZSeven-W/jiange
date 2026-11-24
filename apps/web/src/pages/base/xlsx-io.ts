@@ -25,6 +25,8 @@ const READONLY_OR_DERIVED_TYPES = new Set([
   "created_by",
   "created_at",
   "modified_at",
+  "autonumber",
+  "button",
 ]);
 
 function sanitizeXmlString(value: string): string {
@@ -76,11 +78,16 @@ function formatBaseCellForXlsx(
 
   switch (f.type) {
     case "number":
-    case "rating": {
+    case "rating":
+    case "currency":
+    case "progress": {
       if (typeof val === "number" && Number.isFinite(val)) return val;
       const n = Number(val);
       return Number.isFinite(n) ? n : sanitizeXmlString(String(val));
     }
+    case "autonumber":
+    case "button":
+      return sanitizeXmlString(REGISTRY[f.type].format(val, f, members));
     case "checkbox":
       return typeof val === "boolean" ? val : Boolean(val);
     case "select":
@@ -89,6 +96,7 @@ function formatBaseCellForXlsx(
     case "url":
     case "phone":
     case "email":
+    case "location":
       return sanitizeXmlString(String(val));
     case "multi_select":
       return Array.isArray(val)
@@ -246,6 +254,17 @@ function parseCellForExistingField(
       if (typeof rawValue === "number" && Number.isFinite(rawValue)) return { ok: true, value: rawValue };
       const n = Number(text);
       return Number.isFinite(n) ? { ok: true, value: n } : { ok: false };
+    }
+    case "currency": {
+      if (typeof rawValue === "number" && Number.isFinite(rawValue)) return { ok: true, value: rawValue };
+      const cleaned = text.replace(/HK\$|[¥$€£,\s]/gi, "").trim();
+      const n = Number(cleaned);
+      return Number.isFinite(n) ? { ok: true, value: n } : { ok: false };
+    }
+    case "progress": {
+      const cleaned = text.replace(/%$/, "").trim();
+      const n = typeof rawValue === "number" ? rawValue : Number(cleaned);
+      return Number.isFinite(n) && n >= 0 && n <= 100 ? { ok: true, value: n } : { ok: false };
     }
     case "rating": {
       if (typeof rawValue === "number" && Number.isInteger(rawValue) && rawValue >= 1 && rawValue <= 5) {

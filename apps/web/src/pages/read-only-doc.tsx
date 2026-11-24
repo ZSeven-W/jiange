@@ -22,6 +22,7 @@ import { isDocumentReferenceMarks, safeURL } from "@/lib/safe-url";
 import { BlockHandle } from "@/editor/block-handle";
 import { embedHref, embedKindLabel } from "@/editor/embed-block";
 import { ReminderBlockView } from "@/editor/reminder-block";
+import { AudioBlockView, CountdownBlockView, PollBlockView, TabsBlockView, VideoBlockView } from "@/editor/interactive-blocks";
 import { columnWeights, COLUMN_WIDTHS } from "@/editor/column-widths";
 import { useTableStickyHeader } from "@/editor/table-sticky-header";
 import { parseTableWidths, visibleTableWidths } from "@/editor/table-widths";
@@ -136,23 +137,12 @@ function formatSize(size: string | undefined): string {
   return n < 1024 ? `${n} B` : n < 1 << 20 ? `${(n / 1024).toFixed(0)} KB` : `${(n / (1 << 20)).toFixed(1)} MB`;
 }
 
-function ReadOnlyVideo({ url, name, disableFileDownloads = false }: { url?: string; name?: string; disableFileDownloads?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  const href = safeURL(url);
-  const native = !failed && href && /^https?:\/\//i.test(href) && /\.(mp4|webm|mov)(\?|$)/i.test(href);
-  if (native) return <video src={href} controls controlsList={disableFileDownloads ? "nodownload" : undefined} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} onError={() => setFailed(true)} className="my-2 aspect-video w-full max-w-[640px] rounded-lg border bg-black" />;
-  if (href && !disableFileDownloads) return <a href={href} target="_blank" rel="noopener noreferrer" className="my-2 block max-w-[640px] rounded-lg border px-3.5 py-3 text-primary">{name || href}</a>;
-  if (href) return <div className="my-2 rounded-lg border px-3.5 py-3 text-subtle">{name || "视频"} · 当前不提供外部链接</div>;
-  return <div className="my-2 rounded-lg border px-3.5 py-3 text-subtle">视频链接不可用</div>;
-}
-
-
 /** Renders a materialized snapshot using the same block representations as the editor. */
 export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage, commentDoc, comments = [], activeThread = null, onActivateComment, onCopyBlockLink }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void; commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void; onCopyBlockLink?: (blockId: string) => void }) {
   const [menuBlock, setMenuBlock] = useState<string | null>(null);
   const [touchBlock, setTouchBlock] = useState<string | null>(null);
   const actions = (block: Block) => onCopyBlockLink && <span className={cn("pointer-events-none absolute -left-10 top-0 z-20 flex items-center opacity-0 group-hover/public-block:pointer-events-auto group-hover/public-block:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 sm:-left-14 [&_[data-block-handle]]:gap-0.5 [&_[data-block-handle]]:px-1", (menuBlock === block.id || touchBlock === block.id) && "pointer-events-auto opacity-100")}><BlockHandle type={block.type} open={menuBlock === block.id} onOpenChange={(open) => setMenuBlock(open ? block.id : null)} can={{ link: true }} onAction={(action) => { if (action.kind === "link") onCopyBlockLink(block.id); }}/></span>;
-  const touch = (event: React.PointerEvent<HTMLDivElement>, id: string) => { if (event.pointerType === "touch" && event.target instanceof Element && event.target.closest("[data-public-block]")?.getAttribute("data-public-block") === id && !event.target.closest("a,button,input,textarea,video")) setTouchBlock(id); };
+  const touch = (event: React.PointerEvent<HTMLDivElement>, id: string) => { if (event.pointerType === "touch" && event.target instanceof Element && event.target.closest("[data-public-block]")?.getAttribute("data-public-block") === id && !event.target.closest("a,button,input,textarea,video,audio,iframe")) setTouchBlock(id); };
   const children = new Map<string, Block[]>();
   for (const block of view.blocks) {
     const group = children.get(block.parent) ?? [];
@@ -204,7 +194,11 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken, imageVersionSeq);
           content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;
         }
-        case "video": content = <ReadOnlyVideo url={block.props.url} name={block.props.name} disableFileDownloads={disableFileDownloads} />; break;
+        case "video": content = <VideoBlockView url={block.props.url} fileId={block.props.fileId} name={block.props.name} title={block.props.title} publicToken={publicToken} versionSeq={imageVersionSeq} disableFileDownloads={disableFileDownloads} readOnly />; break;
+        case "audio": content = <AudioBlockView url={block.props.url} fileId={block.props.fileId} name={block.props.name} title={block.props.title} publicToken={publicToken} versionSeq={imageVersionSeq} disableFileDownloads={disableFileDownloads} readOnly />; break;
+        case "poll": content = <PollBlockView props={block.props} readOnly />; break;
+        case "countdown": content = <CountdownBlockView title={block.props.title} targetAt={block.props.targetAt} theme={block.props.theme} readOnly />; break;
+        case "tabs": content = <TabsBlockView raw={block.props.tabs} readOnly />; break;
         case "bookmark": {
           const href = safeURL(block.props.url);
           content = <div className="my-2 flex max-w-[520px] items-center gap-3 rounded-lg border px-3.5 py-3"><span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(block.props.name || "W").slice(0, 1).toUpperCase()}</span><span className="min-w-0 flex-1">{href ? <a href={href} target="_blank" rel="noopener noreferrer" className="block truncate text-[14px] font-medium">{block.props.title || block.props.name || href}</a> : <span className="block truncate text-[14px] font-medium">{block.props.title || block.props.name || "网页卡片"}</span>}<span className="block truncate text-[12px] text-subtle">{href || "链接不可用"}</span></span></div>; break;

@@ -11,7 +11,7 @@ function summarize(records: readonly BaseRecord[], fields: readonly Field[], val
       const cell = value(record, field);
       if (cell === undefined || cell === null || cell === "" || (Array.isArray(cell) && cell.length === 0)) continue;
       count++;
-      if ((field.type === "number" || field.type === "formula" || field.type === "rating") && typeof cell === "number" && Number.isFinite(cell)) {
+      if ((field.type === "number" || field.type === "formula" || field.type === "rating" || field.type === "currency" || field.type === "progress") && typeof cell === "number" && Number.isFinite(cell)) {
         numericCount++;
         sum += cell;
       }

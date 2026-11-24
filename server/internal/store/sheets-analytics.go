@@ -7,11 +7,37 @@ import (
 )
 
 const (
-	sheetMaxChartsPerSheet      = 30
-	sheetMaxPivotTablesPerSheet = 20
-	sheetMaxPivotRowFields      = 3
-	sheetMaxPivotValues         = 6
+	sheetMaxChartsPerSheet        = 30
+	sheetMaxPivotTablesPerSheet   = 20
+	sheetMaxPivotRowFields        = 3
+	sheetMaxPivotValues           = 6
+	sheetMaxSparklinesPerSheet    = 200
+	sheetMaxOutlineGroupsPerSheet = 100
 )
+
+// SheetSparkline defines an inline SVG sparkline rendered inside a target worksheet cell.
+type SheetSparkline struct {
+	ID            string `json:"id"`
+	Row           int    `json:"row"`
+	Col           int    `json:"col"`
+	SourceTop     int    `json:"sourceTop"`
+	SourceLeft    int    `json:"sourceLeft"`
+	SourceBottom  int    `json:"sourceBottom"`
+	SourceRight   int    `json:"sourceRight"`
+	Type          string `json:"type"` // line | bar | winloss
+	Color         string `json:"color,omitempty"`
+	NegativeColor string `json:"negativeColor,omitempty"`
+	ShowMarkers   bool   `json:"showMarkers,omitempty"`
+}
+
+// SheetOutlineGroup defines a collapsible row or column outline group on a worksheet.
+type SheetOutlineGroup struct {
+	ID        string `json:"id"`
+	Axis      string `json:"axis"` // row | col
+	Start     int    `json:"start"`
+	End       int    `json:"end"`
+	Collapsed bool   `json:"collapsed,omitempty"`
+}
 
 // SheetChart defines a floating embedded chart anchored to a cell range on a worksheet.
 type SheetChart struct {
@@ -380,6 +406,188 @@ func adjustSheetPivotsDelete(pivots []SheetPivotTable, currentSheetID int64, axi
 			p.Values = nextVals
 		}
 		out = append(out, p)
+	}
+	return out
+}
+
+func validateAndNormalizeSheetSparklines(sparklines []SheetSparkline, rowCount, colCount int) ([]SheetSparkline, bool) {
+	if len(sparklines) > sheetMaxSparklinesPerSheet {
+		return nil, false
+	}
+	out := make([]SheetSparkline, 0, len(sparklines))
+	seenID := make(map[string]bool, len(sparklines))
+	seenCell := make(map[[2]int]bool, len(sparklines))
+	for _, sp := range sparklines {
+		id, ok := validRuleID(sp.ID)
+		if !ok || seenID[id] {
+			return nil, false
+		}
+		seenID[id] = true
+		if sp.Row < 0 || sp.Row >= rowCount || sp.Col < 0 || sp.Col >= colCount {
+			return nil, false
+		}
+		cellKey := [2]int{sp.Row, sp.Col}
+		if seenCell[cellKey] {
+			return nil, false
+		}
+		seenCell[cellKey] = true
+		t, l, b, r, ok := normalizeRect(sp.SourceTop, sp.SourceLeft, sp.SourceBottom, sp.SourceRight, rowCount, colCount)
+		if !ok {
+			return nil, false
+		}
+		switch sp.Type {
+		case "line", "bar", "winloss":
+		default:
+			return nil, false
+		}
+		color := strings.TrimSpace(sp.Color)
+		if color != "" && !sheetHexColorPattern.MatchString(color) {
+			return nil, false
+		}
+		negColor := strings.TrimSpace(sp.NegativeColor)
+		if negColor != "" && !sheetHexColorPattern.MatchString(negColor) {
+			return nil, false
+		}
+		out = append(out, SheetSparkline{
+			ID:            id,
+			Row:           sp.Row,
+			Col:           sp.Col,
+			SourceTop:     t,
+			SourceLeft:    l,
+			SourceBottom:  b,
+			SourceRight:   r,
+			Type:          sp.Type,
+			Color:         color,
+			NegativeColor: negColor,
+			ShowMarkers:   sp.ShowMarkers,
+		})
+	}
+	return out, true
+}
+
+func validateAndNormalizeSheetOutlineGroups(groups []SheetOutlineGroup, rowCount, colCount int) ([]SheetOutlineGroup, bool) {
+	if len(groups) > sheetMaxOutlineGroupsPerSheet {
+		return nil, false
+	}
+	out := make([]SheetOutlineGroup, 0, len(groups))
+	seenID := make(map[string]bool, len(groups))
+	for _, g := range groups {
+		id, ok := validRuleID(g.ID)
+		if !ok || seenID[id] {
+			return nil, false
+		}
+		seenID[id] = true
+		var limit int
+		switch g.Axis {
+		case "row":
+			limit = rowCount
+		case "col":
+			limit = colCount
+		default:
+			return nil, false
+		}
+		start, end := g.Start, g.End
+		if start > end {
+			start, end = end, start
+		}
+		if start < 0 || end >= limit {
+			return nil, false
+		}
+		out = append(out, SheetOutlineGroup{
+			ID:        id,
+			Axis:      g.Axis,
+			Start:     start,
+			End:       end,
+			Collapsed: g.Collapsed,
+		})
+	}
+	return out, true
+}
+
+func cloneSheetSparklines(sparklines []SheetSparkline) []SheetSparkline {
+	if len(sparklines) == 0 {
+		return []SheetSparkline{}
+	}
+	return slices.Clone(sparklines)
+}
+
+func cloneSheetOutlineGroups(groups []SheetOutlineGroup) []SheetOutlineGroup {
+	if len(groups) == 0 {
+		return []SheetOutlineGroup{}
+	}
+	return slices.Clone(groups)
+}
+
+func adjustSheetSparklinesInsert(sparklines []SheetSparkline, axis string, index, count int) []SheetSparkline {
+	out := cloneSheetSparklines(sparklines)
+	for i := range out {
+		if axis == "row" {
+			if out[i].Row >= index {
+				out[i].Row += count
+			}
+			out[i].SourceTop, out[i].SourceBottom = adjustIntervalInsert(out[i].SourceTop, out[i].SourceBottom, index, count)
+		} else {
+			if out[i].Col >= index {
+				out[i].Col += count
+			}
+			out[i].SourceLeft, out[i].SourceRight = adjustIntervalInsert(out[i].SourceLeft, out[i].SourceRight, index, count)
+		}
+	}
+	return out
+}
+
+func adjustSheetSparklinesDelete(sparklines []SheetSparkline, axis string, index, count int) []SheetSparkline {
+	out := make([]SheetSparkline, 0, len(sparklines))
+	delEnd := index + count - 1
+	for _, sp := range sparklines {
+		var keep bool
+		if axis == "row" {
+			if sp.Row >= index && sp.Row <= delEnd {
+				continue
+			}
+			if sp.Row > delEnd {
+				sp.Row -= count
+			}
+			sp.SourceTop, sp.SourceBottom, keep = adjustIntervalDelete(sp.SourceTop, sp.SourceBottom, index, count)
+		} else {
+			if sp.Col >= index && sp.Col <= delEnd {
+				continue
+			}
+			if sp.Col > delEnd {
+				sp.Col -= count
+			}
+			sp.SourceLeft, sp.SourceRight, keep = adjustIntervalDelete(sp.SourceLeft, sp.SourceRight, index, count)
+		}
+		if keep {
+			out = append(out, sp)
+		}
+	}
+	return out
+}
+
+func adjustSheetOutlineGroupsInsert(groups []SheetOutlineGroup, axis string, index, count int) []SheetOutlineGroup {
+	out := cloneSheetOutlineGroups(groups)
+	for i := range out {
+		if out[i].Axis != axis {
+			continue
+		}
+		out[i].Start, out[i].End = adjustIntervalInsert(out[i].Start, out[i].End, index, count)
+	}
+	return out
+}
+
+func adjustSheetOutlineGroupsDelete(groups []SheetOutlineGroup, axis string, index, count int) []SheetOutlineGroup {
+	out := make([]SheetOutlineGroup, 0, len(groups))
+	for _, g := range groups {
+		if g.Axis != axis {
+			out = append(out, g)
+			continue
+		}
+		ns, ne, keep := adjustIntervalDelete(g.Start, g.End, index, count)
+		if keep {
+			g.Start, g.End = ns, ne
+			out = append(out, g)
+		}
 	}
 	return out
 }

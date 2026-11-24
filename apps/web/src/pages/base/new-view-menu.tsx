@@ -9,7 +9,8 @@ import { ViewGlyph } from "./view-glyph";
 export const VIEW_CHOICES: ReadonlyArray<{ type: View["type"]; label: string }> = [
   { type: "grid", label: "表格视图" }, { type: "kanban", label: "看板视图" },
   { type: "calendar", label: "日历视图" }, { type: "gantt", label: "甘特视图" },
-  { type: "gallery", label: "画册视图" }, { type: "form", label: "表单视图" },
+  { type: "gallery", label: "画册视图" }, { type: "hierarchy", label: "层级视图" },
+  { type: "form", label: "表单视图" },
 ];
 
 /** A success response must identify the requested view before it is selected. */

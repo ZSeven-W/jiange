@@ -48,12 +48,19 @@ export function isGroupableField(f: Pick<BaseField, "type">): boolean {
     f.type === "person" ||
     f.type === "date" ||
     f.type === "checkbox" ||
-    f.type === "text"
+    f.type === "text" ||
+    f.type === "location"
   );
 }
 
 export function isNumericField(f: Pick<BaseField, "type">): boolean {
-  return f.type === "number" || f.type === "rating";
+  return (
+    f.type === "number" ||
+    f.type === "rating" ||
+    f.type === "currency" ||
+    f.type === "progress" ||
+    f.type === "autonumber"
+  );
 }
 
 function numericValue(record: BaseRecord, fieldId: number | undefined): number | null {

@@ -1,7 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { baseApi, type BaseTable, type Cell, type Field, type FieldType, type User } from "@/lib/api";
-import { FIELD_TYPES, PALETTE, REGISTRY } from "./registry";
+import {
+  autonumberOptions,
+  buttonOptions,
+  CURRENCY_CODES,
+  CURRENCY_SYMBOLS,
+  currencyOptions,
+  FIELD_TYPES,
+  formatAutonumber,
+  PALETTE,
+  progressStyle,
+  REGISTRY,
+  type ButtonActionKind,
+  type CurrencyCode,
+  type ProgressStyle,
+} from "./registry";
 import { TypeGlyph } from "./cells";
 import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -53,6 +67,19 @@ export function FieldForm({
   const [rollupAgg, setRollupAgg] = useState<RollupAgg>(() =>
     initial?.type === "lookup" ? getLookupRollup(initial) : "raw",
   );
+  const initCurrency = currencyOptions(initial?.type === "currency" ? initial : {});
+  const [currencyCode, setCurrencyCode] = useState<CurrencyCode>(initCurrency.code);
+  const [currencyPrecision, setCurrencyPrecision] = useState<string>(String(initCurrency.precision));
+  const [progStyle, setProgStyle] = useState<ProgressStyle>(() =>
+    initial?.type === "progress" ? progressStyle(initial) : "bar",
+  );
+  const initAuto = autonumberOptions(initial?.type === "autonumber" ? initial : {});
+  const [autoPrefix, setAutoPrefix] = useState<string>(initAuto.prefix);
+  const [autoDigits, setAutoDigits] = useState<string>(String(initAuto.digits));
+  const initBtn = buttonOptions(initial?.type === "button" ? initial : {});
+  const [btnLabel, setBtnLabel] = useState<string>(initBtn.label);
+  const [btnAction, setBtnAction] = useState<ButtonActionKind>(initBtn.action);
+  const [btnTarget, setBtnTarget] = useState<string>(initBtn.target);
   const [fetchedTableFields, setFetchedTableFields] = useState<Field[]>([]);
   const [fetchedTargetFields, setFetchedTargetFields] = useState<Field[]>([]);
   const [loadingTargets, setLoadingTargets] = useState(false);
@@ -205,12 +232,22 @@ export function FieldForm({
           const lookupOptions = type === "lookup" && linkFieldId > 0 && lookupFieldId > 0
             ? buildLookupOptions(linkFieldId, lookupFieldId, rollupAgg)
             : undefined;
+          const extendedOptions =
+            type === "currency"
+              ? [currencyCode, currencyPrecision]
+              : type === "progress"
+                ? [progStyle]
+                : type === "autonumber"
+                  ? [autoPrefix.trim(), autoDigits]
+                  : type === "button"
+                    ? [btnLabel.trim() || "执行", btnAction, btnTarget.trim()]
+                    : undefined;
           await onSubmit({
             name: finalName,
             type,
             description: desc.trim(),
             formula: type === "formula" ? formula.trim() : undefined,
-            options: def.hasOptions ? names : type === "lookup" ? lookupOptions : linkOptions,
+            options: def.hasOptions ? names : type === "lookup" ? lookupOptions : type === "link" ? linkOptions : extendedOptions,
             optionColors: def.hasOptions ? colors.slice(0, names.length) : undefined,
             targetTableId: type === "link" && targetTableId > 0 ? targetTableId : undefined,
             multiple: type === "person" ? multi : false,
@@ -414,6 +451,137 @@ export function FieldForm({
           data-field-formula
         />
       )}
+      {type === "currency" && (
+        <div className="space-y-2.5 rounded-md border border-[#e5e6eb] bg-[#f7f8fa]/60 p-2.5 dark:bg-sidebar/40" data-field-currency-config>
+          <div className="space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("货币单位")}</span>
+            <FeishuSelect
+              value={currencyCode}
+              options={CURRENCY_CODES.map((code) => ({
+                value: code,
+                label: `${CURRENCY_SYMBOLS[code]} ${code}`,
+              }))}
+              onChange={(val) => setCurrencyCode(val as CurrencyCode)}
+              ariaLabel={t("货币单位")}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+              dataAttr={{ "data-field-currency-code": true }}
+            />
+          </div>
+          <div className="space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("小数位数")}</span>
+            <FeishuSelect
+              value={currencyPrecision}
+              options={["0", "1", "2", "3", "4"].map((d) => ({
+                value: d,
+                label: t("{n} 位小数", { n: d }),
+              }))}
+              onChange={setCurrencyPrecision}
+              ariaLabel={t("小数位数")}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+              dataAttr={{ "data-field-currency-precision": true }}
+            />
+          </div>
+        </div>
+      )}
+      {type === "progress" && (
+        <div className="space-y-1.5 rounded-md border border-[#e5e6eb] bg-[#f7f8fa]/60 p-2.5 dark:bg-sidebar/40" data-field-progress-config>
+          <span className="text-[12px] text-muted-foreground">{t("展示样式")}</span>
+          <FeishuSelect
+            value={progStyle}
+            options={[
+              { value: "bar", label: t("进度条") },
+              { value: "ring", label: t("环形") },
+              { value: "percent", label: t("百分比") },
+            ]}
+            onChange={(val) => setProgStyle(val as ProgressStyle)}
+            ariaLabel={t("展示样式")}
+            className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+            dataAttr={{ "data-field-progress-style": true }}
+          />
+        </div>
+      )}
+      {type === "autonumber" && (
+        <div className="space-y-2.5 rounded-md border border-[#e5e6eb] bg-[#f7f8fa]/60 p-2.5 dark:bg-sidebar/40" data-field-autonumber-config>
+          <label className="block space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("编号前缀")}</span>
+            <input
+              value={autoPrefix}
+              maxLength={32}
+              onChange={(e) => setAutoPrefix(e.target.value)}
+              placeholder={t("可选，如 TASK-")}
+              className="h-8 w-full rounded-md border bg-surface px-2.5 text-[13px] outline-none focus:border-primary"
+              data-field-autonumber-prefix
+            />
+          </label>
+          <div className="space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("数字位数")}</span>
+            <FeishuSelect
+              value={autoDigits}
+              options={["1", "2", "3", "4", "5", "6", "8"].map((d) => ({
+                value: d,
+                label: `${d} (${"1".padStart(Number(d), "0")})`,
+              }))}
+              onChange={setAutoDigits}
+              ariaLabel={t("数字位数")}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+              dataAttr={{ "data-field-autonumber-digits": true }}
+            />
+          </div>
+          <div className="flex items-center justify-between text-[12px] text-subtle">
+            <span>{t("编号预览")}</span>
+            <span className="rounded bg-surface px-1.5 py-0.5 font-mono text-foreground border">
+              {formatAutonumber(1, { options: [autoPrefix.trim(), autoDigits] })}
+            </span>
+          </div>
+        </div>
+      )}
+      {type === "button" && (
+        <div className="space-y-2.5 rounded-md border border-[#e5e6eb] bg-[#f7f8fa]/60 p-2.5 dark:bg-sidebar/40" data-field-button-config>
+          <label className="block space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("按钮文案")}</span>
+            <input
+              value={btnLabel}
+              maxLength={64}
+              onChange={(e) => setBtnLabel(e.target.value)}
+              placeholder={t("执行")}
+              className="h-8 w-full rounded-md border bg-surface px-2.5 text-[13px] outline-none focus:border-primary"
+              data-field-button-label
+            />
+          </label>
+          <div className="space-y-1">
+            <span className="text-[12px] text-muted-foreground">{t("点击动作")}</span>
+            <FeishuSelect
+              value={btnAction}
+              options={[
+                { value: "open_url", label: t("打开链接") },
+                { value: "copy_row", label: t("复制记录摘要") },
+                { value: "webhook", label: t("触发 Webhook") },
+              ]}
+              onChange={(val) => setBtnAction(val as ButtonActionKind)}
+              ariaLabel={t("点击动作")}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+              dataAttr={{ "data-field-button-action": true }}
+            />
+          </div>
+          {btnAction !== "copy_row" && (
+            <label className="block space-y-1">
+              <span className="text-[12px] text-muted-foreground">{btnAction === "open_url" ? t("目标链接模板") : t("Webhook 地址或说明")}</span>
+              <input
+                value={btnTarget}
+                onChange={(e) => setBtnTarget(e.target.value)}
+                placeholder={t("支持 {字段名} 占位符，如 https://example.com/{编号}")}
+                className="h-8 w-full rounded-md border bg-surface px-2.5 font-mono text-[12px] outline-none focus:border-primary"
+                data-field-button-target
+              />
+            </label>
+          )}
+        </div>
+      )}
+      {type === "location" && (
+        <p className="text-[12px] text-subtle" data-field-location-hint>
+          {t("支持输入地点地址，或使用「地址 | 纬度,经度」格式记录坐标。")}
+        </p>
+      )}
       {typeChanged && <p className="text-[12px] leading-4 text-amber-600">{t("切换类型会自动转换兼容的值，不兼容的值将被清空。")}</p>}
       {error && <p role="alert" className="text-[12px] text-destructive">{error}</p>}
       {uncertain && <button type="button" className="text-[12px] text-primary underline" onClick={() => { onAcknowledge?.(); setUncertain(false); setError(""); }}>{t("已核对，允许再次提交")}</button>}
@@ -436,7 +604,9 @@ export function FieldForm({
 /** Field types that accept a 默认值, and the input used to edit it. */
 const DEFAULT_KINDS: Partial<Record<FieldType, "text" | "number" | "date" | "select" | "checkbox" | "multi" | "person">> = {
   multi_select: "multi", person: "person",
-  text: "text", url: "text", phone: "text", email: "text", number: "number", rating: "number", date: "date", select: "select", checkbox: "checkbox",
+  text: "text", url: "text", phone: "text", email: "text", location: "text",
+  number: "number", rating: "number", currency: "number", progress: "number",
+  date: "date", select: "select", checkbox: "checkbox",
 };
 
 /** Cell value for the 默认值 input; null clears the default. */
@@ -444,7 +614,12 @@ export function defaultCell(type: FieldType, raw: string, options: string[], mem
   const kind = DEFAULT_KINDS[type];
   const v = raw.trim();
   if (!kind || !v) return null;
-  if (kind === "number") { const n = Number(v); return Number.isFinite(n) ? n : null; }
+  if (kind === "number") {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return null;
+    if (type === "progress" && (n < 0 || n > 100)) return null;
+    return n;
+  }
   if (kind === "checkbox") return v === "true" ? true : null;
   if (kind === "select") return options.includes(v) ? v : null;
   if (kind === "multi") { const picked = options.filter((o) => parseMulti(v).includes(o)); return picked.length ? picked : null; }
@@ -543,8 +718,8 @@ export function FieldMenu({ field, frozen, onEdit, onDelete, onDuplicate, onActi
               frozen ? ["unfreeze", t("取消冻结"), Snowflake] : ["freeze", t("冻结至此列"), Snowflake],
               ...(!field.isPrimary ? [["hide", t("隐藏字段/列"), EyeOff]] : []),
               ["sep1"],
-              ["sort-asc", field.type === "number" ? t("按 1 → 9 排序") : t("按 A 到 Z 排序"), ArrowDownAZ],
-              ["sort-desc", field.type === "number" ? t("按 9 → 1 排序") : t("按 Z 到 A 排序"), ArrowDownZA],
+              ["sort-asc", (field.type === "number" || field.type === "currency" || field.type === "progress" || field.type === "autonumber" || field.type === "rating") ? t("按 1 → 9 排序") : t("按 A 到 Z 排序"), ArrowDownAZ],
+              ["sort-desc", (field.type === "number" || field.type === "currency" || field.type === "progress" || field.type === "autonumber" || field.type === "rating") ? t("按 9 → 1 排序") : t("按 Z 到 A 排序"), ArrowDownZA],
               ["sep2"],
               ["group", t("按 {name} 分组", { name: field.name }), LayoutPanelTop],
               ["filter", t("按 {name} 筛选", { name: field.name }), Filter],

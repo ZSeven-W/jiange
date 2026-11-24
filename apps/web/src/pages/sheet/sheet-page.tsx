@@ -22,9 +22,11 @@ import {
   type SheetConditionalFormat,
   type SheetDataValidation,
   type SheetMerge,
+  type SheetOutlineGroup,
   type SheetPivotTable,
   type SheetProtectedRange,
   type SheetSnapshot,
+  type SheetSparkline,
   type SheetStylePatch,
   type SheetWorksheet,
 } from "@/lib/api";
@@ -42,6 +44,7 @@ import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
 import { ChevronRight, Clock, Columns3, Eraser, Filter, History, Home, Lock, MessageSquare, MoreHorizontal, Pin, Printer, Rows3, Search, Share2, Tag, X } from "lucide-react";
 import { FenwickVirtualizer } from "@jiange/render-gpu";
 import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
+import { isSafeSheetImageUrl } from "@jiange/sheet-sdk/formula-functions";
 import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
 import {
   buildMergeLookup,
@@ -64,6 +67,17 @@ import { SheetSidePanel, type SheetPanelMode } from "./sheet-panels";
 import { computePivotTable, pivotResultToCellMatrix } from "./sheet-analytics";
 import { SheetChartOverlay } from "./sheet-chart-overlay";
 import { SheetGpuGridLayer } from "./sheet-gpu-layer";
+import { extractSparklineValues, SheetSparklinePopover, SheetSparklineSvg } from "./sheet-sparkline";
+import {
+  addOutlineGroup,
+  getOutlineGroupsAtAnchor,
+  getOutlineHiddenIndices,
+  hasOutlineGroupInRange,
+  isIndexInExpandedOutlineGroup,
+  removeOutlineGroupsInRange,
+  toggleOutlineGroupCollapsed,
+} from "./sheet-outline";
+import { SheetCellImagePopover, SheetCellImagePreviewModal } from "./sheet-cell-image";
 import { computeSheetSelectionStats } from "./sheet-selection-stats";
 import { SheetSelectionStatsBar } from "./sheet-selection-stats-bar";
 import {
@@ -313,6 +327,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [importing, setImporting] = useState(false);
   const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
   const [activePanel, setActivePanel] = useState<SheetPanelMode | null>(null);
+  const [sparklinePopover, setSparklinePopover] = useState<{ left: number; top: number; bottom: number; right: number } | null>(null);
+  const [cellImagePopover, setCellImagePopover] = useState<{ left: number; top: number; bottom: number; right: number } | null>(null);
+  const [previewCellImage, setPreviewCellImage] = useState<{ url: string; alt?: string; point: SheetPoint } | null>(null);
   const [printOpen, setPrintOpen] = useState(false);
   const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number; row: number; col: number } | null>(null);
   const [dropdownCell, setDropdownCell] = useState<{ sheetId: number; row: number; col: number } | null>(null);
@@ -535,12 +552,41 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     () => (activeSheet ? (localFilterRules ? { ...activeSheet.filter, enabled: true, rules: localFilterRules } : activeSheet.filter) : undefined),
     [activeSheet, localFilterRules],
   );
-  const visibleRows = useMemo(
-    () => (activeSheet ? getVisibleRowIndices({ ...activeSheet, filter: effectiveFilter ?? {} }, activeEvalMap) : []),
-    [activeSheet, effectiveFilter, activeEvalMap],
+  const hiddenOutlineRows = useMemo(
+    () => getOutlineHiddenIndices(activeSheet?.outlineGroups, "row"),
+    [activeSheet?.outlineGroups],
   );
+  const hiddenOutlineCols = useMemo(
+    () => getOutlineHiddenIndices(activeSheet?.outlineGroups, "col"),
+    [activeSheet?.outlineGroups],
+  );
+  const sparklineByCellKey = useMemo(() => {
+    const map = new Map<string, SheetSparkline>();
+    for (const sp of activeSheet?.sparklines ?? []) {
+      map.set(`${sp.row}:${sp.col}`, sp);
+    }
+    return map;
+  }, [activeSheet?.sparklines]);
+  const selectionBoundsMemo = useMemo(() => selectionBounds(selection), [selection]);
+  const hasRowGroupInSelection = useMemo(
+    () => hasOutlineGroupInRange(activeSheet?.outlineGroups, "row", selectionBoundsMemo.top, selectionBoundsMemo.bottom),
+    [activeSheet?.outlineGroups, selectionBoundsMemo.top, selectionBoundsMemo.bottom],
+  );
+  const hasColGroupInSelection = useMemo(
+    () => hasOutlineGroupInRange(activeSheet?.outlineGroups, "col", selectionBoundsMemo.left, selectionBoundsMemo.right),
+    [activeSheet?.outlineGroups, selectionBoundsMemo.left, selectionBoundsMemo.right],
+  );
+  const visibleRows = useMemo(() => {
+    if (!activeSheet) return [];
+    const base = getVisibleRowIndices({ ...activeSheet, filter: effectiveFilter ?? {} }, activeEvalMap);
+    if (hiddenOutlineRows.size === 0) return base;
+    return base.filter((rowIdx) => !hiddenOutlineRows.has(rowIdx));
+  }, [activeSheet, effectiveFilter, activeEvalMap, hiddenOutlineRows]);
 
-  const colWidths = useMemo(() => (activeSheet?.columns ?? []).map((c) => c.size || DEFAULT_COL_WIDTH), [activeSheet?.columns]);
+  const colWidths = useMemo(
+    () => (activeSheet?.columns ?? []).map((c, idx) => (hiddenOutlineCols.has(idx) ? 0 : c.size || DEFAULT_COL_WIDTH)),
+    [activeSheet?.columns, hiddenOutlineCols],
+  );
   const rowHeights = useMemo(() => (activeSheet?.rows ?? []).map((r) => r.size || DEFAULT_ROW_HEIGHT), [activeSheet?.rows]);
   const colLeftOffsets = useMemo(() => {
     const arr: number[] = [];
@@ -1116,6 +1162,45 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     } finally {
       setSavingCount((n) => Math.max(0, n - 1));
     }
+  };
+
+  const handleSaveSparklines = async (nextSparklines: SheetSparkline[]) => {
+    if (!activeSheet || !canEdit) return false;
+    return handleWorksheetPatch(activeSheet.id, { sparklines: nextSparklines });
+  };
+
+  const handleToggleGroupAxis = async (axis: "row" | "col") => {
+    if (!activeSheet || !canEdit) return;
+    const b = selectionBounds(selection);
+    const start = axis === "row" ? b.top : b.left;
+    const end = axis === "row" ? b.bottom : b.right;
+    const existing = activeSheet.outlineGroups ?? [];
+    const next: SheetOutlineGroup[] = hasOutlineGroupInRange(existing, axis, start, end)
+      ? removeOutlineGroupsInRange(existing, axis, start, end)
+      : addOutlineGroup(existing, axis, start, end);
+    await handleWorksheetPatch(activeSheet.id, { outlineGroups: next });
+  };
+
+  const handleToggleOutlineGroup = async (groupId: string) => {
+    if (!activeSheet) return;
+    const existing = activeSheet.outlineGroups ?? [];
+    const next = toggleOutlineGroupCollapsed(existing, groupId);
+    if (canEdit) {
+      await handleWorksheetPatch(activeSheet.id, { outlineGroups: next });
+    } else {
+      qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          sheets: old.sheets.map((s) => (s.id === activeSheet.id ? { ...s, outlineGroups: next } : s)),
+        };
+      });
+    }
+  };
+
+  const handleInsertCellImageFormula = async (formula: string) => {
+    if (!activeSheet || !canEdit) return;
+    await commitCellEdits([{ row: selection.focus.row, col: selection.focus.col, raw: formula }]);
   };
 
   const handleUpdateValidations = async (next: SheetDataValidation[]) => {
@@ -2212,6 +2297,20 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         activePanel={activePanel}
         unresolvedCommentCount={unresolvedCommentCount}
         onTogglePanel={handleTogglePanel}
+        sparklineOpen={sparklinePopover !== null}
+        onOpenSparkline={(anchor) => {
+          setCellImagePopover(null);
+          setSparklinePopover((cur) => (cur ? null : anchor));
+        }}
+        cellImageOpen={cellImagePopover !== null}
+        onOpenCellImage={(anchor) => {
+          setSparklinePopover(null);
+          setCellImagePopover((cur) => (cur ? null : anchor));
+        }}
+        hasRowGroupInSelection={hasRowGroupInSelection}
+        hasColGroupInSelection={hasColGroupInSelection}
+        onToggleGroupRows={() => void handleToggleGroupAxis("row")}
+        onToggleGroupCols={() => void handleToggleGroupAxis("col")}
         onCollapseToolbar={() => setToolbarCollapsed(true)}
       />
       )}
@@ -2446,12 +2545,15 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               onClick={() => setSelection({ anchor: { row: 0, col: 0 }, focus: { row: activeSheet.rows.length - 1, col: activeSheet.columns.length - 1 } })}
             />
             {activeSheet.columns.map((col, cIdx) => {
+              if (hiddenOutlineCols.has(cIdx)) return null;
               const w = colWidths[cIdx];
               const isFrozenCol = cIdx < activeSheet.frozenCols;
               const activeCol = selection.focus.col === cIdx;
               const colFilterRule = effectiveFilter?.rules?.[String(cIdx)];
               const colFiltered = isColumnFilterActive(colFilterRule);
               const filterOpenHere = filterPopover?.col === cIdx;
+              const colOutlineAnchors = getOutlineGroupsAtAnchor(activeSheet.outlineGroups, "col", cIdx);
+              const colInExpandedOutline = isIndexInExpandedOutlineGroup(activeSheet.outlineGroups, "col", cIdx);
               return (
                 <div
                   key={col.id}
@@ -2471,6 +2573,32 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                       : "bg-[#f5f6f7] text-[#646a73]"
                   } ${cIdx === activeSheet.frozenCols - 1 ? "border-r-2 border-r-[#9eb7f5]" : ""}`}
                 >
+                  {colInExpandedOutline && (
+                    <span aria-hidden="true" className="pointer-events-none absolute left-0 right-0 top-0 h-[2px] bg-[#3370ff]/45" />
+                  )}
+                  {colOutlineAnchors.length > 0 && (
+                    <div className="absolute left-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5">
+                      {colOutlineAnchors.map((grp) => (
+                        <button
+                          key={grp.id}
+                          type="button"
+                          data-outline-toggle={grp.id}
+                          data-outline-axis="col"
+                          data-outline-collapsed={grp.collapsed ? "true" : "false"}
+                          title={grp.collapsed ? t("展开列分组") : t("折叠列分组")}
+                          aria-label={grp.collapsed ? t("展开列分组") : t("折叠列分组")}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleOutlineGroup(grp.id);
+                          }}
+                          className="grid size-3.5 place-items-center rounded-[2px] border border-[#c9cdd4] bg-white text-[10px] font-bold leading-none text-[#4b5058] shadow-2xs hover:border-[#3370ff] hover:text-[#3370ff]"
+                        >
+                          {grp.collapsed ? "+" : "−"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <span>{columnName(cIdx)}</span>
                   {(activeSheet.filter?.enabled || canEdit) && (
                     <button
@@ -2536,6 +2664,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               const rh = rowHeights[rowIdx];
               const isFrozenRow = rowIdx < activeSheet.frozenRows;
               const b = selectionBounds(selection);
+              const rowOutlineAnchors = getOutlineGroupsAtAnchor(activeSheet.outlineGroups, "row", rowIdx);
+              const rowInExpandedOutline = isIndexInExpandedOutlineGroup(activeSheet.outlineGroups, "row", rowIdx);
               return (
                 <div
                   key={rowAxis.id}
@@ -2556,7 +2686,33 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                       : "bg-[#f5f6f7] text-[#8f959e]"
                   }`}
                 >
-                  <span>{rowIdx + 1}</span>
+                  {rowInExpandedOutline && (
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 top-0 w-[2px] bg-[#3370ff]/45" />
+                  )}
+                  {rowOutlineAnchors.length > 0 && (
+                    <div className="absolute left-1 top-1/2 z-10 flex -translate-y-1/2 items-center gap-0.5">
+                      {rowOutlineAnchors.map((grp) => (
+                        <button
+                          key={grp.id}
+                          type="button"
+                          data-outline-toggle={grp.id}
+                          data-outline-axis="row"
+                          data-outline-collapsed={grp.collapsed ? "true" : "false"}
+                          title={grp.collapsed ? t("展开行分组") : t("折叠行分组")}
+                          aria-label={grp.collapsed ? t("展开行分组") : t("折叠行分组")}
+                          onPointerDown={(e) => e.stopPropagation()}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void handleToggleOutlineGroup(grp.id);
+                          }}
+                          className="grid size-3.5 place-items-center rounded-[2px] border border-[#c9cdd4] bg-white text-[10px] font-bold leading-none text-[#4b5058] shadow-2xs hover:border-[#3370ff] hover:text-[#3370ff]"
+                        >
+                          {grp.collapsed ? "+" : "−"}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <span className={rowOutlineAnchors.length > 0 ? "pl-3" : undefined}>{rowIdx + 1}</span>
                   <span
                     role="separator"
                     aria-orientation="horizontal"
@@ -2570,6 +2726,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
                 {/* Cells */}
                 {activeSheet.columns.map((colAxis, colIdx) => {
+                  if (hiddenOutlineCols.has(colIdx)) return null;
                   const cw = colWidths[colIdx];
                   const isFrozenCol = colIdx < activeSheet.frozenCols;
                   const point: SheetPoint = { row: rowIdx, col: colIdx };
@@ -2607,6 +2764,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   const cell = gridMap.cellByKey.get(key);
                   const style = cell?.style ?? {};
                   const ev = activeEvalMap[key];
+                  const cellSparkline = sparklineByCellKey.get(key);
+                  const cellImage =
+                    ev?.kind === "image" && isSafeSheetImageUrl(ev.url)
+                      ? { url: ev.url, alt: ev.alt, mode: ev.mode ?? 1 }
+                      : null;
                   const condStyle = evaluateSheetConditionalFormat(cell?.raw ?? "", ev, activeSheet.conditionalFormats, rowIdx, colIdx);
                   const visualCond = evaluateSheetVisualCondFormat(cell?.raw ?? "", ev, activeSheet.conditionalFormats, rowIdx, colIdx, visualCondBounds);
                   const dropdownRule = canEdit ? findSheetDropdown(activeSheet.validations, rowIdx, colIdx) : null;
@@ -2820,6 +2982,37 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                             }}
                             className="absolute inset-0 z-[2] h-full w-full select-text border-2 border-[#3370ff] bg-white px-1 text-[12px] text-[#1f2329] outline-none"
                           />
+                        ) : cellSparkline ? (
+                          <div className="relative z-[1] flex h-full w-full items-center py-0.5">
+                            <SheetSparklineSvg
+                              sparklineId={cellSparkline.id}
+                              type={cellSparkline.type}
+                              values={extractSparklineValues(activeEvalMap, gridMap.cellByKey, cellSparkline)}
+                              color={cellSparkline.color}
+                              negativeColor={cellSparkline.negativeColor}
+                              showMarkers={cellSparkline.showMarkers}
+                            />
+                          </div>
+                        ) : cellImage ? (
+                          <div className="relative z-[1] flex h-full w-full items-center justify-center overflow-hidden py-0.5">
+                            <img
+                              src={cellImage.url}
+                              alt={cellImage.alt || ""}
+                              data-sheet-cell-image={key}
+                              draggable={false}
+                              onClick={(evImg) => {
+                                evImg.stopPropagation();
+                                setPreviewCellImage({ url: cellImage.url, alt: cellImage.alt, point });
+                              }}
+                              className={`max-h-full max-w-full cursor-zoom-in rounded-[2px] ${
+                                cellImage.mode === 2
+                                  ? "h-full w-full object-fill"
+                                  : cellImage.mode === 3
+                                    ? "object-none"
+                                    : "h-full w-full object-contain"
+                              }`}
+                            />
+                          </div>
                         ) : (
                           <span
                             className={`relative z-[1] block w-full ${dropdownRule && !protState.blocked ? "pr-4" : ""} ${style.wrap ? "whitespace-normal break-words leading-tight" : "truncate"} ${alignClass} ${ev?.kind === "error" ? "text-[#d83931]" : ""}`}
@@ -3320,6 +3513,51 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           )}
         </div>,
         document.body,
+      )}
+
+      {sparklinePopover && activeSheet && (
+        <SheetSparklinePopover
+          sheet={activeSheet}
+          selection={selection}
+          evalMap={activeEvalMap}
+          cellByKey={gridMap.cellByKey}
+          anchorRect={sparklinePopover}
+          onSaveSparklines={handleSaveSparklines}
+          onClose={() => setSparklinePopover(null)}
+        />
+      )}
+
+      {cellImagePopover && activeSheet && (
+        <SheetCellImagePopover
+          userId={userId}
+          targetAddress={sheetAddress(selection.focus)}
+          initialUrl={(() => {
+            const ev = activeEvalMap[pointKey(selection.focus)];
+            return ev?.kind === "image" ? ev.url : "";
+          })()}
+          initialAlt={(() => {
+            const ev = activeEvalMap[pointKey(selection.focus)];
+            return ev?.kind === "image" ? (ev.alt ?? "") : "";
+          })()}
+          initialMode={(() => {
+            const ev = activeEvalMap[pointKey(selection.focus)];
+            return ev?.kind === "image" ? (ev.mode ?? 1) : 1;
+          })()}
+          anchorRect={cellImagePopover}
+          onInsertFormula={handleInsertCellImageFormula}
+          onClose={() => setCellImagePopover(null)}
+        />
+      )}
+
+      {previewCellImage && activeSheet && (
+        <SheetCellImagePreviewModal
+          url={previewCellImage.url}
+          alt={previewCellImage.alt}
+          address={sheetAddress(previewCellImage.point)}
+          canEdit={canEdit}
+          onEditFormula={() => beginEdit(previewCellImage.point, undefined, "cell")}
+          onClose={() => setPreviewCellImage(null)}
+        />
       )}
 
       {printOpen && activeSheet && (

@@ -53,7 +53,7 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 		for _, block := range doc.View().Blocks {
 			if block.Props["fileId"] == strconv.FormatInt(fileID, 10) {
 				imageReference = imageReference || block.Type == "image"
-				fileReference = fileReference || block.Type == "file"
+				fileReference = fileReference || block.Type == "file" || block.Type == "audio" || block.Type == "video"
 			}
 			if block.Type == "flowchart" && flowchartReferencesImage(block.Props, strconv.FormatInt(fileID, 10)) {
 				imageReference = true

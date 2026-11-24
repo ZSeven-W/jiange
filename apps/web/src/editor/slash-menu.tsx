@@ -181,7 +181,20 @@ export function SlashMenu({
                     onMouseEnter={() => { onHover(gi); if (it.id === "table") onTableOpen?.(); else if (it.id === "columns") onColumnOpen?.(); }}
                     onClick={() => { if (it.id === "table" && onTableOpen) { onHover(gi); onTableOpen(); } else if (it.id === "columns" && onColumnOpen) { onHover(gi); onColumnOpen(); } else onPick(it); }}
                   >
-                    <span className={cn("grid size-5 shrink-0 place-items-center", it.id === "code" ? "text-[#2EA121]" : "text-primary")}>
+                    <span
+                      className={cn(
+                        "grid size-5 shrink-0 place-items-center",
+                        it.id === "code"
+                          ? "text-[#2EA121]"
+                          : it.id === "audio"
+                            ? "text-indigo-600"
+                            : it.id === "countdown"
+                              ? "text-orange-500"
+                              : it.id === "tabs"
+                                ? "text-violet-600"
+                                : "text-primary",
+                      )}
+                    >
                       <MenuGlyph id={it.id} fallback={it.icon} size={18} />
                     </span>
                     <span className="flex-1 truncate">{it.label}</span>

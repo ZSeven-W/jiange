@@ -333,6 +333,8 @@ func (m *Memory) RestoreSheetVersionGuarded(ctx context.Context, guard RestoreGu
 		dstWS.protectedRanges = cloneSheetProtectedRanges(src.ProtectedRanges)
 		dstWS.charts = cloneSheetCharts(src.Charts)
 		dstWS.pivotTables = cloneSheetPivotTables(src.PivotTables)
+		dstWS.sparklines = cloneSheetSparklines(src.Sparklines)
+		dstWS.outlineGroups = cloneSheetOutlineGroups(src.OutlineGroups)
 
 		for _, cell := range src.Cells {
 			if cell.Raw == "" && cell.Style == (SheetCellStyle{}) {
@@ -641,19 +643,28 @@ func (p *Postgres) RestoreSheetVersionGuarded(ctx context.Context, guard Restore
 			if e != nil {
 				return e
 			}
+			sparklinesJSON, e := json.Marshal(cloneSheetSparklines(src.Sparklines))
+			if e != nil {
+				return e
+			}
+			outlineGroupsJSON, e := json.Marshal(cloneSheetOutlineGroups(src.OutlineGroups))
+			if e != nil {
+				return e
+			}
 
 			var wid int64
 			if e = tx.QueryRow(ctx, `
 				INSERT INTO sheet_worksheets (
 					node_id, title, pos, frozen_rows, frozen_cols,
 					merges, filter_config, validations, conditional_formats,
-					protected_ranges, charts, pivot_tables, revision
+					protected_ranges, charts, pivot_tables, sparklines, outline_groups, revision
 				)
-				VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,'[]'::jsonb,1)
+				VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,'[]'::jsonb,$12::jsonb,$13::jsonb,1)
 				RETURNING id`,
 				sheetID, title, pos, frozenRows, frozenCols,
 				string(mergesJSON), string(filterJSON), string(validationsJSON),
 				string(condFormatsJSON), string(protectedJSON), string(chartsJSON),
+				string(sparklinesJSON), string(outlineGroupsJSON),
 			).Scan(&wid); e != nil {
 				return e
 			}

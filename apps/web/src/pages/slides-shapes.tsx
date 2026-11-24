@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from "react";
-import { GripHorizontal } from "lucide-react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Film, GripHorizontal, Volume2 } from "lucide-react";
 import type { SlideShape } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import { isLineSlideShape, SlideShapeGraphic } from "./slide-shape-catalog";
 import { resizeSlideShape, type ResizeHandle } from "./slides-shape-resize";
 import { moveSlideLineEndpoint, type LineEndpoint } from "./slides-line-endpoints";
 import { slidePresetControlLabel, slidePresetPlaceholder } from "./slides-layout-preset";
 import { isGpuNativeSlideShape } from "./slides-gpu-layer";
+import { isSafeSlideMediaUrl } from "./slides-master";
 import { computeSlideShapeSnap, type SlideSnapGuide } from "./slides-snap";
 import {
   shapeAnimationPlayState,
@@ -23,6 +25,37 @@ import {
 } from "./slides-multi-select";
 
 const clamp = (value: number, max: number) => Math.round(Math.min(max, Math.max(0, value)) * 10) / 10;
+
+/** Computes inner <img> CSS transform math for a normalized [0..1] crop region. */
+export function slideImageCropStyle(crop: SlideShape["crop"]): CSSProperties | null {
+  if (!crop) return null;
+  const { x, y, w, h } = crop;
+  if (
+    !Number.isFinite(x) ||
+    !Number.isFinite(y) ||
+    !Number.isFinite(w) ||
+    !Number.isFinite(h) ||
+    x < 0 ||
+    y < 0 ||
+    w <= 0 ||
+    h <= 0 ||
+    x + w > 1.001 ||
+    y + h > 1.001
+  ) {
+    return null;
+  }
+  if (x === 0 && y === 0 && w >= 0.999 && h >= 0.999) return null;
+  return {
+    position: "absolute",
+    width: `${(100 / w).toFixed(4)}%`,
+    height: `${(100 / h).toFixed(4)}%`,
+    maxWidth: "none",
+    maxHeight: "none",
+    left: `${((-x / w) * 100).toFixed(4)}%`,
+    top: `${((-y / h) * 100).toFixed(4)}%`,
+    objectFit: "fill",
+  };
+}
 
 const handles: { id: ResizeHandle; label: string; left: string; top: string; cursor: string }[] = [
   { id: "nw", label: "左上", left: "0%", top: "0%", cursor: "nwse-resize" },
@@ -55,6 +88,7 @@ export function SlideShapes({
   onOpenInspector,
   scale = 1,
   gpuBacked = false,
+  interactiveMedia = false,
   onPreviewChange,
   onPreviewManyChange,
 }: {
@@ -77,9 +111,11 @@ export function SlideShapes({
   onOpenInspector?: (id: string) => void;
   scale?: number;
   gpuBacked?: boolean;
+  interactiveMedia?: boolean;
   onPreviewChange?: (shape: SlideShape | null) => void;
   onPreviewManyChange?: (previewMap: ReadonlyMap<string, SlideShape> | null) => void;
 }) {
+  const { t } = useI18n();
   const drag = useRef<{
     anchorId: string;
     shape: SlideShape;
@@ -146,11 +182,85 @@ export function SlideShapes({
     const tableHeaderRow = item.table?.headerRow !== false;
     const tableHeaderFill = item.table?.headerFill || "#edf2ff";
     const tableBorderColor = item.table?.borderColor || "#dee0e3";
+    const cropStyle = item.kind === "image" ? slideImageCropStyle(item.crop) : null;
+    const safeMediaUrl = (item.kind === "video" || item.kind === "audio") && item.mediaUrl && isSafeSlideMediaUrl(item.mediaUrl)
+      ? item.mediaUrl
+      : undefined;
+    const safePosterUrl = item.kind === "video" && item.posterUrl && isSafeSlideMediaUrl(item.posterUrl)
+      ? item.posterUrl
+      : undefined;
     const graphic = item.kind === "text"
       ? <div className={`h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3] ${editable && placeholder && !item.text ? "border border-dashed border-[#c9cdd4]" : ""}`} style={editable && placeholder && !item.text ? { ...textStyle, color: "#a3aab3" } : textStyle}>{item.text || (editable ? placeholder : "")}</div>
       : item.kind === "image"
-        ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/>
-        : item.kind === "table"
+        ? (
+          cropStyle ? (
+            <div data-slide-image-cropped className="relative h-full w-full overflow-hidden">
+              <img src={`/api/files/${item.fileId}`} alt="" draggable={false} style={cropStyle} />
+            </div>
+          ) : (
+            <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/>
+          )
+        )
+        : item.kind === "video"
+          ? (
+            <div
+              data-slide-video-shape
+              className="relative flex h-full w-full flex-col items-center justify-center overflow-hidden rounded-[6px] border border-[#2c313a] bg-[#14161a] text-white"
+            >
+              {safeMediaUrl ? (
+                <video
+                  src={safeMediaUrl}
+                  poster={safePosterUrl}
+                  controls
+                  autoPlay={!editable && !!item.autoplay}
+                  loop={!!item.loop}
+                  playsInline
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <div
+                  data-slide-video-placeholder
+                  className="flex flex-col items-center justify-center gap-[0.8cqw] px-[2cqw] text-center text-[#c9cdd4]"
+                >
+                  <span className="grid size-[4.4cqw] place-items-center rounded-full bg-[#3370ff]/20 text-[#6698ff]">
+                    <Film className="size-[2.2cqw]" />
+                  </span>
+                  <span className="font-medium text-white" style={{ fontSize: "1.45cqw" }}>{t("视频")}</span>
+                  {editable && (
+                    <span className="text-[#8f959e]" style={{ fontSize: "1.05cqw" }}>{t("在上方设置视频链接")}</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+          : item.kind === "audio"
+            ? (
+              <div
+                data-slide-audio-shape
+                className="flex h-full w-full items-center gap-[1.2cqw] overflow-hidden rounded-[10px] border border-[#d6e4ff] bg-gradient-to-r from-[#f0f5ff] to-white px-[1.4cqw] py-[0.8cqw] text-[#1f2329] shadow-2xs"
+              >
+                <span className="grid size-[3.6cqw] shrink-0 place-items-center rounded-full bg-[#3370ff] text-white">
+                  <Volume2 className="size-[1.8cqw]" />
+                </span>
+                {safeMediaUrl ? (
+                  <audio
+                    src={safeMediaUrl}
+                    controls
+                    autoPlay={!editable && !!item.autoplay}
+                    loop={!!item.loop}
+                    className="h-8 min-w-0 flex-1"
+                  />
+                ) : (
+                  <div data-slide-audio-placeholder className="min-w-0 flex-1 text-left">
+                    <div className="truncate font-medium text-[#1f2329]" style={{ fontSize: "1.35cqw" }}>{t("音频")}</div>
+                    {editable && (
+                      <div className="truncate text-[#8f959e]" style={{ fontSize: "1.0cqw" }}>{t("在上方设置音频链接")}</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+            : item.kind === "table"
           ? (
             <div
               data-slide-table-graphic
@@ -191,17 +301,18 @@ export function SlideShapes({
               : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
     const style = { left: `${item.x}%`, top: `${item.y}%`, width: `${item.width ?? 16}%`, height: `${item.height ?? 20}%`, transform: `rotate(${item.rotation ?? 0}deg)` };
     const editingText = item.kind === "text" && isSingleSelected;
-    const line = item.kind !== "text" && item.kind !== "image" && item.kind !== "table" && item.kind !== "chart" && isLineSlideShape(item.kind);
+    const line = item.kind !== "text" && item.kind !== "image" && item.kind !== "table" && item.kind !== "chart" && item.kind !== "video" && item.kind !== "audio" && isLineSlideShape(item.kind);
     const previewAnimStyle = isPreviewingAnim ? slideShapeAnimationPreviewStyle(shapeAnim) : undefined;
     // Keep the active textarea mounted across temporary permission checks so
     // a background refetch does not discard focus or the browser's selection.
     if (!editable && !editingText) {
+      const canInteractMedia = interactiveMedia && (item.kind === "video" || item.kind === "audio") && !!safeMediaUrl;
       return (
         <div
           key={item.id}
           data-slide-shape-id={item.id}
           data-slide-anim-visible={playState ? (playState.visible ? "true" : "false") : undefined}
-          className="pointer-events-none absolute"
+          className={canInteractMedia ? "pointer-events-auto absolute" : "pointer-events-none absolute"}
           style={style}
         >
           <div className="h-full w-full" style={playState?.style}>
@@ -214,11 +325,15 @@ export function SlideShapes({
       ? (editingText ? "移动文本框" : slidePresetControlLabel(item.id, !!item.text) ?? "文本框")
       : item.kind === "image"
         ? "幻灯片图片"
-        : item.kind === "table"
-          ? "幻灯片表格"
-          : item.kind === "chart"
-            ? (item.chart?.title ? `幻灯片图表 ${item.chart.title}` : "幻灯片图表")
-            : `图形 ${item.kind}`;
+        : item.kind === "video"
+          ? t("幻灯片视频")
+          : item.kind === "audio"
+            ? t("幻灯片音频")
+            : item.kind === "table"
+              ? "幻灯片表格"
+              : item.kind === "chart"
+                ? (item.chart?.title ? `幻灯片图表 ${item.chart.title}` : "幻灯片图表")
+                : `图形 ${item.kind}`;
     return <div key={item.id} data-slide-object data-slide-shape-id={item.id} className={`absolute ${editingText ? "outline outline-2 outline-[#3370ff] outline-offset-2" : ""}`} style={style}>
     <button type="button" disabled={!editable} aria-label={shapeAriaLabel} aria-pressed={isSelected} className={editingText ? "absolute z-10 grid h-5 w-8 touch-none place-items-center rounded border border-[#c9cdd4] bg-white text-[#646a73]" : `h-full w-full touch-none ${isSelected ? "outline outline-2 outline-[#3370ff] outline-offset-2" : "hover:outline hover:outline-1 hover:outline-[#3370ff]"}`} style={editingText ? { left: "50%", top: 0, marginTop: -20 / Math.max(scale, 0.1), transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})` } : undefined}
       onDoubleClick={() => {

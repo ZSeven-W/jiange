@@ -1,4 +1,5 @@
 import type { FormulaAst, RangeRefNode } from "./formula-ast.js";
+import { evaluateQuery } from "./formula-query.js";
 import { dateToSerial, formatExcelNumber, parseDateToSerial, serialToDate } from "./numfmt.js";
 import type { EvalValue } from "./types.js";
 
@@ -8,6 +9,92 @@ export const numVal = (n: number): EvalValue => (Number.isFinite(n) ? { kind: "n
 export const strVal = (s: string): EvalValue => ({ kind: "string", value: s });
 export const boolVal = (b: boolean): EvalValue => ({ kind: "boolean", value: b });
 export const arrVal = (rows: EvalValue[][]): EvalValue => ({ kind: "array", value: rows });
+export const imgVal = (url: string, alt?: string, mode = 1): EvalValue => ({
+  kind: "image",
+  value: alt && alt.length > 0 ? alt : url,
+  url,
+  ...(alt !== undefined ? { alt } : {}),
+  mode,
+});
+
+/** Internal first-class callable produced by LAMBDA(...). Never escapes evalCell uninvoked (#CALC!). */
+export interface LambdaEvalValue {
+  readonly kind: "lambda";
+  readonly value: "#CALC!";
+  readonly error?: undefined;
+  readonly params: readonly string[];
+  readonly body: FormulaAst;
+  readonly env: ReadonlyMap<string, EvalValue>;
+  readonly sheetId: number;
+}
+
+export function isLambdaVal(v: unknown): v is LambdaEvalValue {
+  return !!v && typeof v === "object" && (v as { kind?: unknown }).kind === "lambda";
+}
+
+/** Validate safe URL schemes allowed by =IMAGE(...) and the Sheet cell image renderer. */
+export function isSafeSheetImageUrl(raw: string): boolean {
+  const url = raw.trim();
+  if (!url || url.length > 4096) return false;
+  if (/[\u0000-\u001f\u007f]/.test(url)) return false;
+  if (url.startsWith("/api/files/") || url.startsWith("/api/drive/files/")) {
+    if (url.includes("..") || url.startsWith("//")) return false;
+    return /^\/api\/(?:drive\/)?files\/[A-Za-z0-9_./-]+(?:\?[A-Za-z0-9_=&%.-]*)?$/.test(url);
+  }
+  if (/^data:image\//i.test(url)) {
+    return /^data:image\/(?:png|jpeg|jpg|gif|webp|bmp|avif|svg\+xml)(?:;charset=[A-Za-z0-9_-]+)?;base64,[A-Za-z0-9+/=]+$/i.test(url);
+  }
+  if (/^https?:\/\//i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+const MAX_REGEX_LENGTH = 512;
+
+function hasNestedQuantifier(pattern: string): boolean {
+  const stack: boolean[] = [];
+  let inCharClass = false;
+  for (let i = 0; i < pattern.length; i++) {
+    const ch = pattern[i];
+    if (ch === "\\") { i++; continue; }
+    if (inCharClass) {
+      if (ch === "]") inCharClass = false;
+      continue;
+    }
+    if (ch === "[") { inCharClass = true; continue; }
+    if (ch === "(") { stack.push(false); continue; }
+    if (ch === ")") {
+      const innerHadQuantifier = stack.pop() ?? false;
+      const next = pattern[i + 1];
+      const followedByQuantifier = next === "+" || next === "*" || next === "{";
+      if (innerHadQuantifier && followedByQuantifier) return true;
+      if ((innerHadQuantifier || followedByQuantifier) && stack.length > 0) {
+        stack[stack.length - 1] = true;
+      }
+      continue;
+    }
+    if (ch === "+" || ch === "*" || ch === "{") {
+      if (stack.length > 0) stack[stack.length - 1] = true;
+    }
+  }
+  return false;
+}
+
+function compileSafeRegex(pattern: string, flags = ""): RegExp | null {
+  if (pattern.length > MAX_REGEX_LENGTH) return null;
+  if (hasNestedQuantifier(pattern)) return null;
+  try {
+    return new RegExp(pattern, flags);
+  } catch {
+    return null;
+  }
+}
 
 export interface ResolvedRange {
   sheetId: number;
@@ -22,6 +109,9 @@ export interface FormulaEvalContext {
   row: number;
   col: number;
   evalAst(node: FormulaAst): EvalValue;
+  evalAstWithEnv?(node: FormulaAst, env: ReadonlyMap<string, EvalValue>, arrayMode?: boolean): EvalValue;
+  getEnv?(): ReadonlyMap<string, EvalValue>;
+  arrayMode?: boolean;
   resolveRange(node: RangeRefNode): ResolvedRange | null;
   resolveCellRef(node: FormulaAst): { sheetId: number; row: number; col: number } | null;
   readCell(sheetId: number, row: number, col: number): EvalValue;
@@ -38,6 +128,7 @@ export type CustomFormulaFunction = (args: EvalValue[], meta: { sheetId: number;
 export type ScalarEvalValue = Exclude<EvalValue, { kind: "array" }>;
 
 export function unwrapScalar(v: EvalValue): ScalarEvalValue {
+  if (isLambdaVal(v)) return { kind: "error", value: "#CALC!", error: "#CALC!" };
   if (v.kind === "array") {
     const first = v.value[0]?.[0];
     return first ? unwrapScalar(first) : { kind: "empty", value: "" };
@@ -52,6 +143,7 @@ export function isMissingArg(node: FormulaAst | undefined): boolean {
 export function toNumber(raw: EvalValue): number | EvalValue {
   const v = unwrapScalar(raw);
   if (v.kind === "error") return v;
+  if (v.kind === "image") return errVal("#VALUE!");
   if (v.kind === "empty") return 0;
   if (v.kind === "number") return v.value;
   if (v.kind === "boolean") return v.value ? 1 : 0;
@@ -67,6 +159,7 @@ export function toNumber(raw: EvalValue): number | EvalValue {
 export function toBoolean(raw: EvalValue): boolean | EvalValue {
   const v = unwrapScalar(raw);
   if (v.kind === "error") return v;
+  if (v.kind === "image") return errVal("#VALUE!");
   if (v.kind === "empty") return false;
   if (v.kind === "boolean") return v.value;
   if (v.kind === "number") return v.value !== 0;
@@ -578,7 +671,50 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
   // ---- Logic & Information ----
   IF: (args, ctx) => {
     if (args.length < 2 || args.length > 3) return errVal("#VALUE!");
-    const cond = toBoolean(ctx.evalAst(args[0]));
+    const condRaw = ctx.evalAst(args[0]);
+    if (ctx.arrayMode && condRaw.kind === "array") {
+      const cMat = condRaw.value;
+      const cRows = cMat.length;
+      const cCols = cMat[0]?.length ?? 0;
+      let anyTrue = false;
+      let anyFalse = false;
+      const bools: (boolean | EvalValue)[][] = [];
+      for (let r = 0; r < cRows; r++) {
+        const line: (boolean | EvalValue)[] = [];
+        for (let c = 0; c < cCols; c++) {
+          const b = toBoolean(cMat[r]?.[c] ?? EMPTY_VAL);
+          if (b === true) anyTrue = true;
+          else if (b === false) anyFalse = true;
+          line.push(b);
+        }
+        bools.push(line);
+      }
+      const tVal = anyTrue ? ctx.evalAst(args[1]) : EMPTY_VAL;
+      const fVal = anyFalse
+        ? (args[2] && !isMissingArg(args[2]) ? ctx.evalAst(args[2]) : boolVal(false))
+        : EMPTY_VAL;
+      const tMat = tVal.kind === "array" ? tVal.value : [[tVal]];
+      const fMat = fVal.kind === "array" ? fVal.value : [[fVal]];
+      const rows = Math.max(cRows, anyTrue ? tMat.length : 1, anyFalse ? fMat.length : 1);
+      const cols = Math.max(cCols, anyTrue ? (tMat[0]?.length ?? 1) : 1, anyFalse ? (fMat[0]?.length ?? 1) : 1);
+      const out: EvalValue[][] = [];
+      for (let r = 0; r < rows; r++) {
+        const line: EvalValue[] = [];
+        for (let c = 0; c < cols; c++) {
+          if (!ctx.tickOp()) return errVal("#LIMIT!");
+          const b = bools[Math.min(r, cRows - 1)]?.[Math.min(c, cCols - 1)] ?? false;
+          if (typeof b !== "boolean") { line.push(b); continue; }
+          if (b) {
+            line.push(tMat[Math.min(r, tMat.length - 1)]?.[Math.min(c, (tMat[0]?.length ?? 1) - 1)] ?? EMPTY_VAL);
+          } else {
+            line.push(fMat[Math.min(r, fMat.length - 1)]?.[Math.min(c, (fMat[0]?.length ?? 1) - 1)] ?? boolVal(false));
+          }
+        }
+        out.push(line);
+      }
+      return arrVal(out);
+    }
+    const cond = toBoolean(condRaw);
     if (typeof cond !== "boolean") return cond;
     if (cond) return ctx.evalAst(args[1]);
     return args[2] && !isMissingArg(args[2]) ? ctx.evalAst(args[2]) : boolVal(false);
@@ -607,11 +743,41 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
   IFERROR: (args, ctx) => {
     if (args.length !== 2) return errVal("#VALUE!");
     const v = ctx.evalAst(args[0]);
+    if (ctx.arrayMode && v.kind === "array") {
+      const hasErr = v.value.some((row) => row.some((c) => c.kind === "error"));
+      if (!hasErr) return v;
+      const fb = ctx.evalAst(args[1]);
+      const fbMat = fb.kind === "array" ? fb.value : [[fb]];
+      return arrVal(
+        v.value.map((row, r) =>
+          row.map((cell, c) =>
+            cell.kind === "error"
+              ? (fbMat[Math.min(r, fbMat.length - 1)]?.[Math.min(c, (fbMat[0]?.length ?? 1) - 1)] ?? EMPTY_VAL)
+              : cell,
+          ),
+        ),
+      );
+    }
     return v.kind === "error" ? ctx.evalAst(args[1]) : v;
   },
   IFNA: (args, ctx) => {
     if (args.length !== 2) return errVal("#VALUE!");
     const v = ctx.evalAst(args[0]);
+    if (ctx.arrayMode && v.kind === "array") {
+      const hasNa = v.value.some((row) => row.some((c) => c.kind === "error" && c.error === "#N/A"));
+      if (!hasNa) return v;
+      const fb = ctx.evalAst(args[1]);
+      const fbMat = fb.kind === "array" ? fb.value : [[fb]];
+      return arrVal(
+        v.value.map((row, r) =>
+          row.map((cell, c) =>
+            cell.kind === "error" && cell.error === "#N/A"
+              ? (fbMat[Math.min(r, fbMat.length - 1)]?.[Math.min(c, (fbMat[0]?.length ?? 1) - 1)] ?? EMPTY_VAL)
+              : cell,
+          ),
+        ),
+      );
+    }
     return v.kind === "error" && v.error === "#N/A" ? ctx.evalAst(args[1]) : v;
   },
   AND: (args, ctx) => {
@@ -1606,6 +1772,153 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
     }
     return arrVal(out);
   },
+
+  // ---- Modern Regex, Functional, Array, Query & Media ----
+  REGEXMATCH: (args, ctx) => {
+    if (args.length !== 2) return errVal("#VALUE!");
+    const text = evalStrArg(args[0], ctx);
+    const pattern = evalStrArg(args[1], ctx);
+    if (typeof text !== "string") return text;
+    if (typeof pattern !== "string") return pattern;
+    const re = compileSafeRegex(pattern);
+    if (!re) return errVal("#VALUE!");
+    return boolVal(re.test(text));
+  },
+  REGEXREPLACE: (args, ctx) => {
+    if (args.length !== 3) return errVal("#VALUE!");
+    const text = evalStrArg(args[0], ctx);
+    const pattern = evalStrArg(args[1], ctx);
+    const replacement = evalStrArg(args[2], ctx);
+    if (typeof text !== "string") return text;
+    if (typeof pattern !== "string") return pattern;
+    if (typeof replacement !== "string") return replacement;
+    const re = compileSafeRegex(pattern, "g");
+    if (!re) return errVal("#VALUE!");
+    return strVal(text.replace(re, replacement));
+  },
+  REGEXEXTRACT: (args, ctx) => {
+    if (args.length !== 2) return errVal("#VALUE!");
+    const text = evalStrArg(args[0], ctx);
+    const pattern = evalStrArg(args[1], ctx);
+    if (typeof text !== "string") return text;
+    if (typeof pattern !== "string") return pattern;
+    const re = compileSafeRegex(pattern);
+    if (!re) return errVal("#VALUE!");
+    const m = re.exec(text);
+    if (!m) return errVal("#N/A");
+    if (m.length > 1) {
+      if (m[1] !== undefined) return strVal(m[1]);
+      for (let i = 2; i < m.length; i++) {
+        if (m[i] !== undefined) return strVal(m[i]);
+      }
+      return strVal("");
+    }
+    return strVal(m[0]);
+  },
+  LET: (args, ctx) => {
+    if (args.length < 3 || args.length % 2 !== 1) return errVal("#VALUE!");
+    const baseEnv = ctx.getEnv ? ctx.getEnv() : new Map<string, EvalValue>();
+    const localEnv = new Map<string, EvalValue>(baseEnv);
+    const evalIn = (node: FormulaAst) =>
+      ctx.evalAstWithEnv ? ctx.evalAstWithEnv(node, localEnv, ctx.arrayMode) : ctx.evalAst(node);
+    for (let i = 0; i < args.length - 1; i += 2) {
+      const nameNode = args[i];
+      if (nameNode.kind !== "name" || !nameNode.name.trim()) return errVal("#VALUE!");
+      const key = nameNode.name.toUpperCase();
+      const val = evalIn(args[i + 1]);
+      localEnv.set(key, val);
+    }
+    return evalIn(args[args.length - 1]);
+  },
+  LAMBDA: (args, ctx) => {
+    if (args.length < 1) return errVal("#VALUE!");
+    const params: string[] = [];
+    const seen = new Set<string>();
+    for (let i = 0; i < args.length - 1; i++) {
+      const paramNode = args[i];
+      if (paramNode.kind !== "name" || !paramNode.name.trim()) return errVal("#VALUE!");
+      const upper = paramNode.name.toUpperCase();
+      if (seen.has(upper)) return errVal("#VALUE!");
+      seen.add(upper);
+      params.push(upper);
+    }
+    const body = args[args.length - 1];
+    if (isMissingArg(body)) return errVal("#VALUE!");
+    const closure: LambdaEvalValue = {
+      kind: "lambda",
+      value: "#CALC!",
+      params,
+      body,
+      env: new Map(ctx.getEnv ? ctx.getEnv() : []),
+      sheetId: ctx.sheetId,
+    };
+    return closure as unknown as EvalValue;
+  },
+  ARRAYFORMULA: (args, ctx) => {
+    if (args.length !== 1 || isMissingArg(args[0])) return errVal("#VALUE!");
+    const env = ctx.getEnv ? ctx.getEnv() : new Map<string, EvalValue>();
+    return ctx.evalAstWithEnv ? ctx.evalAstWithEnv(args[0], env, true) : ctx.evalAst(args[0]);
+  },
+  QUERY: (args, ctx) => {
+    if (args.length < 1 || args.length > 3) return errVal("#VALUE!");
+    const mat = getMatrix(args[0], ctx);
+    if (!Array.isArray(mat)) return mat;
+    const queryStr = args.length >= 2 && !isMissingArg(args[1]) ? evalStrArg(args[1], ctx) : "";
+    if (typeof queryStr !== "string") return queryStr;
+    let headersArg: number | undefined;
+    if (args.length === 3 && !isMissingArg(args[2])) {
+      const h = evalNumArg(args[2], ctx);
+      if (typeof h !== "number") return h;
+      headersArg = h;
+    }
+    let startCol = 0;
+    if (args[0].kind === "range") {
+      const resolved = ctx.resolveRange(args[0]);
+      if (resolved) startCol = resolved.left;
+    }
+    return evaluateQuery(mat, queryStr, startCol, headersArg, () => ctx.tickOp());
+  },
+  IMAGE: (args, ctx) => {
+    if (args.length < 1 || args.length > 5) return errVal("#VALUE!");
+    const urlRaw = evalStrArg(args[0], ctx);
+    if (typeof urlRaw !== "string") return urlRaw;
+    const url = urlRaw.trim();
+    if (!isSafeSheetImageUrl(url)) return errVal("#VALUE!");
+    let alt: string | undefined;
+    let mode = 1;
+    if (args.length >= 2 && !isMissingArg(args[1])) {
+      const second = unwrapScalar(ctx.evalAst(args[1]));
+      if (second.kind === "error") return second;
+      if (args.length === 2 && second.kind === "number") {
+        // Google Sheets compatibility: IMAGE(url, mode)
+        const m = Math.trunc(second.value);
+        if (m < 0 || m > 4) return errVal("#VALUE!");
+        mode = m;
+      } else {
+        alt = toStringValue(second);
+      }
+    }
+    if (args.length >= 3 && !isMissingArg(args[2])) {
+      const m = evalNumArg(args[2], ctx);
+      if (typeof m !== "number") return m;
+      const mi = Math.trunc(m);
+      if (mi < 0 || mi > 4) return errVal("#VALUE!");
+      mode = mi;
+    }
+    return imgVal(url, alt, mode);
+  },
 };
+
+/** Pure scalar built-in functions that broadcast element-wise inside ARRAYFORMULA(...). */
+export const ARRAY_LIFTABLE_FUNCTIONS: ReadonlySet<string> = new Set([
+  "ABS", "INT", "SQRT", "SIGN", "EXP", "LN", "LOG10", "LOG", "SIN", "COS", "TAN",
+  "ROUND", "ROUNDUP", "ROUNDDOWN", "TRUNC", "MROUND", "CEILING", "FLOOR", "MOD", "POWER",
+  "LEN", "UPPER", "LOWER", "PROPER", "TRIM", "CLEAN", "LEFT", "RIGHT", "MID",
+  "FIND", "SEARCH", "SUBSTITUTE", "REPLACE", "TEXT", "VALUE", "REPT", "EXACT", "CHAR", "CODE",
+  "REGEXMATCH", "REGEXREPLACE", "REGEXEXTRACT",
+  "NOT", "ISBLANK", "ISERROR", "ISERR", "ISNA", "ISNUMBER", "ISTEXT", "ISLOGICAL",
+  "YEAR", "MONTH", "DAY", "HOUR", "MINUTE", "SECOND", "WEEKDAY", "WEEKNUM", "ISOWEEKNUM", "DATEVALUE",
+  "IMAGE",
+]);
 
 export const SUPPORTED_FORMULA_FUNCTIONS: readonly string[] = Object.freeze(Object.keys(BUILTIN_FUNCTIONS).sort());

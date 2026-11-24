@@ -247,4 +247,49 @@ describe("@jiange/base-sdk", () => {
     expect((rt.execute("base_apply", { ops: [], dryRun: true, atomic: false, actor: "agent" }) as { ok: boolean }).ok).toBe(true);
     expect((rt.execute("base_export_csv", { tableId: tid, delimiter: "\t" }) as { csv: string }).csv).toContain("\t");
   });
+
+  it("supports currency, progress, autonumber, button, location fields, formulas, and hierarchy view", () => {
+    const base = Base.create({ name: "Projects", initialTableName: "Tasks" });
+    const tid = base.getTables()[0].id;
+    const price = base.addField(tid, { name: "Budget", type: "currency", options: ["CNY", "2"] });
+    const prog = base.addField(tid, { name: "Progress", type: "progress", options: ["bar"] });
+    const seq = base.addField(tid, { name: "Seq", type: "autonumber", options: ["T-", "4"] });
+    base.addField(tid, { name: "Action", type: "button", options: ["Open", "open_url", "https://example.com"] });
+    const loc = base.addField(tid, { name: "Place", type: "location" });
+    const link = base.addField(tid, { name: "Parent", type: "link", targetTableId: tid });
+    const earned = base.addField(tid, { name: "Earned", type: "formula", formula: "ROUND([Budget] * [Progress] / 100, 2)" });
+    const seqPlus = base.addField(tid, { name: "SeqPlus", type: "formula", formula: "[Seq] * 10" });
+
+    base.apply([
+      { op: "addRecord", tableId: tid, cells: { Budget: 200, Progress: 50, Place: "Beijing | 39.98,116.31" } },
+      { op: "addRecord", tableId: tid, cells: { Budget: 50, Progress: 100, Seq: 999, Place: "Shanghai" } },
+      { op: "addView", tableId: tid, name: "Tree", type: "hierarchy", config: { parentField: link.id, groups: [loc.id] } },
+    ]);
+
+    const q = base.query({ tableId: tid, sorts: [{ f: price.id, asc: true }] });
+    expect(q.records).toHaveLength(2);
+    // Numeric sort puts 50 before 200
+    expect(q.records[0].cells[String(price.id)]).toBe(50);
+    expect(q.records[1].cells[String(price.id)]).toBe(200);
+    // Autonumber assigned monotonically (1, 2) ignoring manual spoof 999
+    expect(q.records[0].cells[String(seq.id)]).toBe(2);
+    expect(q.records[1].cells[String(seq.id)]).toBe(1);
+    // Formula evaluates over currency, progress, and autonumber
+    expect(q.records[0].cells[String(earned.id)]).toBe(50);
+    expect(q.records[1].cells[String(earned.id)]).toBe(100);
+    expect(q.records[0].cells[String(seqPlus.id)]).toBe(20);
+    expect(q.records[1].cells[String(seqPlus.id)]).toBe(10);
+
+    // Dashboard aggregations recognize currency & progress as numeric
+    const dash = base.evaluateDashboard(
+      [
+        { id: "m1", type: "metric", title: "Total Budget", span: 1, metric: "sum", valueFieldId: price.id },
+        { id: "m2", type: "metric", title: "Avg Progress", span: 1, metric: "avg", valueFieldId: prog.id },
+      ],
+      tid,
+    );
+    expect(dash[0].metric?.value).toBe(250);
+    expect(dash[1].metric?.value).toBe(75);
+    expect(base.getViews(tid).some((v) => v.type === "hierarchy" && v.config.parentField === link.id)).toBe(true);
+  });
 });

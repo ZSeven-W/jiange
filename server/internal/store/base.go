@@ -66,6 +66,7 @@ var FieldTypes = map[string]bool{
 	"created_by": true, "created_at": true, "modified_at": true,
 	"url": true, "phone": true, "email": true, "rating": true, "formula": true,
 	"link": true, "lookup": true,
+	"currency": true, "progress": true, "autonumber": true, "button": true, "location": true,
 }
 
 // FieldStored reports whether values live in the cells jsonb (link/lookup
@@ -74,9 +75,9 @@ func FieldStored(t string) bool {
 	return !FieldReadOnly(t) && t != "link" && t != "lookup"
 }
 
-// Computed field types are rendered from record metadata, never written.
+// Computed and action field types are managed by the system, never manually written.
 func FieldReadOnly(t string) bool {
-	return t == "created_by" || t == "created_at" || t == "modified_at"
+	return t == "created_by" || t == "created_at" || t == "modified_at" || t == "autonumber" || t == "button"
 }
 
 // LinkFieldRef is a link field whose options point at a target base (and optional table).
@@ -104,7 +105,7 @@ type View struct {
 	BaseID  int64           `json:"baseId"`
 	TableID int64           `json:"tableId,omitempty"`
 	OwnerID *int64          `json:"ownerId,omitempty"`
-	Type    string          `json:"type"` // grid | kanban | gallery | calendar | form | gantt
+	Type    string          `json:"type"` // grid | kanban | gallery | calendar | form | gantt | hierarchy
 	Name    string          `json:"name"`
 	Config  json.RawMessage `json:"config"`
 	Pos     float64         `json:"pos"`

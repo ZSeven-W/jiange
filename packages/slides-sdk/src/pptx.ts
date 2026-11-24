@@ -344,12 +344,55 @@ function buildSlideShapeXml(id: number, shape: SlideShape, mediaCollector?: Slid
     const asset = shape.mediaId ? mediaCollector?.media?.[shape.mediaId] : undefined;
     if (!asset || !mediaCollector) return "";
     const rId = mediaCollector.addImage(asset);
+    let srcRectXml = "";
+    const crop = shape.crop;
+    if (
+      crop &&
+      Number.isFinite(crop.x) &&
+      Number.isFinite(crop.y) &&
+      Number.isFinite(crop.w) &&
+      Number.isFinite(crop.h) &&
+      crop.x >= 0 &&
+      crop.y >= 0 &&
+      crop.w > 0 &&
+      crop.h > 0 &&
+      crop.x + crop.w <= 1.001 &&
+      crop.y + crop.h <= 1.001 &&
+      (crop.x > 0 || crop.y > 0 || crop.w < 1 || crop.h < 1)
+    ) {
+      const l = Math.round(clamp(crop.x, 0, 1) * 100000);
+      const t = Math.round(clamp(crop.y, 0, 1) * 100000);
+      const r = Math.round(clamp(1 - crop.x - crop.w, 0, 1) * 100000);
+      const b = Math.round(clamp(1 - crop.y - crop.h, 0, 1) * 100000);
+      srcRectXml = `<a:srcRect l="${l}" t="${t}" r="${r}" b="${b}"/>`;
+    }
     return (
       `<p:pic>` +
       `<p:nvPicPr><p:cNvPr id="${id}" name="${escapeXml(shape.id)}"/><p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>` +
-      `<p:blipFill><a:blip r:embed="${rId}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
+      `<p:blipFill><a:blip r:embed="${rId}"/>${srcRectXml}<a:stretch><a:fillRect/></a:stretch></p:blipFill>` +
       `<p:spPr><a:xfrm${rotAttr}><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>` +
       `</p:pic>`
+    );
+  }
+
+  if (shape.kind === "video" || shape.kind === "audio") {
+    const isVideo = shape.kind === "video";
+    const fillHex = isVideo ? "1F2329" : "F0F5FF";
+    const textHex = isVideo ? "FFFFFF" : "1F2329";
+    const label = isVideo
+      ? (shape.mediaUrl ? `[Video] ${shape.mediaUrl}` : "[Video]")
+      : (shape.mediaUrl ? `[Audio] ${shape.mediaUrl}` : "[Audio]");
+    return (
+      `<p:sp>` +
+      `<p:nvSpPr><p:cNvPr id="${id}" name="${escapeXml(shape.id)}"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>` +
+      `<p:spPr>` +
+      `<a:xfrm${rotAttr}><a:off x="${x}" y="${y}"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+      `<a:prstGeom prst="roundRect"><a:avLst/></a:prstGeom>` +
+      `<a:solidFill><a:srgbClr val="${fillHex}"/></a:solidFill>` +
+      `<a:ln w="12700"><a:solidFill><a:srgbClr val="${colorHex}"/></a:solidFill></a:ln>` +
+      `</p:spPr>` +
+      `<p:txBody><a:bodyPr wrap="square" anchor="ctr"/><a:lstStyle/>${buildParagraphsXml(truncateRunes(label, 200), { fontSizePt: 14, bold: true, colorHex: textHex, align: "ctr" })}</p:txBody>` +
+      `</p:sp>`
     );
   }
 
@@ -959,10 +1002,23 @@ function parseSlideElement(
     if (node.name === "p:pic") {
       const blipFill = child(node, "p:blipFill");
       const blip = child(blipFill, "a:blip");
+      const srcRect = child(blipFill, "a:srcRect");
       const embedId = blip?.attrs["r:embed"];
       const mediaId = embedId ? slideImageRels?.get(embedId) : undefined;
       const rect = parseXfrmRect(child(node, "p:spPr"), slideCx, slideCy);
       if (mediaId && rect && shapes.length < MAX_IMPORT_SHAPES_PER_SLIDE) {
+        let crop: SlideShape["crop"];
+        if (srcRect) {
+          const l = clamp((Number(srcRect.attrs["l"] ?? "0") || 0) / 100000, 0, 0.99);
+          const t = clamp((Number(srcRect.attrs["t"] ?? "0") || 0) / 100000, 0, 0.99);
+          const r = clamp((Number(srcRect.attrs["r"] ?? "0") || 0) / 100000, 0, 0.99);
+          const b = clamp((Number(srcRect.attrs["b"] ?? "0") || 0) / 100000, 0, 0.99);
+          const w = round2(Math.max(0.01, 1 - l - r));
+          const h = round2(Math.max(0.01, 1 - t - b));
+          if ((l > 0 || t > 0 || r > 0 || b > 0) && l + w <= 1.001 && t + h <= 1.001) {
+            crop = { x: round2(l), y: round2(t), w, h };
+          }
+        }
         shapeSeq++;
         shapes.push({
           id: `imp-${slideNum}-img-${shapeSeq}`,
@@ -974,6 +1030,7 @@ function parseSlideElement(
           rotation: rect.rotation,
           color: "#ffffff",
           mediaId,
+          ...(crop ? { crop } : {}),
         });
       } else {
         skippedMedia++;

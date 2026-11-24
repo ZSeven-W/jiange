@@ -269,7 +269,7 @@ func csvImportPlan(rows [][]string, header bool, types []string, fields []store.
 			}
 		}
 		switch f.Type {
-		case "text", "number", "checkbox", "date", "select", "multi_select", "url", "phone", "email", "rating":
+		case "text", "number", "checkbox", "date", "select", "multi_select", "url", "phone", "email", "rating", "currency", "progress", "location":
 		case "person":
 			if memberIDs == nil {
 				return plan, nil, &csvPlanError{fmt.Sprintf("字段「%s」的类型暂不支持 CSV 导入", name)}
@@ -487,6 +487,20 @@ func csvValue(f store.Field, v string, memberIDs map[string]int64) (json.RawMess
 		n, err := strconv.ParseFloat(v, 64)
 		if err != nil {
 			return nil, fmt.Errorf("不是数字")
+		}
+		return mustJSON(n)
+	case "currency":
+		cleaned := strings.TrimSpace(strings.NewReplacer("¥", "", "$", "", "€", "", "£", "", "HK$", "", ",", "").Replace(v))
+		n, err := strconv.ParseFloat(cleaned, 64)
+		if err != nil {
+			return nil, fmt.Errorf("不是金额数字")
+		}
+		return mustJSON(n)
+	case "progress":
+		cleaned := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(v), "%"))
+		n, err := strconv.ParseFloat(cleaned, 64)
+		if err != nil || n < 0 || n > 100 {
+			return nil, fmt.Errorf("进度需在 0-100 之间")
 		}
 		return mustJSON(n)
 	case "rating":

@@ -13,6 +13,8 @@ import { Kanban } from "./base/kanban";
 import { Gallery } from "./base/gallery";
 import { CalendarView } from "./base/calendar-view";
 import { Gantt } from "./base/gantt";
+import { HierarchyView } from "./base/hierarchy";
+import { MAX_GROUP_LEVELS, resolveGroupFieldIds, withGroupsConfig } from "./base/multi-group";
 import { AutomationsPanel } from "./base/automations";
 import { MemberRuleValue, personRuleValue } from "./base/member-rule-value";
 import { RecordDetail } from "./base/record-detail";
@@ -54,7 +56,7 @@ import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, viewToUndoSnapshot, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDownUp, Check, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, ShieldCheck, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, Check, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, ShieldCheck, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
 import { canDuplicateHomeDocument } from "./home-file-actions";
 
 export { view } from "./base/view";
@@ -679,7 +681,7 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">{t("正在加载筛选结果…")}</span>}
         {queryActive && q.data.records.length >= 10_000 && <span role="status" className="text-xs text-subtle">{t("筛选仅覆盖当前加载的记录，更多记录可能未显示。")}</span>}
-        {current?.type === "grid" && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
+        {(current?.type === "grid" || current?.type === "hierarchy") && <HiddenBar fields={fields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <ViewSettingsBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
         {current?.type === "kanban" && (() => {
           const selectFields = fields.filter((f) => f.type === "select");
@@ -705,9 +707,9 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
           );
         })()}
         {current?.type === "kanban" && <CardConfigBar fields={visibleFields} cfg={cfg} onChange={setCfg} />}
-        {(current?.type === "grid" || current?.type === "kanban") && <FilterBar baseId={id} aiAllowed={!preventCopy} fields={fields} members={members} cfg={cfg} onChange={setCfg} />}
+        {(current?.type === "grid" || current?.type === "kanban" || current?.type === "hierarchy") && <FilterBar baseId={id} aiAllowed={!preventCopy} fields={fields} members={members} cfg={cfg} onChange={setCfg} />}
         {current?.type === "grid" && <GroupBar fields={fields} cfg={cfg} onChange={setCfg} />}
-        {(current?.type === "grid" || current?.type === "kanban") && (
+        {(current?.type === "grid" || current?.type === "kanban" || current?.type === "hierarchy") && (
           <SortBar fields={fields} cfg={cfg} onChange={setCfg} />
         )}
         {current?.type === "grid" && <RowHeightBar cfg={cfg} onChange={setCfg} />}
@@ -717,7 +719,7 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
           <button type="button" disabled={!undoStack.canUndo} onClick={() => void runUndo(false)} aria-label={t("撤销")} title={undoStack.undoLabel ? `${t("撤销")}：${undoStack.undoLabel} (⌘/Ctrl+Z)` : t("撤销")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-undo><Undo2 size={16} /></button>
           <button type="button" disabled={!undoStack.canRedo} onClick={() => void runUndo(true)} aria-label={t("重做")} title={undoStack.redoLabel ? `${t("重做")}：${undoStack.redoLabel} (⌘/Ctrl+Shift+Z)` : t("重做")} className="grid size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-30" data-base-redo><Redo2 size={16} /></button>
         </span>}
-        {(current?.type === "grid" || current?.type === "kanban") && <ToolbarSearch value={filter} onChange={setFilter} />}
+        {(current?.type === "grid" || current?.type === "kanban" || current?.type === "hierarchy") && <ToolbarSearch value={filter} onChange={setFilter} />}
         {current?.type === "form" && <FormPublication key={`${id}:${current.id}`} baseId={id} viewId={current.id} canManage={base.role === "manage" && canEdit} canPublish={!dirty && validFormSelection(current.config ?? EMPTY_CONFIG, fields)} config={current.config ?? EMPTY_CONFIG} fields={fields} onAccessChange={() => { void refresh(); }} />}
         {(current?.type === "calendar" || current?.type === "gantt") && (() => {
           const dateFields = fields.filter((f) => f.type === "date");
@@ -835,6 +837,27 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
           onRecordUndo={(step) => undoStack.record(step)}
         />
       )}
+      {current?.type === "hierarchy" && (
+        <HierarchyView
+          baseId={id}
+          tableId={activeTableId}
+          canEdit={viewCanEdit}
+          fields={visibleFields}
+          allFields={fields}
+          records={records}
+          expansions={q.data.expansions}
+          members={members}
+          parentFieldId={cfg.parentField}
+          onChangeParentField={(parentField) => {
+            const nextCfg: ViewConfig = { ...cfg };
+            if (parentField) nextCfg.parentField = parentField;
+            else delete nextCfg.parentField;
+            setCfg(nextCfg);
+          }}
+          onMutate={refresh}
+          onOpen={(r) => setDetailRecord(r.id)}
+        />
+      )}
       {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);
         const at = records.findIndex((r) => r.id === detailRecord);
@@ -945,9 +968,9 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
             }
           }}
         >
-        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={viewCanEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} fieldWidths={cfg.fieldWidths} fieldStats={cfg.fieldStats} onFieldWidthsChange={(fieldWidths) => updateViewLayout({ fieldWidths })} onFieldStatsChange={(fieldStats) => updateViewLayout({ fieldStats })} undo={viewCanEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
+        <Grid baseId={id} tableId={activeTableId} tables={tables} userId={userId} canEdit={viewCanEdit} preventCopy={preventCopy} fields={visibleFields} allFields={fields} records={records} authorizedRecords={q.data.records} detailAccessReady={!q.isFetching} selectionAccessReady={!q.isFetching && (!queryActive || (serverQuery.isSuccess && !serverQuery.isFetching))} members={members} groupBy={cfg.group} groupByFields={resolveGroupFieldIds(cfg, fields)} rowHeight={cfg.rowHeight} fills={cfg.fills} frozen={cfg.frozen} fieldWidths={cfg.fieldWidths} fieldStats={cfg.fieldStats} onFieldWidthsChange={(fieldWidths) => updateViewLayout({ fieldWidths })} onFieldStatsChange={(fieldStats) => updateViewLayout({ fieldStats })} undo={viewCanEdit ? { stack: undoStack, run: (redo) => void runUndo(redo) } : undefined} onMutate={refresh} onDetailVisibilityChange={setGridDetailOpen} onFieldAction={(action, field) => {
           if (action === "sort-asc" || action === "sort-desc") setCfg({ ...cfg, sorts: [{ f: field.id, asc: action === "sort-asc" }] });
-          else if (action === "group") setCfg({ ...cfg, group: field.id });
+          else if (action === "group") setCfg(withGroupsConfig(cfg, [field.id]));
           else if (action === "freeze") setCfg({ ...cfg, frozen: visibleFields.findIndex((f) => f.id === field.id) + 1 });
           else if (action === "unfreeze") setCfg({ ...cfg, frozen: field.isPrimary ? 0 : undefined });
           else if (action === "hide") setCfg({ ...cfg, hidden: [...new Set([...(cfg.hidden ?? []), field.id])] });
@@ -1025,18 +1048,152 @@ function Popover({ label, active, width = 320, icon, children }: { label: string
 
 function GroupBar({ fields, cfg, onChange }: { fields: import("@/lib/api").Field[]; cfg: ViewConfig; onChange: (value: ViewConfig) => void }) {
   const { t } = useI18n();
-  return <Popover label={t("分组")} active={!!cfg.group}>
-    {(close) => <div data-grid-group role="group" aria-label={t("分组字段")} className="space-y-1">
-      <div className="px-2 pb-1 text-[12px] text-subtle">{t("选择分组字段")}</div>
-      <button type="button" onClick={() => { onChange({ ...cfg, group: undefined }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover">{t("不分组")}{!cfg.group && <Check size={15} className="text-primary" />}</button>
-      {fields.map((field) => <button key={field.id} type="button" onClick={() => { onChange({ ...cfg, group: field.id }); close(); }} className="flex h-8 w-full items-center justify-between rounded px-2 text-left hover:bg-hover"><span className="truncate">{field.name}</span>{cfg.group === field.id && <Check size={15} className="shrink-0 text-primary" />}</button>)}
-    </div>}
-  </Popover>;
+  const groupable = fields.filter((f) => f.type !== "button");
+  const activeIds = resolveGroupFieldIds(cfg, groupable);
+  const unusedFields = groupable.filter((f) => !activeIds.includes(f.id));
+
+  const setLevel = (idx: number, fieldId: number) => {
+    const next = [...activeIds];
+    next[idx] = fieldId;
+    onChange(withGroupsConfig(cfg, next));
+  };
+  const removeLevel = (idx: number) => {
+    onChange(withGroupsConfig(cfg, activeIds.filter((_, i) => i !== idx)));
+  };
+  const moveLevel = (idx: number, delta: -1 | 1) => {
+    const target = idx + delta;
+    if (target < 0 || target >= activeIds.length) return;
+    const next = [...activeIds];
+    [next[idx], next[target]] = [next[target], next[idx]];
+    onChange(withGroupsConfig(cfg, next));
+  };
+  const addSubGroup = () => {
+    if (activeIds.length >= MAX_GROUP_LEVELS || unusedFields.length === 0) return;
+    onChange(withGroupsConfig(cfg, [...activeIds, unusedFields[0].id]));
+  };
+
+  return (
+    <Popover
+      label={activeIds.length > 0 ? t("分组 · {n}", { n: activeIds.length }) : t("分组")}
+      active={activeIds.length > 0}
+      width={340}
+    >
+      <div data-grid-group role="group" aria-label={t("分组字段")} className="space-y-2.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[12px] font-medium text-muted-foreground">{t("多级分组（最多 3 级）")}</span>
+          {activeIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => onChange(withGroupsConfig(cfg, []))}
+              data-group-clear
+              className="text-[12px] text-subtle hover:text-destructive"
+            >
+              {t("清除全部")}
+            </button>
+          )}
+        </div>
+
+        {activeIds.length === 0 ? (
+          <div className="space-y-1.5">
+            <FeishuSelect
+              ariaLabel={t("选择分组字段")}
+              value=""
+              options={[
+                { value: "", label: t("选择分组字段") },
+                ...groupable.map((f) => ({ value: String(f.id), label: f.name })),
+              ]}
+              onChange={(val) => {
+                const fid = Number(val);
+                if (fid > 0) onChange(withGroupsConfig(cfg, [fid]));
+              }}
+              className="h-8 w-full border border-[#dee0e3] bg-surface px-2 text-[13px]"
+              dataAttr={{ "data-group-level-select": "0" }}
+            />
+          </div>
+        ) : (
+          <div className="space-y-1.5">
+            {activeIds.map((fid, idx) => {
+              const options = groupable
+                .filter((f) => f.id === fid || !activeIds.includes(f.id))
+                .map((f) => ({ value: String(f.id), label: f.name }));
+              return (
+                <div key={`${idx}:${fid}`} className="flex items-center gap-1.5" data-group-level={idx}>
+                  <span className="w-12 shrink-0 rounded bg-hover px-1.5 py-0.5 text-center text-[11px] text-muted-foreground">
+                    {t("第 {n} 级", { n: idx + 1 })}
+                  </span>
+                  <FeishuSelect
+                    ariaLabel={t("第 {n} 级分组字段", { n: idx + 1 })}
+                    value={String(fid)}
+                    options={options}
+                    onChange={(val) => {
+                      const nextId = Number(val);
+                      if (nextId > 0) setLevel(idx, nextId);
+                    }}
+                    className="h-7 min-w-0 flex-1 border border-[#dee0e3] bg-surface px-2 text-[12px]"
+                    chevronSize={11}
+                    menuMinWidth={140}
+                    dataAttr={{ "data-group-level-select": String(idx) }}
+                  />
+                  <button
+                    type="button"
+                    disabled={idx === 0}
+                    onClick={() => moveLevel(idx, -1)}
+                    aria-label={t("上移分组层级")}
+                    title={t("上移分组层级")}
+                    data-group-move-up={idx}
+                    className="grid size-6 shrink-0 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground disabled:opacity-30"
+                  >
+                    <ArrowUp size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx === activeIds.length - 1}
+                    onClick={() => moveLevel(idx, 1)}
+                    aria-label={t("下移分组层级")}
+                    title={t("下移分组层级")}
+                    data-group-move-down={idx}
+                    className="grid size-6 shrink-0 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground disabled:opacity-30"
+                  >
+                    <ArrowDown size={13} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removeLevel(idx)}
+                    aria-label={t("移除分组层级")}
+                    title={t("移除分组层级")}
+                    data-group-remove={idx}
+                    className="grid size-6 shrink-0 place-items-center rounded text-subtle hover:bg-hover hover:text-destructive"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              );
+            })}
+            {activeIds.length < MAX_GROUP_LEVELS && unusedFields.length > 0 && (
+              <button
+                type="button"
+                onClick={addSubGroup}
+                data-group-add-level
+                className="flex h-7 items-center gap-1 rounded px-2 text-[12px] font-medium text-primary hover:bg-hover"
+              >
+                <Plus size={13} />
+                {t("添加子分组")}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </Popover>
+  );
 }
 
 function opsFor(type: string): string[] {
   switch (type) {
     case "number":
+    case "rating":
+    case "currency":
+    case "progress":
+    case "autonumber":
       return ["is", "is_not", "gt", "gte", "lt", "lte", "empty", "not_empty"];
     case "checkbox":
       return ["checked", "unchecked"];
@@ -1140,11 +1297,12 @@ function FilterBar({ baseId, aiAllowed, fields, members, cfg, onChange }: { base
                 ) : f?.type === "checkbox" ? null : (
                   <input
                     className="h-7 flex-1 rounded border px-2 outline-none focus:border-primary"
-                    type={f?.type === "number" ? "number" : "text"}
+                    type={f?.type === "number" || f?.type === "currency" || f?.type === "progress" || f?.type === "autonumber" || f?.type === "rating" ? "number" : "text"}
                     value={String(rule.v ?? "")}
                     onChange={(e) => {
                       const rules = [...filters.rules];
-                      rules[i] = { ...rule, v: f?.type === "number" ? Number(e.target.value) : e.target.value };
+                      const isNum = f?.type === "number" || f?.type === "currency" || f?.type === "progress" || f?.type === "autonumber" || f?.type === "rating";
+                      rules[i] = { ...rule, v: isNum ? Number(e.target.value) : e.target.value };
                       setRules(rules);
                     }}
                   />

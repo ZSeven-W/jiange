@@ -5,8 +5,11 @@ import { createdViewSelectionResult, isCreatedView, NewViewMenu, VIEW_CHOICES } 
 
 describe("new view menu", () => {
   it("offers each supported view once with translated labels", () => {
-    expect(VIEW_CHOICES.map((item) => item.type)).toEqual(["grid", "kanban", "calendar", "gantt", "gallery", "form"]);
-    for (const choice of VIEW_CHOICES) expect(en).toHaveProperty(choice.label);
+    expect(VIEW_CHOICES.map((item) => item.type)).toEqual(["grid", "kanban", "calendar", "gantt", "gallery", "hierarchy", "form"]);
+    for (const choice of VIEW_CHOICES) {
+      expect(choice.label.trim().length).toBeGreaterThan(0);
+      expect(en).toHaveProperty(choice.label);
+    }
     const html = renderToStaticMarkup(<NewViewMenu open={false} onOpenChange={() => {}} canEdit busy={false} onCreate={() => {}} />);
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('aria-expanded="false"');

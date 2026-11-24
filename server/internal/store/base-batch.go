@@ -205,7 +205,7 @@ func (m *Memory) BatchRestoreRecordsGuarded(ctx context.Context, guard BaseWrite
 		clean := map[string]json.RawMessage{}
 		for k, v := range it.Cells {
 			f, ok := fieldByKey[k]
-			if !ok || nullCell(v) || f.Type == "link" || f.Type == "lookup" || f.Type == "formula" || f.Type == "created_time" || f.Type == "updated_time" || f.Type == "created_by" {
+			if !ok || nullCell(v) || FieldReadOnly(f.Type) || f.Type == "link" || f.Type == "lookup" || f.Type == "formula" || f.Type == "created_time" || f.Type == "updated_time" {
 				continue
 			}
 			clean[k] = slices.Clone(v)
@@ -227,7 +227,14 @@ func (m *Memory) BatchRestoreRecordsGuarded(ctx context.Context, guard BaseWrite
 	now := time.Now()
 	uid := guard.UserID
 	out := make([]Record, 0, len(prepared))
+	seedsByTable := map[int64]map[string]int64{}
 	for _, p := range prepared {
+		seeds, loaded := seedsByTable[p.tableID]
+		if !loaded {
+			seeds = m.autonumberSeedsLocked(baseID, p.tableID)
+			seedsByTable[p.tableID] = seeds
+		}
+		applyAutonumbers(p.cells, seeds)
 		pos := p.position
 		if pos == 0 {
 			maxPos := 0.0
@@ -485,6 +492,7 @@ func (p *Postgres) BatchRestoreRecordsGuarded(ctx context.Context, guard BaseWri
 		fRows.Close()
 
 		restored = make([]Record, 0, len(items))
+		seedsByTable := map[int64]map[string]int64{}
 		for _, it := range items {
 			if math.IsNaN(it.Position) || math.IsInf(it.Position, 0) {
 				return ErrInvalidBaseRecord
@@ -504,7 +512,7 @@ func (p *Postgres) BatchRestoreRecordsGuarded(ctx context.Context, guard BaseWri
 			clean := map[string]json.RawMessage{}
 			for k, v := range it.Cells {
 				f, ok := fieldByKey[k]
-				if !ok || nullCell(v) || f.Type == "link" || f.Type == "lookup" || f.Type == "formula" || f.Type == "created_time" || f.Type == "updated_time" || f.Type == "created_by" {
+				if !ok || nullCell(v) || FieldReadOnly(f.Type) || f.Type == "link" || f.Type == "lookup" || f.Type == "formula" || f.Type == "created_time" || f.Type == "updated_time" {
 					continue
 				}
 				if len(bytes.TrimSpace(v)) == 0 || !json.Valid(v) {
@@ -515,6 +523,15 @@ func (p *Postgres) BatchRestoreRecordsGuarded(ctx context.Context, guard BaseWri
 			if e = validate(liveFields, clean); e != nil {
 				return e
 			}
+			seeds, loaded := seedsByTable[tid]
+			if !loaded {
+				seeds, e = pgAutonumberSeeds(ctx, tx, baseID, tid)
+				if e != nil {
+					return e
+				}
+				seedsByTable[tid] = seeds
+			}
+			applyAutonumbers(clean, seeds)
 			rec, e := scanRecord(tx.QueryRow(ctx, `
 				INSERT INTO base_records (base_id, table_id, cells, position, creator_id)
 				VALUES ($1, $2, $3, CASE WHEN $4::float8=0 THEN COALESCE((SELECT max(position) FROM base_records WHERE table_id=$2),0)+1 ELSE $4 END, $5)

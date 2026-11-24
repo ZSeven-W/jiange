@@ -201,6 +201,11 @@ func (m *Memory) AddRecord(_ context.Context, r Record) (Record, error) {
 	}
 	if r.Cells == nil {
 		r.Cells = map[string]json.RawMessage{}
+	} else {
+		r.Cells = maps.Clone(r.Cells)
+	}
+	if seeds := m.autonumberSeedsLocked(r.BaseID, r.TableID); len(seeds) > 0 {
+		applyAutonumbers(r.Cells, seeds)
 	}
 	now := time.Now()
 	r.CreatedAt, r.UpdatedAt = &now, &now
@@ -213,11 +218,15 @@ func (m *Memory) SetCells(_ context.Context, base, id int64, cells map[string]js
 	defer m.mu.Unlock()
 	for i, r := range m.b.records {
 		if r.ID == id && r.BaseID == base {
+			protected := autonumberKeysForTable(m.b.fields, r.TableID)
 			nc := map[string]json.RawMessage{}
 			for k, v := range r.Cells {
 				nc[k] = v
 			}
 			for k, v := range cells {
+				if protected[k] {
+					continue
+				}
 				if len(v) == 0 || string(v) == "null" {
 					delete(nc, k)
 				} else {
@@ -249,6 +258,7 @@ func (m *Memory) AddRecordsBulk(_ context.Context, base int64, records []Record)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defaultTID := m.defaultTableIDLocked(base)
+	seedsByTable := map[int64]map[string]int64{}
 	for _, r := range records {
 		if r.TableID <= 0 {
 			r.TableID = defaultTID
@@ -259,7 +269,15 @@ func (m *Memory) AddRecordsBulk(_ context.Context, base int64, records []Record)
 		}
 		if r.Cells == nil {
 			r.Cells = map[string]json.RawMessage{}
+		} else {
+			r.Cells = maps.Clone(r.Cells)
 		}
+		seeds, loaded := seedsByTable[r.TableID]
+		if !loaded {
+			seeds = m.autonumberSeedsLocked(base, r.TableID)
+			seedsByTable[r.TableID] = seeds
+		}
+		applyAutonumbers(r.Cells, seeds)
 		now := time.Now()
 		r.CreatedAt, r.UpdatedAt = &now, &now
 		r.BaseID = base

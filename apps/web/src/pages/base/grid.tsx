@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ApiError, baseApi, type BaseRecord, type BaseTable, type Cell, type Field, type FillRule, type RowHeight, type User } from "@/lib/api";
 import { rowFill, rowHeightPx } from "./fill";
 import { ask } from "@/components/ui/ask";
@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils";
 import { CellEditor, CellView } from "./cells";
 import { FieldForm, FieldMenu, type FieldMenuAction } from "./fields";
 import { RecordDetail } from "./record-detail";
-import { displayValue, evalFormulas, memberName, PALETTE, personIDs, REGISTRY, setFormulaCache, optionColor } from "./registry";
+import { displayValue, evalFormulas, formatCurrency, PALETTE, REGISTRY, setFormulaCache } from "./registry";
+import { buildGroupTree, type GroupNode } from "./multi-group";
 import { TypeGlyph } from "./cells";
 import { planPaste, rangeText, skippedPasteMessage } from "./tsv";
 import { ChevronRight, Expand, Lock, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
@@ -60,6 +61,7 @@ export function Grid({
   preventCopy = false,
   members,
   groupBy,
+  groupByFields,
   onMutate,
   onDetailVisibilityChange,
   onFieldAction,
@@ -91,6 +93,8 @@ export function Grid({
   members: User[];
   /** grid grouping field id (from the view config), null = ungrouped */
   groupBy?: number | null;
+  /** multi-level grouping field ids (up to 3 levels, takes precedence over legacy groupBy) */
+  groupByFields?: number[];
   onMutate: () => void;
   onDetailVisibilityChange?: (visible: boolean) => void;
   /** Field header menu shortcuts that change the view config (sort/group/filter). */
@@ -147,7 +151,9 @@ export function Grid({
     window.addEventListener("blur", end);
     return () => { window.removeEventListener("mouseup", end); window.removeEventListener("blur", end); };
   }, []);
-  useEffect(() => { if (!detailAccessReady || !selectionAccessReady || groupBy) dragSelection.current = null; }, [detailAccessReady, selectionAccessReady, groupBy]);
+  const effectiveGroupIds = groupByFields && groupByFields.length > 0 ? groupByFields : groupBy ? [groupBy] : [];
+  const effectiveGroupKey = effectiveGroupIds.join(",");
+  useEffect(() => { if (!detailAccessReady || !selectionAccessReady || effectiveGroupIds.length > 0) dragSelection.current = null; }, [detailAccessReady, selectionAccessReady, effectiveGroupKey, effectiveGroupIds.length]);
   const [detailId, setDetailId] = useState<number | null>(null);
   const [detailTab, setDetailTab] = useState<"detail" | "history">("detail");
   const [detailComment, setDetailComment] = useState(false);
@@ -733,15 +739,20 @@ export function Grid({
     const present = vals.filter((v) => v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0));
     const empty = rows.length - present.length;
     const nums = present.map((v) => Number(v)).filter((n) => Number.isFinite(n));
+    const fmtNumStat = (n: number, isAvg = false): string => {
+      if (f.type === "currency") return formatCurrency(n, f);
+      if (f.type === "progress") return `${n.toFixed(isAvg ? 1 : 0)}%`;
+      return isAvg ? n.toFixed(2) : `${n}`;
+    };
     switch (fn) {
       case "sum":
-        return `${nums.reduce((a, v) => a + v, 0)}`;
+        return fmtNumStat(nums.reduce((a, v) => a + v, 0));
       case "avg":
-        return `${nums.length ? (nums.reduce((a, v) => a + v, 0) / nums.length).toFixed(2) : "—"}`;
+        return nums.length ? fmtNumStat(nums.reduce((a, v) => a + v, 0) / nums.length, true) : "—";
       case "min":
-        return nums.length ? `${Math.min(...nums)}` : "—";
+        return nums.length ? fmtNumStat(Math.min(...nums)) : "—";
       case "max":
-        return nums.length ? `${Math.max(...nums)}` : "—";
+        return nums.length ? fmtNumStat(Math.max(...nums)) : "—";
       case "count":
       case "filled":
         return `${present.length}`;
@@ -760,42 +771,23 @@ export function Grid({
     }
   };
   const statFns = (f: Field) =>
-    f.type === "number" || f.type === "rating"
+    f.type === "number" || f.type === "rating" || f.type === "currency" || f.type === "progress"
       ? ["sum", "avg", "min", "max", "count", "empty"]
       : f.type === "checkbox"
         ? ["checked", "unchecked", "pct_checked", "count", "empty"]
         : ["count", "empty", "unique"];
 
-  // --- grid grouping (any field) ---
-  const groupField = fields.find((f) => f.id === groupBy);
-  const groups: { key: string; rows: BaseRecord[] }[] = [];
-  if (groupField) {
-    const index = new Map<string, { key: string; rows: BaseRecord[] }>();
-    const push = (key: string, r: BaseRecord) => {
-      let g = index.get(key);
-      if (!g) {
-        g = { key, rows: [] };
-        index.set(key, g);
-        groups.push(g);
-      }
-      g.rows.push(r);
-    };
-    for (const r of records) {
-      const raw = displayValue(r, groupField, members);
-      if (groupField.type === "person") {
-        // 飞书式：一条记录出现在它每个成员的分组里，空值进未分组。
-        const ids = personIDs(raw);
-        if (!ids.length) push("", r);
-        else ids.forEach((id) => push(String(id), r));
-        continue;
-      }
-      const key = raw === undefined || raw === "" || (Array.isArray(raw) && raw.length === 0) ? "" : String(raw);
-      push(key, r);
-    }
-  }
-  const groupColor = (key: string) => (groupField && groupField.type === "select" && key ? optionColor(groupField, key) : null);
-  // 人员分组头显示成员名（key 是成员 id 字符串）。
-  const groupLabel = (key: string) => (groupField?.type === "person" && key ? memberName(Number(key), members) || t("成员 #{id}", { id: key }) : key);
+  // --- multi-level grid grouping (up to 3 levels) ---
+  const groupSourceFields = allFields ?? fields;
+  const groupFields = effectiveGroupIds
+    .map((gid) => groupSourceFields.find((f) => f.id === gid))
+    .filter((f): f is Field => Boolean(f))
+    .slice(0, 3);
+  const isGrouped = groupFields.length > 0;
+  const groupTree = useMemo(
+    () => (isGrouped ? buildGroupTree(records, groupFields, members) : []),
+    [isGrouped, records, groupFields, members],
+  );
   const idxOf = new Map(records.map((r, i) => [r.id, i]));
 
   // --- virtualization: render only the visible window (plus overscan) ---
@@ -849,10 +841,10 @@ export function Grid({
                 const editing = edit?.rid === rec.id && edit.fid === f.id;
                 const ro = REGISTRY[f.type].readonly;
                 const selected = !editing && inRange(i, j);
-                const gpuCell = gpuActive && !groupField && !isFrozen(j) && !editing;
+                const gpuCell = gpuActive && !isGrouped && !isFrozen(j) && !editing;
                 return (
                   <Fragment key={f.id}>
-                  {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className={cn("p-0", gpuActive && !groupField ? "border-0" : "border")} aria-hidden />}
+                  {wj === nFrozen && leadW > 0 && <td style={{ width: leadW }} className={cn("p-0", gpuActive && !isGrouped ? "border-0" : "border")} aria-hidden />}
                   <td
                     style={{ ...(isFrozen(j) ? { position: "sticky", left: stickyLeft(j) } : {}), ...(!gpuCell && fill && !isChecked && !selected && !editing ? { background: fill } : {}), ...(!gpuCell && selected && selection ? { boxShadow: selectionOutline(selection, i, j) } : {}) }}
                     className={cn(
@@ -862,7 +854,7 @@ export function Grid({
                       isFrozen(j) && "z-10 bg-surface shadow-[inset_0_-1px_0_#dee0e3]",
                       j === 0 && "border-l-0",
                       lastFrozen(j) && "border-r-[#BBBFC4] shadow-[inset_0_-1px_0_#dee0e3,inset_-1px_0_0_#BBBFC4]",
-                      f.type === "number" && "text-right tabular-nums",
+                      (f.type === "number" || f.type === "currency") && "text-right tabular-nums",
                       editing && "relative z-20 outline outline-2 -outline-offset-2 outline-primary",
                       !gpuCell && !editing && isChecked && "bg-sel-row",
                       !gpuCell && !editing && inRange(i, j) && (isCursor(i, j) ? "bg-sel-cursor" : "bg-sel-row"),
@@ -878,12 +870,12 @@ export function Grid({
                       setSel(next);
                       // Grouped rows can appear more than once or in a different
                       // order; numeric rectangles cannot safely represent them.
-                      dragSelection.current = !groupField && detailAccessReady && selectionAccessReady ? next : null;
+                      dragSelection.current = !isGrouped && detailAccessReady && selectionAccessReady ? next : null;
                       gridRef.current?.focus();
                     }}
                     onMouseEnter={(e) => {
                       const start = dragSelection.current;
-                      if (!start || !(e.buttons & 1) || !detailAccessReady || !selectionAccessReady || groupField) { dragSelection.current = null; return; }
+                      if (!start || !(e.buttons & 1) || !detailAccessReady || !selectionAccessReady || isGrouped) { dragSelection.current = null; return; }
                       const next = extendGridSelection(start, i, j, records, fields);
                       if (next) setSel(next); else dragSelection.current = null;
                     }}
@@ -906,6 +898,7 @@ export function Grid({
                         field={f}
                         record={rec}
                         members={members}
+                        allFields={allFields ?? fields}
                         compact
                         canEdit={canEdit && !ro}
                         onToggle={canEdit && !ro ? () => toggleAt(i, j) : undefined}
@@ -917,12 +910,73 @@ export function Grid({
                   </Fragment>
                 );
               })}
-              {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className={cn("p-0", gpuActive && !groupField ? "border-0" : "border")} aria-hidden />}
-              {tailW > 0 && <td style={{ width: tailW }} className={cn("p-0", gpuActive && !groupField ? "border-0" : "border")} aria-hidden />}
-              {canEdit && <td className={cn("border", gpuActive && !groupField ? "border-transparent bg-transparent" : isChecked && "bg-sel-row")} style={!(gpuActive && !groupField) && !isChecked && fill ? { background: fill } : undefined} />}
+              {wjSpacer(leadW, winFields.length) && <td style={{ width: leadW }} className={cn("p-0", gpuActive && !isGrouped ? "border-0" : "border")} aria-hidden />}
+              {tailW > 0 && <td style={{ width: tailW }} className={cn("p-0", gpuActive && !isGrouped ? "border-0" : "border")} aria-hidden />}
+              {canEdit && <td className={cn("border", gpuActive && !isGrouped ? "border-transparent bg-transparent" : isChecked && "bg-sel-row")} style={!(gpuActive && !isGrouped) && !isChecked && fill ? { background: fill } : undefined} />}
             </tr>
               );
   };
+
+  const renderGroupNodes = (nodes: readonly GroupNode[]): ReactNode =>
+    nodes.map((g) => {
+      const [bg, fg] = g.color ?? ["#F2F3F5", "#646A73"];
+      const open = !collapsed.has(g.pathKey);
+      const isNested = g.depth > 0;
+      return (
+        <Fragment key={g.pathKey}>
+          <tr
+            className={cn(
+              g.depth === 0 ? "bg-sidebar/80" : g.depth === 1 ? "bg-sidebar/50" : "bg-sidebar/30",
+            )}
+            data-group={g.key}
+            data-group-path={g.pathKey}
+            data-group-depth={g.depth}
+          >
+            <td
+              colSpan={winFields.length + 3}
+              className="border py-1.5 pr-2.5"
+              style={{ paddingLeft: 10 + g.depth * 22 }}
+            >
+              <button
+                type="button"
+                aria-expanded={open}
+                data-group-toggle={g.pathKey}
+                className={cn(
+                  "flex items-center gap-1.5 text-[13px] font-medium",
+                  isNested && "border-l-2 border-primary/35 pl-2",
+                )}
+                onClick={() =>
+                  setCollapsed((prev) => {
+                    const next = new Set(prev);
+                    if (open) next.add(g.pathKey);
+                    else next.delete(g.pathKey);
+                    return next;
+                  })
+                }
+              >
+                <ChevronRight size={12} strokeWidth={1.7} className={cn("shrink-0 text-subtle transition-transform", open && "rotate-90")} />
+                {groupFields.length > 1 && (
+                  <span className="rounded bg-surface/90 px-1.5 py-0.5 text-[11px] font-normal text-subtle border border-[#e5e6eb] dark:border-border">
+                    {t("{n}级", { n: g.depth + 1 })} · {g.field.name}
+                  </span>
+                )}
+                {g.label ? (
+                  <span className="rounded px-1.5 py-0.5 text-[12px]" style={{ background: bg, color: fg }}>
+                    {g.label}
+                  </span>
+                ) : (
+                  <span className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-subtle">{t("未分组")}</span>
+                )}
+                <span className="rounded-full bg-hover px-1.5 py-0.5 text-[11px] font-normal tabular-nums text-subtle" data-group-count={g.pathKey}>
+                  {g.records.length}
+                </span>
+              </button>
+            </td>
+          </tr>
+          {open && (g.children.length > 0 ? renderGroupNodes(g.children) : g.records.map((r) => renderRow(r, idxOf.get(r.id) ?? 0)))}
+        </Fragment>
+      );
+    });
 
   return (
     <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
@@ -947,7 +1001,7 @@ export function Grid({
       nFrozen={nFrozen}
       checked={checked}
       selection={selection}
-      grouped={!!groupField}
+      grouped={isGrouped}
       canEdit={canEdit}
       onBackendReady={(backend) => {
         if (backend === "webgpu" || backend === "webgl2") setGpuActive(true);
@@ -1079,52 +1133,18 @@ export function Grid({
           </tr>
         </thead>
         <tbody>
-          {!groupField && r0 > 0 && (
+          {!isGrouped && r0 > 0 && (
             <tr aria-hidden style={{ height: r0 * ROW_H }}>
               <td colSpan={winFields.length + 3} className="border-0 p-0" />
             </tr>
           )}
-          {!groupField && records.slice(r0, r1).map((rec, ri) => renderRow(rec, r0 + ri))}
-          {!groupField && r1 < rows && (
+          {!isGrouped && records.slice(r0, r1).map((rec, ri) => renderRow(rec, r0 + ri))}
+          {!isGrouped && r1 < rows && (
             <tr aria-hidden style={{ height: (rows - r1) * ROW_H }}>
               <td colSpan={winFields.length + 3} className="border-0 p-0" />
             </tr>
           )}
-          {groupField &&
-            groups.map((g) => {
-              const [bg, fg] = groupColor(g.key) ?? ["#F2F3F5", "#646A73"];
-              const open = !collapsed.has(g.key);
-              return (
-                <Fragment key={g.key || "__ungrouped"}>
-                  <tr className="bg-sidebar/70" data-group={g.key}>
-                    <td colSpan={winFields.length + 3} className="border px-2.5 py-1.5">
-                      <button
-                        className="flex items-center gap-1.5 text-[13px] font-medium"
-                        onClick={() =>
-                          setCollapsed((prev) => {
-                            const next = new Set(prev);
-                            if (open) next.add(g.key);
-                            else next.delete(g.key);
-                            return next;
-                          })
-                        }
-                      >
-                        <ChevronRight size={12} strokeWidth={1.7} className={cn("text-subtle transition-transform", open && "rotate-90")} />
-                        {g.key ? (
-                          <span className="rounded px-1.5 py-0.5 text-[12px]" style={{ background: bg, color: fg }}>
-                            {groupLabel(g.key)}
-                          </span>
-                        ) : (
-                          <span className="rounded bg-accent px-1.5 py-0.5 text-[12px] text-subtle">{t("未分组")}</span>
-                        )}
-                        <span className="text-subtle">{g.rows.length}</span>
-                      </button>
-                    </td>
-                  </tr>
-                  {open && g.rows.map((r) => renderRow(r, idxOf.get(r.id) ?? 0))}
-                </Fragment>
-              );
-            })}
+          {isGrouped && renderGroupNodes(groupTree)}
           {canEdit && (
             <tr className="h-8">
               <td colSpan={winFields.length + 3} className="sticky left-0 border px-4">

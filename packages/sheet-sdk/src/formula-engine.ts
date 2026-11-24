@@ -7,12 +7,15 @@ import {
   type RangeRefNode,
 } from "./formula-ast.js";
 import {
+  ARRAY_LIFTABLE_FUNCTIONS,
   arrVal,
   boolVal,
   BUILTIN_FUNCTIONS,
   compareValues,
   EMPTY_VAL,
   errVal,
+  isLambdaVal,
+  isMissingArg,
   numVal,
   strVal,
   toNumber,
@@ -20,6 +23,7 @@ import {
   unwrapScalar,
   type CustomFormulaFunction,
   type FormulaEvalContext,
+  type LambdaEvalValue,
   type ResolvedRange,
 } from "./formula-functions.js";
 import { formatCellDisplay } from "./numfmt.js";
@@ -34,6 +38,12 @@ import type {
 
 const MAX_DEPTH = 64;
 const MAX_OPS = 200_000;
+const EMPTY_ENV: ReadonlyMap<string, EvalValue> = new Map();
+
+function sanitizeBoundaryValue(val: EvalValue): EvalValue {
+  if (isLambdaVal(val)) return errVal("#CALC!");
+  return val;
+}
 
 export type MergeCellInfo =
   | { kind: "master"; rowSpan: number; colSpan: number; merge: SheetMerge }
@@ -566,7 +576,7 @@ export class IncrementalFormulaEngine {
     const rt = this.sheets.get(sheetId)!;
     const h = mat.length;
     const w = mat[0]?.length ?? 0;
-    if (h <= 1 && w <= 1) return mat[0]?.[0] ?? EMPTY_VAL;
+    if (h <= 1 && w <= 1) return sanitizeBoundaryValue(mat[0]?.[0] ?? EMPTY_VAL);
 
     // Check spill area collisions against non-empty raw cells or other spill ranges.
     const targets: string[] = [];
@@ -595,15 +605,20 @@ export class IncrementalFormulaEngine {
       }
       return errVal("#SPILL!");
     }
+    const cleanMat: EvalValue[][] = [];
     for (let dr = 0; dr < h; dr++) {
+      const cleanRow: EvalValue[] = [];
       for (let dc = 0; dc < w; dc++) {
+        const cellVal = sanitizeBoundaryValue(mat[dr]?.[dc] ?? EMPTY_VAL);
+        cleanRow.push(cellVal);
         if (dr === 0 && dc === 0) continue;
         const tKey = `${sheetId}:${row + dr}:${col + dc}`;
-        this.spillCells.set(tKey, { originKey, value: mat[dr][dc] ?? EMPTY_VAL });
+        this.spillCells.set(tKey, { originKey, value: cellVal });
       }
+      cleanMat.push(cleanRow);
     }
     this.originSpills.set(originKey, targets);
-    return arrVal(mat);
+    return arrVal(cleanMat);
   }
 
   private resolveRangeNode(currentSheetId: number, node: RangeRefNode): ResolvedRange | null {
@@ -651,8 +666,9 @@ export class IncrementalFormulaEngine {
     if (!ast) {
       result = errVal("#ERROR!");
     } else {
-      result = this.evalAstNode(ast, sheetId, row, col, depth, active, budget);
+      result = this.evalAstNode(ast, sheetId, row, col, depth, active, budget, EMPTY_ENV, false);
     }
+    result = sanitizeBoundaryValue(result);
     if (result.kind === "number") {
       result = numVal(Number(result.value.toPrecision(15)));
     } else if (result.kind === "array") {
@@ -665,6 +681,29 @@ export class IncrementalFormulaEngine {
     return result.kind === "array" ? (result.value[0]?.[0] ?? EMPTY_VAL) : result;
   }
 
+  private invokeLambdaClosure(
+    fn: LambdaEvalValue,
+    argNodes: readonly FormulaAst[],
+    callerSheetId: number,
+    row: number,
+    col: number,
+    depth: number,
+    active: Set<string>,
+    budget: { ops: number },
+    callerEnv: ReadonlyMap<string, EvalValue>,
+    arrayMode: boolean,
+  ): EvalValue {
+    if (depth > MAX_DEPTH || ++budget.ops > MAX_OPS) return errVal("#LIMIT!");
+    if (argNodes.length !== fn.params.length) return errVal("#VALUE!");
+    const callEnv = new Map<string, EvalValue>(fn.env);
+    for (let i = 0; i < fn.params.length; i++) {
+      if (isMissingArg(argNodes[i])) return errVal("#VALUE!");
+      const argVal = this.evalAstNode(argNodes[i], callerSheetId, row, col, depth + 1, active, budget, callerEnv, arrayMode);
+      callEnv.set(fn.params[i], argVal);
+    }
+    return this.evalAstNode(fn.body, fn.sheetId, row, col, depth + 1, active, budget, callEnv, arrayMode);
+  }
+
   private evalAstNode(
     node: FormulaAst,
     sheetId: number,
@@ -673,6 +712,8 @@ export class IncrementalFormulaEngine {
     depth: number,
     active: Set<string>,
     budget: { ops: number },
+    env: ReadonlyMap<string, EvalValue> = EMPTY_ENV,
+    arrayMode = false,
   ): EvalValue {
     if (depth > MAX_DEPTH || ++budget.ops > MAX_OPS) return errVal("#LIMIT!");
 
@@ -705,14 +746,16 @@ export class IncrementalFormulaEngine {
         return arrVal(mat);
       }
       case "name": {
+        const local = env.get(node.name.toUpperCase());
+        if (local !== undefined) return local;
         const def = this.resolveDefinedName(sheetId, node.name);
         if (!def) return errVal("#NAME?");
         const subAst = parseFormulaAst(def.ref);
         if (!subAst) return errVal("#NAME?");
-        return this.evalAstNode(subAst, sheetId, row, col, depth + 1, active, budget);
+        return this.evalAstNode(subAst, sheetId, row, col, depth + 1, active, budget, EMPTY_ENV, arrayMode);
       }
       case "unary": {
-        const inner = this.evalAstNode(node.arg, sheetId, row, col, depth + 1, active, budget);
+        const inner = this.evalAstNode(node.arg, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
         if (inner.kind === "array") {
           return arrVal(inner.value.map((r) => r.map((v) => {
             const n = toNumber(v);
@@ -723,25 +766,51 @@ export class IncrementalFormulaEngine {
         return typeof n === "number" ? numVal(node.op === "-" ? -n : n) : n;
       }
       case "percent": {
-        const inner = this.evalAstNode(node.arg, sheetId, row, col, depth + 1, active, budget);
+        const inner = this.evalAstNode(node.arg, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
+        if (inner.kind === "array") {
+          return arrVal(inner.value.map((r) => r.map((v) => {
+            const n = toNumber(v);
+            return typeof n === "number" ? numVal(n / 100) : n;
+          })));
+        }
         const n = toNumber(inner);
         return typeof n === "number" ? numVal(n / 100) : n;
       }
       case "binary": {
-        const left = this.evalAstNode(node.left, sheetId, row, col, depth + 1, active, budget);
-        const right = this.evalAstNode(node.right, sheetId, row, col, depth + 1, active, budget);
+        const left = this.evalAstNode(node.left, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
+        const right = this.evalAstNode(node.right, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
         return evalBinaryValue(node.op, left, right);
       }
       case "array": {
-        const rows = node.rows.map((r) => r.map((item) => unwrapScalar(this.evalAstNode(item, sheetId, row, col, depth + 1, active, budget))));
+        const rows = node.rows.map((r) =>
+          r.map((item) => unwrapScalar(this.evalAstNode(item, sheetId, row, col, depth + 1, active, budget, env, arrayMode))),
+        );
         return arrVal(rows);
       }
+      case "invoke": {
+        const callee = this.evalAstNode(node.callee, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
+        if (callee.kind === "error") return callee;
+        if (!isLambdaVal(callee)) return errVal("#VALUE!");
+        return this.invokeLambdaClosure(callee, node.args, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
+      }
       case "call": {
+        // 1. Lexical scope callable (e.g. LET(double, LAMBDA(n, n*2), double(21)))
+        const localBound = env.get(node.name);
+        if (localBound !== undefined) {
+          if (localBound.kind === "error") return localBound;
+          if (!isLambdaVal(localBound)) return errVal("#VALUE!");
+          return this.invokeLambdaClosure(localBound, node.args, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
+        }
+
         const ctx: FormulaEvalContext = {
           sheetId,
           row,
           col,
-          evalAst: (child) => this.evalAstNode(child, sheetId, row, col, depth + 1, active, budget),
+          arrayMode,
+          getEnv: () => env,
+          evalAst: (child) => this.evalAstNode(child, sheetId, row, col, depth + 1, active, budget, env, arrayMode),
+          evalAstWithEnv: (child, nextEnv, nextArrayMode) =>
+            this.evalAstNode(child, sheetId, row, col, depth + 1, active, budget, nextEnv, nextArrayMode ?? arrayMode),
           resolveRange: (rNode) => this.resolveRangeNode(sheetId, rNode),
           resolveCellRef: (refNode) => {
             if (refNode.kind === "cell") {
@@ -775,7 +844,7 @@ export class IncrementalFormulaEngine {
               }
               return mat;
             }
-            const ev = this.evalAstNode(matNode, sheetId, row, col, depth + 1, active, budget);
+            const ev = this.evalAstNode(matNode, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
             if (ev.kind === "error") return ev;
             if (ev.kind === "array") return ev.value;
             return [[ev]];
@@ -801,7 +870,9 @@ export class IncrementalFormulaEngine {
 
         const custom = this.customFunctions.get(node.name);
         if (custom) {
-          const evaluatedArgs = node.args.map((arg) => this.evalAstNode(arg, sheetId, row, col, depth + 1, active, budget));
+          const evaluatedArgs = node.args.map((arg) =>
+            this.evalAstNode(arg, sheetId, row, col, depth + 1, active, budget, env, arrayMode),
+          );
           try {
             return normalizeCustomResult(custom(evaluatedArgs, { sheetId, row, col }));
           } catch {
@@ -809,8 +880,84 @@ export class IncrementalFormulaEngine {
           }
         }
         const builtin = BUILTIN_FUNCTIONS[node.name];
-        if (!builtin) return errVal("#NAME?");
-        return builtin(node.args, ctx);
+        if (builtin) {
+          if (arrayMode && ARRAY_LIFTABLE_FUNCTIONS.has(node.name) && node.args.length > 0) {
+            const evald = node.args.map((a) =>
+              isMissingArg(a)
+                ? null
+                : this.evalAstNode(a, sheetId, row, col, depth + 1, active, budget, env, arrayMode),
+            );
+            const hasArray = evald.some((v) => v !== null && v.kind === "array");
+            if (hasArray) {
+              let rows = 1;
+              let cols = 1;
+              for (const v of evald) {
+                if (v && v.kind === "array") {
+                  rows = Math.max(rows, v.value.length);
+                  cols = Math.max(cols, v.value[0]?.length ?? 1);
+                }
+              }
+              const placeholders: FormulaAst[] = node.args.map((a, idx) =>
+                isMissingArg(a) ? a : { kind: "name", name: `__ARG_${idx}__` },
+              );
+              const out: EvalValue[][] = [];
+              for (let r = 0; r < rows; r++) {
+                const line: EvalValue[] = [];
+                for (let c = 0; c < cols; c++) {
+                  if (++budget.ops > MAX_OPS) return errVal("#LIMIT!");
+                  const cellVals = evald.map((v) => {
+                    if (!v) return EMPTY_VAL;
+                    if (v.kind !== "array") return v;
+                    const rr = Math.min(r, Math.max(0, v.value.length - 1));
+                    const rowArr = v.value[rr];
+                    const cc = Math.min(c, Math.max(0, (rowArr?.length ?? 1) - 1));
+                    return rowArr?.[cc] ?? errVal("#N/A");
+                  });
+                  const liftCtx: FormulaEvalContext = {
+                    ...ctx,
+                    arrayMode: false,
+                    evalAst: (child) => {
+                      if (child.kind === "name" && child.name.startsWith("__ARG_") && child.name.endsWith("__")) {
+                        return cellVals[Number(child.name.slice(6, -2))] ?? EMPTY_VAL;
+                      }
+                      return ctx.evalAst(child);
+                    },
+                  };
+                  line.push(builtin(placeholders, liftCtx));
+                }
+                out.push(line);
+              }
+              return arrVal(out);
+            }
+            const placeholders: FormulaAst[] = node.args.map((a, idx) =>
+              isMissingArg(a) ? a : { kind: "name", name: `__ARG_${idx}__` },
+            );
+            const scalarCtx: FormulaEvalContext = {
+              ...ctx,
+              evalAst: (child) => {
+                if (child.kind === "name" && child.name.startsWith("__ARG_") && child.name.endsWith("__")) {
+                  return evald[Number(child.name.slice(6, -2))] ?? EMPTY_VAL;
+                }
+                return ctx.evalAst(child);
+              },
+            };
+            return builtin(placeholders, scalarCtx);
+          }
+          return builtin(node.args, ctx);
+        }
+
+        // 4. Workbook defined-name LAMBDA (e.g. defined name AddOne = "=LAMBDA(x, x+1)", called as =AddOne(5))
+        const defFn = this.resolveDefinedName(sheetId, node.name);
+        if (defFn) {
+          const defAst = parseFormulaAst(defFn.ref);
+          if (defAst) {
+            const defVal = this.evalAstNode(defAst, sheetId, row, col, depth + 1, active, budget, EMPTY_ENV, arrayMode);
+            if (isLambdaVal(defVal)) {
+              return this.invokeLambdaClosure(defVal, node.args, sheetId, row, col, depth + 1, active, budget, env, arrayMode);
+            }
+          }
+        }
+        return errVal("#NAME?");
       }
     }
   }

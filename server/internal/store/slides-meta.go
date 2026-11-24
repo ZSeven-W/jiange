@@ -7,10 +7,13 @@ import (
 	"errors"
 	"io"
 	"math"
+	"net/url"
 	"regexp"
 	"slices"
 	"sort"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -48,6 +51,17 @@ type SlideShapeAnimationMeta struct {
 	Trigger    string `json:"trigger,omitempty"`    // click | with_prev | after_prev (default "click")
 }
 
+// SlideMasterMeta carries reusable slide master / brand kit configuration.
+type SlideMasterMeta struct {
+	BrandName      *string `json:"brandName,omitempty"`
+	FooterText     *string `json:"footerText,omitempty"`
+	ShowPageNumber *bool   `json:"showPageNumber,omitempty"`
+	LogoURL        *string `json:"logoUrl,omitempty"`
+	AccentColor    *string `json:"accentColor,omitempty"`
+	FontFamily     *string `json:"fontFamily,omitempty"`
+	HeaderRule     *bool   `json:"headerRule,omitempty"`
+}
+
 // SlidePageMeta carries cloud-persisted presentation metadata for a single slide page.
 type SlidePageMeta struct {
 	TitleStyle  *SlideFieldTextStyleMeta           `json:"titleStyle,omitempty"`
@@ -55,6 +69,7 @@ type SlidePageMeta struct {
 	Transition  *string                            `json:"transition,omitempty"`
 	ShapeGroups map[string][]string                `json:"shapeGroups,omitempty"`
 	Animations  map[string]SlideShapeAnimationMeta `json:"animations,omitempty"`
+	Master      *SlideMasterMeta                   `json:"master,omitempty"`
 }
 
 // SlidesMetaStore persists slide page styling, transitions, and shape groups
@@ -229,8 +244,106 @@ func normalizeSlideShapeAnimations(in map[string]SlideShapeAnimationMeta) (map[s
 	return out, nil
 }
 
+func validSlideMasterLogoURL(raw string) bool {
+	if len(raw) == 0 {
+		return true
+	}
+	if len(raw) > 2048 {
+		return false
+	}
+	for i := 0; i < len(raw); i++ {
+		if raw[i] <= 0x20 || raw[i] == 0x7f {
+			return false
+		}
+	}
+	if strings.HasPrefix(raw, "/api/files/") {
+		rest := raw[len("/api/files/"):]
+		return len(rest) > 0 && !strings.Contains(rest, "..") && !strings.Contains(rest, "\\") && !strings.HasPrefix(rest, "/")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	return (scheme == "https" || scheme == "http") && u.Host != ""
+}
+
+func validSlideMasterFontFamily(v string) bool {
+	switch v {
+	case "sans", "serif", "kai", "mono", "rounded",
+		"Inter", "PingFang SC", "Microsoft YaHei", "Songti SC", "Kaiti SC", "Georgia",
+		"sans-serif", "monospace":
+		return true
+	}
+	return false
+}
+
+func normalizeSlideMaster(in *SlideMasterMeta) (*SlideMasterMeta, error) {
+	if in == nil {
+		return nil, nil
+	}
+	var out SlideMasterMeta
+	if in.BrandName != nil {
+		v := strings.TrimSpace(*in.BrandName)
+		if v != "" {
+			if utf8.RuneCountInString(v) > 80 {
+				return nil, ErrInvalidSlideMeta
+			}
+			out.BrandName = &v
+		}
+	}
+	if in.FooterText != nil {
+		v := strings.TrimSpace(*in.FooterText)
+		if v != "" {
+			if utf8.RuneCountInString(v) > 160 {
+				return nil, ErrInvalidSlideMeta
+			}
+			out.FooterText = &v
+		}
+	}
+	if in.ShowPageNumber != nil && *in.ShowPageNumber {
+		v := true
+		out.ShowPageNumber = &v
+	}
+	if in.LogoURL != nil {
+		v := strings.TrimSpace(*in.LogoURL)
+		if v != "" {
+			if !validSlideMasterLogoURL(v) {
+				return nil, ErrInvalidSlideMeta
+			}
+			out.LogoURL = &v
+		}
+	}
+	if in.AccentColor != nil {
+		v := strings.TrimSpace(*in.AccentColor)
+		if v != "" {
+			if !slideMetaHexColor.MatchString(v) {
+				return nil, ErrInvalidSlideMeta
+			}
+			out.AccentColor = &v
+		}
+	}
+	if in.FontFamily != nil {
+		v := strings.TrimSpace(*in.FontFamily)
+		if v != "" && v != "default" {
+			if len(v) > 64 || !validSlideMasterFontFamily(v) {
+				return nil, ErrInvalidSlideMeta
+			}
+			out.FontFamily = &v
+		}
+	}
+	if in.HeaderRule != nil && *in.HeaderRule {
+		v := true
+		out.HeaderRule = &v
+	}
+	if out.BrandName == nil && out.FooterText == nil && out.ShowPageNumber == nil && out.LogoURL == nil && out.AccentColor == nil && out.FontFamily == nil && out.HeaderRule == nil {
+		return nil, nil
+	}
+	return &out, nil
+}
+
 func encodeNormalizedSlidePageMeta(m SlidePageMeta) (json.RawMessage, error) {
-	if m.TitleStyle == nil && m.BodyStyle == nil && m.Transition == nil && len(m.ShapeGroups) == 0 && len(m.Animations) == 0 {
+	if m.TitleStyle == nil && m.BodyStyle == nil && m.Transition == nil && len(m.ShapeGroups) == 0 && len(m.Animations) == 0 && m.Master == nil {
 		return nil, nil
 	}
 	encoded, err := json.Marshal(m)
@@ -295,12 +408,17 @@ func ValidateAndNormalizeSlidePageMeta(raw json.RawMessage) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
+	master, err := normalizeSlideMaster(in.Master)
+	if err != nil {
+		return nil, err
+	}
 	return encodeNormalizedSlidePageMeta(SlidePageMeta{
 		TitleStyle:  titleStyle,
 		BodyStyle:   bodyStyle,
 		Transition:  transition,
 		ShapeGroups: groups,
 		Animations:  animations,
+		Master:      master,
 	})
 }
 
@@ -311,6 +429,8 @@ type slideBatchMetaPatch struct {
 	bodyStyle     *SlideFieldTextStyleMeta
 	hasTransition bool
 	transition    *string
+	hasMaster     bool
+	master        *SlideMasterMeta
 }
 
 func parseSlideBatchMetaPatch(raw json.RawMessage) (slideBatchMetaPatch, error) {
@@ -329,6 +449,7 @@ func parseSlideBatchMetaPatch(raw json.RawMessage) (slideBatchMetaPatch, error) 
 		TitleStyle *SlideFieldTextStyleMeta `json:"titleStyle"`
 		BodyStyle  *SlideFieldTextStyleMeta `json:"bodyStyle"`
 		Transition *string                  `json:"transition"`
+		Master     *SlideMasterMeta         `json:"master"`
 	}
 	if err := decodeStrictJSON(trimmed, &strict); err != nil {
 		return slideBatchMetaPatch{}, ErrInvalidSlideMeta
@@ -368,6 +489,16 @@ func parseSlideBatchMetaPatch(raw json.RawMessage) (slideBatchMetaPatch, error) 
 			if v != "none" {
 				patch.transition = &v
 			}
+		}
+	}
+	if rawVal, ok := keys["master"]; ok {
+		patch.hasMaster = true
+		if !bytes.Equal(bytes.TrimSpace(rawVal), []byte("null")) {
+			master, err := normalizeSlideMaster(strict.Master)
+			if err != nil {
+				return slideBatchMetaPatch{}, err
+			}
+			patch.master = master
 		}
 	}
 	return patch, nil
@@ -431,6 +562,9 @@ func mergeSlidePageMeta(existing json.RawMessage, patch slideBatchMetaPatch) (js
 	}
 	if patch.hasTransition {
 		cur.Transition = patch.transition
+	}
+	if patch.hasMaster {
+		cur.Master = patch.master
 	}
 	// Always preserve cur.ShapeGroups and cur.Animations untouched.
 	return encodeNormalizedSlidePageMeta(cur)

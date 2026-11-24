@@ -164,7 +164,7 @@ function normalizeRawInput(raw: string | number | boolean | null | undefined): s
 
 function evalToPrimitive(ev: EvalValue | undefined): string | number | boolean | null {
   if (!ev || ev.kind === "empty") return null;
-  if (ev.kind === "number" || ev.kind === "string" || ev.kind === "boolean") return ev.value;
+  if (ev.kind === "number" || ev.kind === "string" || ev.kind === "boolean" || ev.kind === "image") return ev.value;
   if (ev.kind === "error") return ev.error;
   return evalToPrimitive(ev.value[0]?.[0]);
 }

@@ -408,3 +408,134 @@ func TestSlidesMetaAnimations(t *testing.T) {
 		t.Fatalf("batch update lost animations: %+v", afterBatch)
 	}
 }
+
+func TestSlidesMetaMasterBrandKit(t *testing.T) {
+	// Empty master normalizes to nil.
+	for _, empty := range []string{
+		`{"master":{}}`,
+		`{"master":{"brandName":"  ","footerText":"","showPageNumber":false,"headerRule":false,"fontFamily":"default"}}`,
+	} {
+		got, err := store.ValidateAndNormalizeSlidePageMeta(json.RawMessage(empty))
+		if err != nil || got != nil {
+			t.Fatalf("empty master %s: got=%s err=%v want nil", empty, got, err)
+		}
+	}
+
+	// Reject malformed master fields.
+	for _, bad := range []struct {
+		name string
+		raw  string
+	}{
+		{"invalid accent hex", `{"master":{"accentColor":"red"}}`},
+		{"short accent hex", `{"master":{"accentColor":"#abc"}}`},
+		{"javascript logoUrl", `{"master":{"logoUrl":"javascript:alert(1)"}}`},
+		{"data html logoUrl", `{"master":{"logoUrl":"data:text/html,<svg/>"}}`},
+		{"traversal logoUrl", `{"master":{"logoUrl":"/api/files/../etc/passwd"}}`},
+		{"brandName too long", `{"master":{"brandName":"` + strings.Repeat("品", 81) + `"}}`},
+		{"footerText too long", `{"master":{"footerText":"` + strings.Repeat("页", 161) + `"}}`},
+		{"invalid fontFamily", `{"master":{"fontFamily":"Arial; background:url(evil)"}}`},
+		{"unknown master key", `{"master":{"extra":1}}`},
+	} {
+		if _, err := store.ValidateAndNormalizeSlidePageMeta(json.RawMessage(bad.raw)); !errors.Is(err, store.ErrInvalidSlideMeta) {
+			t.Fatalf("%s: got err=%v want ErrInvalidSlideMeta", bad.name, err)
+		}
+	}
+
+	ctx := context.Background()
+	st := store.NewMemory()
+	owner, ws, err := st.CreateUser(ctx, "slides-master@example.test", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := store.RestoreGuard{UserID: owner.ID, SessionHash: []byte("slides-master-sess")}
+	if err := st.CreateSession(ctx, g.SessionHash, owner.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	deck, err := st.CreateDriveNode(ctx, g, ws.ID, nil, "slides", "Brand Deck", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := st.ListSlidesPages(ctx, owner.ID, deck.ID)
+	if err != nil || len(pages) != 1 {
+		t.Fatalf("list pages: %v", err)
+	}
+	p1 := pages[0]
+	p2, err := st.InsertSlidesPage(ctx, g, deck.ID, p1.ID, p1.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Single-page master update + existing transition/groups.
+	saved1, err := st.UpdateSlidesPageMeta(ctx, g, deck.ID, p1.ID, json.RawMessage(`{
+		"transition": "fade",
+		"shapeGroups": {"g1": ["a", "b"]},
+		"master": {
+			"brandName": "  Jiange Labs  ",
+			"footerText": "Confidential 2026",
+			"showPageNumber": true,
+			"logoUrl": "/api/files/88",
+			"accentColor": "#3370ff",
+			"fontFamily": "serif",
+			"headerRule": true
+		}
+	}`))
+	if err != nil {
+		t.Fatalf("update single master: %v", err)
+	}
+	var m1 store.SlidePageMeta
+	if err := json.Unmarshal(saved1.Meta, &m1); err != nil || m1.Master == nil {
+		t.Fatalf("unmarshal p1 master: %v (%s)", err, saved1.Meta)
+	}
+	if *m1.Master.BrandName != "Jiange Labs" || *m1.Master.FooterText != "Confidential 2026" || !*m1.Master.ShowPageNumber || *m1.Master.LogoURL != "/api/files/88" || *m1.Master.AccentColor != "#3370ff" || *m1.Master.FontFamily != "serif" || !*m1.Master.HeaderRule {
+		t.Fatalf("p1 master mismatch: %+v", m1.Master)
+	}
+
+	// Batch apply new master across all pages while preserving p1's transition & shapeGroups.
+	batched, err := st.BatchUpdateSlidesPagesMeta(ctx, g, deck.ID, json.RawMessage(`{
+		"master": {
+			"brandName": "Acme Corp",
+			"footerText": "All Rights Reserved",
+			"showPageNumber": true,
+			"logoUrl": "https://cdn.example.com/logo.png",
+			"accentColor": "#00b42a",
+			"fontFamily": "sans",
+			"headerRule": true
+		}
+	}`))
+	if err != nil || len(batched) != 2 {
+		t.Fatalf("batch master: len=%d err=%v", len(batched), err)
+	}
+	for _, pg := range batched {
+		var pm store.SlidePageMeta
+		if err := json.Unmarshal(pg.Meta, &pm); err != nil || pm.Master == nil || *pm.Master.BrandName != "Acme Corp" || *pm.Master.AccentColor != "#00b42a" {
+			t.Fatalf("page %d missing batched master: %s", pg.ID, pg.Meta)
+		}
+		if pg.ID == p1.ID {
+			if pm.Transition == nil || *pm.Transition != "fade" || !reflect.DeepEqual(pm.ShapeGroups["g1"], []string{"a", "b"}) {
+				t.Fatalf("batch master lost p1 transition or shapeGroups: %+v", pm)
+			}
+		}
+	}
+
+	// Batch clear master with empty object `{}` clears master on all pages while keeping p1's transition.
+	cleared, err := st.BatchUpdateSlidesPagesMeta(ctx, g, deck.ID, json.RawMessage(`{"master":{}}`))
+	if err != nil || len(cleared) != 2 {
+		t.Fatalf("clear batch master: %v", err)
+	}
+	for _, pg := range cleared {
+		if pg.ID == p2.ID && pg.Meta != nil {
+			t.Fatalf("p2 should normalize to nil meta after clearing master, got %s", pg.Meta)
+		}
+		if pg.ID == p1.ID {
+			var pm store.SlidePageMeta
+			if err := json.Unmarshal(pg.Meta, &pm); err != nil || pm.Master != nil || pm.Transition == nil || *pm.Transition != "fade" {
+				t.Fatalf("p1 should clear master but keep transition: %s", pg.Meta)
+			}
+		}
+	}
+
+	// Invalid batch master is rejected.
+	if _, err := st.BatchUpdateSlidesPagesMeta(ctx, g, deck.ID, json.RawMessage(`{"master":{"logoUrl":"javascript:alert(1)"}}`)); !errors.Is(err, store.ErrInvalidSlideMeta) {
+		t.Fatalf("expected invalid batch master error, got %v", err)
+	}
+}

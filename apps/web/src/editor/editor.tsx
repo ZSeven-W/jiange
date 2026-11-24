@@ -60,7 +60,7 @@ import type { AIAction, AIMessage } from "@/lib/ai";
 import { parseMarkdown, toMarkdown } from "@/lib/markdown";
 import { LinkCard } from "./link-card";
 import { FileCard, fmtSize } from "./file-card";
-import { ApiError, conditionalBatchBase64, linkApi } from "@/lib/api";
+import { ApiError, conditionalBatchBase64, linkApi, type DocSuggestion } from "@/lib/api";
 import { ImageBlock } from "./image-block";
 import { TableBlock, type TableReorderSession, type TableResizeSession } from "./table-block";
 import { equalizedTableWidths, parseTableWidths, updatedSelectedTableWidths, validTableWidths, visibleTableWidths } from "./table-widths";
@@ -73,7 +73,7 @@ import { planRichTablePaste, type RichTableClipboard } from "./table-rich-clipbo
 import { TableStructureHistory } from "./table-structure-history";
 import { MemberCard, type MemberInfo } from "./member-card";
 import { ask, askText } from "@/components/ui/ask";
-import { ArrowLeft, ArrowRight, ChevronRight, MessageCircle, Play, Trash2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, ChevronRight, MessageCircle, Trash2 } from "lucide-react";
 import { computeFoldedBlocks, computeHeadingNumbers, headingLevel } from "./doc-outline-fold";
 import { TocBlockView } from "./toc-block";
 import { StatusBlockView } from "./status-block";
@@ -125,6 +125,18 @@ import { SyncedBlockView } from "./synced-block";
 import { SubpagesBlockView } from "./subpages-block";
 import { EmbedResourceBlock } from "./embed-block";
 import { formatLocalIsoDate, ReminderBlockView } from "./reminder-block";
+import {
+  AudioBlockView,
+  CountdownBlockView,
+  DEFAULT_POLL_OPTIONS,
+  DEFAULT_TABS,
+  defaultCountdownTarget,
+  PollBlockView,
+  TabsBlockView,
+  VideoBlockView,
+  type MediaUploadFn,
+} from "./interactive-blocks";
+import { InlineTrackChanges } from "./inline-track-changes";
 
 const TYPE_FOR: Record<string, string> = { h1: "h1", h2: "h2", h3: "h3" };
 
@@ -211,6 +223,18 @@ interface Props {
   autoNumberHeadings?: boolean;
   /** 文内目录块点击跳转回调。 */
   onJumpToBlock?: (blockId: string) => void;
+  /** 修订模式：在锚定正文块下方内联展示红删绿增 Diff 与一键接受/拒绝。 */
+  trackChangesMode?: boolean;
+  /** 当前文档所有待审阅（status === "open"）的修订建议。 */
+  openSuggestions?: readonly DocSuggestion[];
+  /** 是否允许一键接受/拒绝内联修订建议。 */
+  canAcceptSuggestions?: boolean;
+  /** 是否允许在修订模式下内联提出新建议。 */
+  canSuggestInline?: boolean;
+  suggestionBusy?: boolean;
+  onAcceptSuggestion?: (s: DocSuggestion) => Promise<void> | void;
+  onRejectSuggestion?: (s: DocSuggestion) => Promise<void> | void;
+  onCreateSuggestion?: (input: { blockId: string; originalText: string; proposedText: string; note: string }) => Promise<void> | void;
 }
 
 /**
@@ -219,7 +243,7 @@ interface Props {
  * into Tx ops, and the view re-renders from the model. IME composition is
  * left to the browser and committed as one insert on compositionend.
  */
-export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onBoardCommentCreate, onBoardCommentReply, onBoardCommentResolve, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate, autoNumberHeadings = false, onJumpToBlock }: Props) {
+export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFindRegistrar, onFindBatchRegistrar, onAtomicFindRegistrar, onAtomicFindStatus, onAtomicFindHistoryRegistrar, findMatches = [], activeFindMatch = null, findNavigation = 0, docs = [], resolveDocumentLink, people = [], upload, copyClipboardAssets, comments = [], activeThread = null, onComment, onBoardCommentCreate, onBoardCommentReply, onBoardCommentResolve, onActivateThread, onCopyBlock, disableFileDownloads, onPreviewImage, onMathSource, ai, onShareBlock, onSaveTemplate, autoNumberHeadings = false, onJumpToBlock, trackChangesMode = false, openSuggestions = [], canAcceptSuggestions = false, canSuggestInline = false, suggestionBusy = false, onAcceptSuggestion, onRejectSuggestion, onCreateSuggestion }: Props) {
   const root = useRef<HTMLDivElement>(null);
   const pastedLinkSerial = useRef(0);
   const wrap = useRef<HTMLDivElement>(null);
@@ -2169,7 +2193,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }
       return;
     }
-    if (it.id === "math" || it.id === "diagram" || it.id === "video" || it.id === "bookmark") {
+    if (it.id === "math" || it.id === "diagram" || it.id === "bookmark") {
       const originalDoc = sync.client.doc;
       const at = checked ? { b: m.at.b, o: checked.start } : m.at;
       const end = checked ? { b: m.at.b, o: checked.end } : null;
@@ -2179,17 +2203,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
         ? await askText("公式（LaTeX）", "例如 \\frac{a}{b} 或 x^2 + y^2 = z^2")
         : it.id === "diagram"
           ? await askArea("流程图（Mermaid）", "graph TD\n  A[开始] --> B{条件}\n  B -->|是| C[处理]\n  B -->|否| D[结束]")
-          : await askText(it.id === "video" ? "插入视频" : "插入网页卡片", "https://…");
+          : await askText("插入网页卡片", "https://…");
       if (!input?.trim()) return;
       if (!mounted.current) return;
       if (currentClient.current !== sync.client || readOnlyRef.current || sync.client.doc !== originalDoc) { setConflictDraft({ text: input, message: "文档内容或编辑权限已变化，本次操作没有应用。请复制草稿后重试。" }); return; }
       const value = input.trim();
       const props: Record<string, string> = {};
-      if (it.id === "video" || it.id === "bookmark") {
+      if (it.id === "bookmark") {
         props.url = value;
-        if (it.id === "bookmark") {
-          try { props.name = new URL(value).hostname; } catch { props.name = value; }
-        }
+        try { props.name = new URL(value).hostname; } catch { props.name = value; }
       }
       if (!sel.current && originalDoc.hasBlock(captured.anchor)) {
         const p = { b: captured.anchor, o: 0 };
@@ -2229,6 +2251,31 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
       }
       if (it.id === "reminder") {
         return insertBlockAtSlashOffset(tx, b, offset, "reminder", { date: formatLocalIsoDate(new Date()) }).caret;
+      }
+      if (it.id === "audio") {
+        return insertBlockAtSlashOffset(tx, b, offset, "audio", { title: "音频" }).caret;
+      }
+      if (it.id === "video") {
+        return insertBlockAtSlashOffset(tx, b, offset, "video", { title: "视频" }).caret;
+      }
+      if (it.id === "poll") {
+        return insertBlockAtSlashOffset(tx, b, offset, "poll", {
+          question: "发起投票",
+          options: JSON.stringify(DEFAULT_POLL_OPTIONS),
+          multiple: "false",
+        }).caret;
+      }
+      if (it.id === "countdown") {
+        return insertBlockAtSlashOffset(tx, b, offset, "countdown", {
+          title: "倒计时",
+          targetAt: defaultCountdownTarget(),
+          theme: "blue",
+        }).caret;
+      }
+      if (it.id === "tabs") {
+        return insertBlockAtSlashOffset(tx, b, offset, "tabs", {
+          tabs: JSON.stringify(DEFAULT_TABS),
+        }).caret;
       }
       if (it.id === "embed-sheet" || it.id === "embed-base" || it.id === "embed-survey" || it.id === "embed-slides") {
         const resourceKind = it.id.slice("embed-".length);
@@ -2885,6 +2932,17 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
     ro.observe(el);
     return () => ro.disconnect();
   }, [blocks.length, sync.version]);
+  const openSuggestionsByBlock = useMemo(() => {
+    const map = new Map<string, DocSuggestion[]>();
+    if (!trackChangesMode) return map;
+    for (const s of openSuggestions) {
+      if (s.status !== "open") continue;
+      const list = map.get(s.blockId);
+      if (list) list.push(s);
+      else map.set(s.blockId, [s]);
+    }
+    return map;
+  }, [trackChangesMode, openSuggestions]);
   useEffect(() => {
     if (readOnly) { changeSlash(null); setToolbar(null); setDrag(null); pendingUpload.current = null; }
   }, [readOnly]);
@@ -3600,6 +3658,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 canCopy={!onCopyBlock}
                 canDownload={!(disableFileDownloads ?? onCopyBlock)}
                 onReplaceFile={!readOnly && upload ? (f, progress) => replaceFile(b, f, progress) : undefined}
+                onUploadMedia={!readOnly && upload ? upload : undefined}
                 flowAI={ai && !onCopyBlock ? ai : undefined}
                 flowAutoOpen={flowAutoOpen === k || flowOpenRequests.has(k)}
                 flowUpload={!readOnly && upload ? upload : undefined}
@@ -3663,6 +3722,14 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                 }}
                 onTableChange={readOnly || atomicTableLocked ? undefined : applyTableStructure}
                 uploadNotice={uploading?.anchor === k ? uploading : null}
+                trackChangesMode={trackChangesMode}
+                blockSuggestions={trackChangesMode ? openSuggestionsByBlock.get(k) : undefined}
+                canAcceptSuggestions={canAcceptSuggestions}
+                canSuggestInline={canSuggestInline}
+                suggestionBusy={suggestionBusy}
+                onAcceptSuggestion={onAcceptSuggestion}
+                onRejectSuggestion={onRejectSuggestion}
+                onCreateSuggestion={onCreateSuggestion}
               />
             );
           })}
@@ -3995,11 +4062,20 @@ interface BlockProps {
   canCopy?: boolean;
   canDownload?: boolean;
   onReplaceFile?: (file: File, progress: (p: number) => void) => Promise<void>;
+  onUploadMedia?: MediaUploadFn;
   onTableChange?: (rows: string[][], merges: Merge[], widths?: Widths, op?: TableOp) => string | null | void;
   uploadNotice?: { name: string; percent: number; index: number; total: number } | null;
+  trackChangesMode?: boolean;
+  blockSuggestions?: readonly DocSuggestion[];
+  canAcceptSuggestions?: boolean;
+  canSuggestInline?: boolean;
+  suggestionBusy?: boolean;
+  onAcceptSuggestion?: (s: DocSuggestion) => Promise<void> | void;
+  onRejectSuggestion?: (s: DocSuggestion) => Promise<void> | void;
+  onCreateSuggestion?: (input: { blockId: string; originalText: string; proposedText: string; note: string }) => Promise<void> | void;
 }
 
-function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, headingNumber, isCollapsed, foldedCount = 0, hasFoldBody = false, onToggleFold, tocItems, tocHeadingNumbers, onJumpToBlock, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onSetProps, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onTableChange, uploadNotice }: BlockProps) {
+function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, onFlowPresence, onFlowComment, flowComments, flowCommentActions, flowUpload, flowAssets, id, type, props, number, headingNumber, isCollapsed, foldedCount = 0, hasFoldBody = false, onToggleFold, tocItems, tocHeadingNumbers, onJumpToBlock, spans, childBlocks, columnRemount, syncVersion, syncStatus, onAddColumn, onMoveColumn, onUngroupColumns, onAddColumnChildBlock, onEditColumnChildText, onToggleColumnChildTodo, onDeleteColumnChildBlock, onBeginColumnResize, onBeginTableResize, onBeginTableReorder, onDeleteColumn, anchors, commentThreads, blockThreads, onBlockComment, findRanges, tableFindCells, findNavigation, activeThread, onAnchorClick, onSetProp, onSetProps, onTableEdit, onTableHeader, onTableFill, onTableAlign, onTableRichMark, onTablePaste, onTableCut, onTableClear, onTableAppendRow, onTableDeleteSelection, onInsertAfter, alwaysShowInsert, touchActive, onPreviewImage, onMathSource, onDiagramSource, onDeleteBlock, onBlockAction, blockAbilities, selectionCount, inSelection, dropLine, onToggle, onDragStart, onDragOver, onDragEnd, canCopy, canDownload, onReplaceFile, onUploadMedia, onTableChange, uploadNotice, trackChangesMode = false, blockSuggestions, canAcceptSuggestions = false, canSuggestInline = false, suggestionBusy = false, onAcceptSuggestion, onRejectSuggestion, onCreateSuggestion }: BlockProps) {
   const indent = Number(props.indent ?? "0");
   const codeTextRef = useRef<HTMLDivElement>(null);
   const resize = useRef<{ pointer: number; startX: number; firstPixels: number; pairPixels: number; left: string; right: string; operation: NonNullable<ReturnType<NonNullable<BlockProps["onBeginColumnResize"]>>>; target: HTMLElement; scroller: HTMLElement; viewport: number; scrollLeft: number } | null>(null);
@@ -4379,7 +4455,54 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
       ) : type === "image" ? (
         <ImageBlock fileId={props.fileId} name={props.name} mime={props.mime} width={props.imageWidth ? Number(props.imageWidth) || undefined : undefined} align={props.align} caption={props.caption} version={syncVersion} status={syncStatus} canDownload={!!canDownload} onPreview={onPreviewImage} onProp={onSetProp} onReplace={onReplaceFile} onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined} onComment={onBlockComment} />
       ) : type === "video" ? (
-        <VideoBlock url={props.url} name={props.name} disableFileDownloads={!canDownload} />
+        <VideoBlockView
+          url={props.url}
+          fileId={props.fileId}
+          name={props.name}
+          title={props.title}
+          readOnly={!onSetProps}
+          disableFileDownloads={!canDownload}
+          onUpdate={onSetProps}
+          onUpload={onUploadMedia}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
+      ) : type === "audio" ? (
+        <AudioBlockView
+          url={props.url}
+          fileId={props.fileId}
+          name={props.name}
+          title={props.title}
+          readOnly={!onSetProps}
+          disableFileDownloads={!canDownload}
+          onUpdate={onSetProps}
+          onUpload={onUploadMedia}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
+      ) : type === "poll" ? (
+        <PollBlockView
+          props={props}
+          voterId={userId ? String(userId) : "guest"}
+          readOnly={!onSetProp}
+          onSetProp={onSetProp}
+          onSetProps={onSetProps}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
+      ) : type === "countdown" ? (
+        <CountdownBlockView
+          title={props.title}
+          targetAt={props.targetAt}
+          theme={props.theme}
+          readOnly={!onSetProps}
+          onUpdate={onSetProps}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
+      ) : type === "tabs" ? (
+        <TabsBlockView
+          raw={props.tabs}
+          readOnly={!onSetProp}
+          onChange={onSetProp ? (nextJson) => onSetProp("tabs", nextJson) : undefined}
+          onDelete={onDeleteBlock ? () => onDeleteBlock(id) : undefined}
+        />
       ) : type === "bookmark" ? (
         <BookmarkBlock url={props.url} name={props.name} title={props.title} description={props.description} icon={props.icon} preview={props.preview} onProps={onSetProp} />
       ) : type === "synced" ? (
@@ -4490,6 +4613,19 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
             </button>
           )}
         </div>
+      )}
+      {trackChangesMode && ((blockSuggestions && blockSuggestions.length > 0) || (canSuggestInline && !!onCreateSuggestion && TEXT_BLOCKS.has(type))) && (
+        <InlineTrackChanges
+          blockId={id}
+          blockText={spans.map((c) => c.ch).join("")}
+          suggestions={blockSuggestions ?? []}
+          canEdit={canAcceptSuggestions}
+          canSuggest={canSuggestInline && TEXT_BLOCKS.has(type)}
+          busy={suggestionBusy}
+          onAccept={onAcceptSuggestion}
+          onReject={onRejectSuggestion}
+          onCreate={onCreateSuggestion}
+        />
       )}
       {uploadNotice && <div contentEditable={false} role="status" className="my-2 flex w-[360px] max-w-full select-none items-center gap-3 rounded-lg border border-dashed bg-sidebar/50 px-3.5 py-2.5 text-[13px]" data-upload-placeholder>
         <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-[11px] font-semibold text-primary">{Math.round(uploadNotice.percent)}%</span>
@@ -4647,29 +4783,6 @@ function MathBlock({ src, findRanges, onSource }: { src: string; findRanges?: { 
             ),
           )}
         </div>
-      )}
-    </div>
-  );
-}
-
-
-/** 视频块：mp4/webm 源用原生播放器；源失效（404/格式不支持）自动回退链接卡片。 */
-function VideoBlock({ url, name, disableFileDownloads = false }: { url?: string; name?: string; disableFileDownloads?: boolean }) {
-  const [failed, setFailed] = useState(false);
-  const href = safeURL(url);
-  const native = !failed && href && /^https?:\/\//i.test(href) && /\.(mp4|webm|mov)(\?|$)/i.test(href);
-  const content = <>
-    <span className="grid size-8 shrink-0 place-items-center rounded-md bg-[#E1EAFF] text-primary"><Play size={14} strokeWidth={1.7} /></span>
-    <span className="min-w-0"><span className="block truncate text-[14px] font-medium text-foreground">{name || (!disableFileDownloads && url) || "视频链接"}</span><span className="block truncate text-[12px] text-subtle">{disableFileDownloads ? "当前不提供外部链接" : url}</span></span>
-  </>;
-  return (
-    <div contentEditable={false} className="my-2 w-full max-w-[640px] overflow-hidden rounded-lg border" data-video>
-      {native ? (
-        <video src={href} controls controlsList={disableFileDownloads ? "nodownload" : undefined} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} className="aspect-video w-full bg-black" onError={() => setFailed(true)} />
-      ) : href && !disableFileDownloads ? (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-3 px-3.5 py-3 no-underline hover:bg-hover">{content}</a>
-      ) : (
-        <div className="flex items-center gap-3 px-3.5 py-3">{content}</div>
       )}
     </div>
   );

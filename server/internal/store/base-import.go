@@ -115,12 +115,14 @@ func (m *Memory) ImportBaseCSV(ctx context.Context, guard BaseWriteGuard, baseID
 		added = append(added, f)
 	}
 	now := time.Now()
+	seeds := m.autonumberSeedsLocked(baseID, 0)
 	var records []Record
 	for _, row := range plan.Rows {
 		cells := make(map[string]json.RawMessage, len(row))
 		for col, value := range row {
 			cells[strconv.FormatInt(ids[col], 10)] = append(json.RawMessage(nil), value...)
 		}
+		applyAutonumbers(cells, seeds)
 		uid := guard.UserID
 		r := Record{ID: m.id(), BaseID: baseID, Cells: cells, CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now}
 		r.Position = float64(r.ID)
@@ -181,6 +183,10 @@ func (p *Postgres) ImportBaseCSV(ctx context.Context, guard BaseWriteGuard, base
 		if err = tx.QueryRow(ctx, `SELECT COALESCE(max(position),0) FROM base_records WHERE base_id=$1`, baseID).Scan(&pos); err != nil {
 			return err
 		}
+		seeds, err := pgAutonumberSeeds(ctx, tx, baseID, 0)
+		if err != nil {
+			return err
+		}
 		batch := &pgx.Batch{}
 		for _, row := range plan.Rows {
 			if err = ctx.Err(); err != nil {
@@ -190,6 +196,7 @@ func (p *Postgres) ImportBaseCSV(ctx context.Context, guard BaseWriteGuard, base
 			for col, value := range row {
 				cells[strconv.FormatInt(ids[col], 10)] = value
 			}
+			applyAutonumbers(cells, seeds)
 			pos++
 			batch.Queue(`INSERT INTO base_records (base_id,cells,position,creator_id) VALUES ($1,$2,$3,$4)`, baseID, cells, pos, guard.UserID)
 		}

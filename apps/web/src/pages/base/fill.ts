@@ -30,7 +30,7 @@ export function matchRule(rec: BaseRecord, field: Field | undefined, rule: { op:
     const member = want.some((id) => cell.includes(id));
     return rule.op === "contains" || rule.op === "is" ? member : !member;
   }
-  if (field.type === "number" || rule.op === "gt" || rule.op === "gte" || rule.op === "lt" || rule.op === "lte") {
+  if (field.type === "number" || field.type === "currency" || field.type === "progress" || field.type === "autonumber" || field.type === "rating" || rule.op === "gt" || rule.op === "gte" || rule.op === "lt" || rule.op === "lte") {
     const a = typeof raw === "number" ? raw : field.type === "date" && typeof raw === "string" ? Date.parse(raw) : Number(raw);
     const b = field.type === "date" ? Date.parse(String(rule.v)) : Number(rule.v);
     if (blank(raw) || Number.isNaN(a) || Number.isNaN(b)) return false;

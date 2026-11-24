@@ -1,4 +1,5 @@
 import {
+  BarChart3,
   Bell,
   ChevronRight,
   ClipboardList,
@@ -22,6 +23,7 @@ import {
   ListOrdered,
   ListTodo,
   ListTree,
+  PanelsTopLeft,
   Paperclip,
   Play,
   Presentation,
@@ -32,7 +34,9 @@ import {
   SquareCheck,
   Table2,
   Tag,
+  Timer,
   Type,
+  Volume2,
   Workflow,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -79,6 +83,10 @@ export const MENU_ICONS: Record<string, React.ComponentType<{ size?: number; str
   diagram: DiagramFlowVertical,
   flowchart: Workflow,
   video: Play,
+  audio: Volume2,
+  poll: BarChart3,
+  countdown: Timer,
+  tabs: PanelsTopLeft,
   bookmark: Link2,
   link: Link2,
   table: Table2,

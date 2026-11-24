@@ -37,6 +37,7 @@ export type FormulaAst =
   | { kind: "percent"; arg: FormulaAst }
   | { kind: "binary"; op: string; left: FormulaAst; right: FormulaAst }
   | { kind: "call"; name: string; args: FormulaAst[] }
+  | { kind: "invoke"; callee: FormulaAst; args: FormulaAst[] }
   | { kind: "array"; rows: FormulaAst[][] };
 
 export function parseA1Token(text: string): CellRefToken | null {
@@ -231,6 +232,42 @@ export function parseFormulaAst(raw: string): FormulaAst | null {
   }
   let pos = 0;
 
+  const parseArgList = (depth: number): FormulaAst[] | null => {
+    const args: FormulaAst[] = [];
+    if (!(tokens[pos]?.kind === "op" && tokens[pos].text === ")")) {
+      while (true) {
+        // Handle omitted optional args like INDEX(A1:B2,,2) -> empty string/missing
+        if (tokens[pos]?.kind === "op" && (tokens[pos].text === "," || tokens[pos].text === ")")) {
+          args.push({ kind: "error", code: "__MISSING__" });
+        } else {
+          const arg = parseExpr(0, depth + 1);
+          if (!arg) return null;
+          args.push(arg);
+        }
+        if (tokens[pos]?.kind === "op" && tokens[pos].text === ",") {
+          pos++;
+          continue;
+        }
+        break;
+      }
+    }
+    if (tokens[pos]?.kind !== "op" || tokens[pos].text !== ")") return null;
+    pos++;
+    return args;
+  };
+
+  const parsePostfixInvokes = (base: FormulaAst, depth: number): FormulaAst | null => {
+    let node = base;
+    while (tokens[pos]?.kind === "op" && tokens[pos].text === "(") {
+      if (depth > MAX_PARSE_DEPTH) return null;
+      pos++;
+      const args = parseArgList(depth);
+      if (!args) return null;
+      node = { kind: "invoke", callee: node, args };
+    }
+    return node;
+  };
+
   const parsePrimary = (depth: number): FormulaAst | null => {
     if (depth > MAX_PARSE_DEPTH) return null;
     const tok = tokens[pos++];
@@ -296,7 +333,7 @@ export function parseFormulaAst(raw: string): FormulaAst | null {
       const inner = parseExpr(0, depth + 1);
       if (!inner || tokens[pos]?.kind !== "op" || tokens[pos].text !== ")") return null;
       pos++;
-      return inner;
+      return parsePostfixInvokes(inner, depth);
     }
     if (tok.kind === "op" && tok.text === "{") {
       const rows: FormulaAst[][] = [];
@@ -317,27 +354,9 @@ export function parseFormulaAst(raw: string): FormulaAst | null {
     if (tok.kind === "name") {
       if (tokens[pos]?.kind === "op" && tokens[pos].text === "(") {
         pos++;
-        const args: FormulaAst[] = [];
-        if (!(tokens[pos]?.kind === "op" && tokens[pos].text === ")")) {
-          while (true) {
-            // Handle omitted optional args like INDEX(A1:B2,,2) -> empty string/missing
-            if (tokens[pos]?.kind === "op" && (tokens[pos].text === "," || tokens[pos].text === ")")) {
-              args.push({ kind: "error", code: "__MISSING__" });
-            } else {
-              const arg = parseExpr(0, depth + 1);
-              if (!arg) return null;
-              args.push(arg);
-            }
-            if (tokens[pos]?.kind === "op" && tokens[pos].text === ",") {
-              pos++;
-              continue;
-            }
-            break;
-          }
-        }
-        if (tokens[pos]?.kind !== "op" || tokens[pos].text !== ")") return null;
-        pos++;
-        return { kind: "call", name: tok.text.toUpperCase(), args };
+        const args = parseArgList(depth);
+        if (!args) return null;
+        return parsePostfixInvokes({ kind: "call", name: tok.text.toUpperCase(), args }, depth);
       }
       return { kind: "name", name: tok.text };
     }
@@ -397,7 +416,7 @@ const DYNAMIC_REF_FNS = new Set(["INDIRECT", "OFFSET"]);
 /** Static reference extraction over an AST for building dependency graphs without evaluating. */
 export function extractAstReferences(ast: FormulaAst): AstReferenceSummary {
   const out: AstReferenceSummary = { cells: [], ranges: [], names: [], hasVolatile: false, hasDynamicRef: false };
-  const walk = (node: FormulaAst) => {
+  const walk = (node: FormulaAst, bound: ReadonlySet<string>) => {
     switch (node.kind) {
       case "cell":
         out.cells.push({ sheetName: node.sheetName, row: node.row, col: node.col });
@@ -412,27 +431,49 @@ export function extractAstReferences(ast: FormulaAst): AstReferenceSummary {
         });
         break;
       case "name":
-        out.names.push(node.name);
+        if (!bound.has(node.name.toUpperCase())) out.names.push(node.name);
         break;
       case "unary":
       case "percent":
-        walk(node.arg);
+        walk(node.arg, bound);
         break;
       case "binary":
-        walk(node.left);
-        walk(node.right);
+        walk(node.left, bound);
+        walk(node.right, bound);
         break;
-      case "call":
+      case "call": {
         if (VOLATILE_FNS.has(node.name)) out.hasVolatile = true;
         if (DYNAMIC_REF_FNS.has(node.name)) out.hasDynamicRef = true;
-        for (const a of node.args) walk(a);
+        if (node.name === "LET" && node.args.length >= 3 && node.args.length % 2 === 1) {
+          const nextBound = new Set(bound);
+          for (let i = 0; i < node.args.length - 1; i += 2) {
+            walk(node.args[i + 1], nextBound);
+            const nm = node.args[i];
+            if (nm.kind === "name") nextBound.add(nm.name.toUpperCase());
+          }
+          walk(node.args[node.args.length - 1], nextBound);
+        } else if (node.name === "LAMBDA" && node.args.length >= 1) {
+          const nextBound = new Set(bound);
+          for (let i = 0; i < node.args.length - 1; i++) {
+            const pm = node.args[i];
+            if (pm.kind === "name") nextBound.add(pm.name.toUpperCase());
+          }
+          walk(node.args[node.args.length - 1], nextBound);
+        } else {
+          for (const a of node.args) walk(a, bound);
+        }
+        break;
+      }
+      case "invoke":
+        walk(node.callee, bound);
+        for (const a of node.args) walk(a, bound);
         break;
       case "array":
-        for (const row of node.rows) for (const item of row) walk(item);
+        for (const row of node.rows) for (const item of row) walk(item, bound);
         break;
     }
   };
-  walk(ast);
+  walk(ast, new Set());
   return out;
 }
 

@@ -226,6 +226,30 @@ export interface SheetPivotTable {
   destCol?: number;
 }
 
+export type SheetSparklineType = "line" | "bar" | "winloss";
+
+export interface SheetSparkline {
+  id: string;
+  row: number;
+  col: number;
+  sourceTop: number;
+  sourceLeft: number;
+  sourceBottom: number;
+  sourceRight: number;
+  type: SheetSparklineType;
+  color?: string;
+  negativeColor?: string;
+  showMarkers?: boolean;
+}
+
+export interface SheetOutlineGroup {
+  id: string;
+  axis: "row" | "col";
+  start: number;
+  end: number;
+  collapsed?: boolean;
+}
+
 export interface SheetWorksheet {
   id: number;
   nodeId: number;
@@ -240,6 +264,8 @@ export interface SheetWorksheet {
   protectedRanges?: SheetProtectedRange[];
   charts?: SheetChart[];
   pivotTables?: SheetPivotTable[];
+  sparklines?: SheetSparkline[];
+  outlineGroups?: SheetOutlineGroup[];
   hyperlinks?: SheetHyperlink[];
   comments?: SheetComment[];
   revision: number;
@@ -333,7 +359,8 @@ export type EvalValue =
   | { kind: "string"; value: string; error?: undefined }
   | { kind: "boolean"; value: boolean; error?: undefined }
   | { kind: "error"; value: string; error: string }
-  | { kind: "array"; value: EvalValue[][]; error?: undefined };
+  | { kind: "array"; value: EvalValue[][]; error?: undefined }
+  | { kind: "image"; value: string; url: string; alt?: string; mode?: number; error?: undefined };
 
 export type EvaluatedSheetMap = Record<string, EvalValue>;
 

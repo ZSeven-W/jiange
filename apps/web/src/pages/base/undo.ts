@@ -415,4 +415,4 @@ export function isCellConflict(err: unknown) {
 }
 
 /** Undoable field types: plain values written through the guarded record API. */
-export const UNDOABLE_TYPES = new Set(["text", "number", "select", "multi_select", "checkbox", "date", "person", "url", "phone", "email", "rating"]);
+export const UNDOABLE_TYPES = new Set(["text", "number", "select", "multi_select", "checkbox", "date", "person", "url", "phone", "email", "rating", "currency", "progress", "location"]);

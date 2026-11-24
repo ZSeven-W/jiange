@@ -44,7 +44,11 @@ type historyActor struct {
 // historyFieldTypes are the field types whose raw cells may appear in a
 // record's history. Links, lookups and derived values are omitted: their raw
 // cells could reveal associations the reader cannot open.
-var historyFieldTypes = map[string]bool{"text": true, "number": true, "select": true, "multi_select": true, "checkbox": true, "date": true, "person": true, "url": true, "phone": true, "email": true, "rating": true, "attachment": true}
+var historyFieldTypes = map[string]bool{
+	"text": true, "number": true, "select": true, "multi_select": true, "checkbox": true,
+	"date": true, "person": true, "url": true, "phone": true, "email": true, "rating": true, "attachment": true,
+	"currency": true, "progress": true, "autonumber": true, "location": true,
+}
 
 // recordHistory lists a record's field-level changes, newest first, derived
 // from the bt_events snapshots and filtered by the reader's base policy.

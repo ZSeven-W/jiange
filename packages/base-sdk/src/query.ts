@@ -136,7 +136,13 @@ export function matchFillRule(record: BaseRecord, fills: readonly FillRule[] | u
 }
 
 function compareCells(a: BaseCell | undefined, b: BaseCell | undefined, field?: BaseField): number {
-  if (field?.type === "number" || field?.type === "rating") {
+  if (
+    field?.type === "number" ||
+    field?.type === "rating" ||
+    field?.type === "currency" ||
+    field?.type === "progress" ||
+    field?.type === "autonumber"
+  ) {
     const na = toNumeric(a) ?? 0;
     const nb = toNumeric(b) ?? 0;
     return na - nb;

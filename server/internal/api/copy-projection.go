@@ -29,7 +29,7 @@ func collectCopyFileIDs(src *collab.Doc) ([]int64, error) {
 			}
 			continue
 		}
-		if b.Type != "image" && b.Type != "file" {
+		if b.Type != "image" && b.Type != "file" && b.Type != "audio" && b.Type != "video" {
 			continue
 		}
 		if b.Props["fileId"] == "" {
@@ -156,7 +156,7 @@ func buildCopyOps(src *collab.Doc, title string, files map[int64]int64) ([]store
 			}
 			continue
 		}
-		if b.Type != "image" && b.Type != "file" {
+		if b.Type != "image" && b.Type != "file" && b.Type != "audio" && b.Type != "video" {
 			continue
 		}
 		if b.Props["fileId"] == "" {

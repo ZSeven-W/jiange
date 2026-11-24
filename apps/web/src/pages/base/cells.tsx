@@ -1,10 +1,32 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { t } from "@/lib/i18n";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
 import { FeishuSelect, type FeishuSelectOption } from "@/components/feishu-select";
 import { cn } from "@/lib/utils";
-import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, personIDs, REGISTRY } from "./registry";
-import { Paperclip } from "lucide-react";
+import {
+  buttonOptions,
+  clampProgress,
+  CURRENCY_SYMBOLS,
+  currencyOptions,
+  displayValue,
+  formatAutonumber,
+  formatCurrency,
+  formatLocationValue,
+  formatTime,
+  interpolateButtonTemplate,
+  isAttachmentArray,
+  isSafeHttpUrl,
+  isStringArray,
+  locationMapUrl,
+  memberName,
+  optionColor,
+  parseLocation,
+  personIDs,
+  progressStyle,
+  REGISTRY,
+} from "./registry";
+import { Copy, ExternalLink, MapPin, Paperclip, Webhook } from "lucide-react";
 
 export const TAG_COLORS = [
   ["#E1EAFF", "#245BDB"],
@@ -36,18 +58,22 @@ export function CellView({
   field,
   record,
   members,
+  allFields,
   canEdit,
   compact = false,
   onToggle,
   onEdit,
+  onButtonFeedback,
 }: {
   field: Field;
   record: BaseRecord;
   members: User[];
+  allFields?: Field[];
   canEdit: boolean;
   compact?: boolean;
   onToggle?: (v: boolean | null) => void;
   onEdit?: () => void;
+  onButtonFeedback?: (message: string, tone?: "info" | "warning" | "error") => void;
 }) {
   const v = displayValue(record, field, members);
   const def = REGISTRY[field.type];
@@ -170,6 +196,102 @@ export function CellView({
           <span className="text-[#d8dfe9]">{"★".repeat(5 - v)}</span>
         </span>
       ) : null;
+    case "currency":
+      return typeof v === "number" && Number.isFinite(v) ? (
+        <span className="block w-full truncate text-right font-medium tabular-nums text-foreground" data-cell-currency>
+          {formatCurrency(v, field)}
+        </span>
+      ) : null;
+    case "progress": {
+      if (typeof v !== "number" || !Number.isFinite(v)) return null;
+      const pct = clampProgress(v);
+      const style = progressStyle(field);
+      const barColor = pct >= 100 ? "#00b42a" : pct > 0 ? "#3370ff" : "#8f959e";
+      if (style === "ring") {
+        const r = 7;
+        const c = 2 * Math.PI * r;
+        const dashOffset = c * (1 - pct / 100);
+        return (
+          <span className="inline-flex items-center gap-1.5" data-cell-progress="ring" title={`${Math.round(pct)}%`}>
+            <svg width="18" height="18" viewBox="0 0 18 18" className="shrink-0 -rotate-90" aria-hidden>
+              <circle cx="9" cy="9" r={r} fill="none" stroke="#e5e6eb" strokeWidth="2.4" />
+              <circle cx="9" cy="9" r={r} fill="none" stroke={barColor} strokeWidth="2.4" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={dashOffset} />
+            </svg>
+            <span className="text-[12px] font-medium tabular-nums text-foreground">{Math.round(pct)}%</span>
+          </span>
+        );
+      }
+      if (style === "percent") {
+        return (
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full px-2 py-0.5 text-[12px] font-medium tabular-nums",
+              pct >= 100
+                ? "bg-[#e8f7e8] text-[#177e17]"
+                : pct > 0
+                  ? "bg-[#edf2ff] text-primary"
+                  : "bg-[#f2f3f5] text-subtle",
+            )}
+            data-cell-progress="percent"
+          >
+            {Math.round(pct)}%
+          </span>
+        );
+      }
+      return (
+        <div className="flex w-full min-w-[76px] items-center gap-2" data-cell-progress="bar" title={`${Math.round(pct)}%`}>
+          <div className="h-2 flex-1 overflow-hidden rounded-full bg-[#e5e6eb] dark:bg-hover">
+            <div className="h-full rounded-full transition-[width] duration-150" style={{ width: `${pct}%`, background: barColor }} />
+          </div>
+          <span className="w-9 shrink-0 text-right text-[12px] font-medium tabular-nums text-muted-foreground">{Math.round(pct)}%</span>
+        </div>
+      );
+    }
+    case "autonumber":
+      return typeof v === "number" && Number.isFinite(v) ? (
+        <span className="inline-block max-w-full truncate rounded bg-[#f2f3f5] px-1.5 py-0.5 font-mono text-[12px] text-muted-foreground dark:bg-hover" data-cell-autonumber>
+          {formatAutonumber(v, field)}
+        </span>
+      ) : null;
+    case "button":
+      return (
+        <ButtonCellView
+          field={field}
+          record={record}
+          members={members}
+          allFields={allFields}
+          onFeedback={onButtonFeedback}
+        />
+      );
+    case "location": {
+      if (typeof v !== "string" || !v.trim()) return null;
+      const loc = parseLocation(v);
+      const mapUrl = locationMapUrl(loc);
+      return (
+        <span className="flex min-w-0 max-w-full items-center gap-1.5 overflow-hidden" data-cell-location title={v}>
+          <MapPin size={13} strokeWidth={1.8} className="shrink-0 text-primary/80" aria-hidden />
+          <span className="min-w-0 truncate text-[13px] text-foreground">{loc.address}</span>
+          {loc.coords && !compact && (
+            <span className="shrink-0 rounded bg-sidebar px-1.5 py-0.5 font-mono text-[11px] text-subtle">{loc.coords}</span>
+          )}
+          {mapUrl && (
+            <a
+              href={mapUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              className="shrink-0 rounded p-0.5 text-subtle hover:bg-hover hover:text-primary"
+              title={t("在地图中查看")}
+              aria-label={t("在地图中查看")}
+              data-location-map-link
+            >
+              <ExternalLink size={12} strokeWidth={1.7} />
+            </a>
+          )}
+        </span>
+      );
+    }
     default:
       if (v === undefined || v === "") return null;
       return <span className="block truncate">{def.format(v, field)}</span>;
@@ -245,6 +367,10 @@ export function CellEditor({
   }
   if (field.type === "attachment")
     return <AttachmentEditor baseId={record.baseId} field={field} value={isAttachmentArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} />;
+  if (field.type === "progress")
+    return <ProgressCellEditor value={typeof value === "number" && Number.isFinite(value) ? clampProgress(value) : 0} seed={seed} onDraft={onDraft} onCommit={onCommit} onCancel={onCancel} />;
+  if (field.type === "location")
+    return <LocationCellEditor value={typeof value === "string" ? value : ""} seed={seed} onDraft={onDraft} onCommit={onCommit} onCancel={onCancel} />;
 
   const commit = (dir?: "down" | "right") => {
     if (completed.current) return;
@@ -259,6 +385,41 @@ export function CellEditor({
   };
   const isTimedDate = field.type === "date" && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}$/.test(text.trim());
   const inputVal = isTimedDate ? text.trim().replace(" ", "T") : text;
+  if (field.type === "currency") {
+    const sym = CURRENCY_SYMBOLS[currencyOptions(field).code] ?? "¥";
+    return (
+      <div className="flex w-full items-center gap-1" data-currency-editor>
+        <span className="shrink-0 text-[12px] font-medium text-subtle">{sym}</span>
+        <input
+          autoFocus
+          type="text"
+          inputMode="decimal"
+          className="w-full bg-transparent text-right tabular-nums outline-none"
+          value={inputVal}
+          onChange={(e) => {
+            setText(e.target.value);
+            onDraft?.(e.target.value);
+          }}
+          onBlur={() => commit()}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit("down");
+            }
+            if (e.key === "Tab") {
+              e.preventDefault();
+              commit("right");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              completed.current = true;
+              onCancel();
+            }
+          }}
+        />
+      </div>
+    );
+  }
   return (
     <input
       autoFocus
@@ -507,6 +668,358 @@ function AttachmentEditor({
         {t("取消")}
       </button>
       {error && <span role="alert" className="text-[12px] text-destructive">{t("上传失败，请重试。")}</span>}
+    </div>
+  );
+}
+
+function ButtonCellView({
+  field,
+  record,
+  members,
+  allFields,
+  onFeedback,
+}: {
+  field: Field;
+  record: BaseRecord;
+  members: User[];
+  allFields?: Field[];
+  onFeedback?: (message: string, tone?: "info" | "warning" | "error") => void;
+}) {
+  const cfg = buttonOptions(field);
+  const [toast, setToast] = useState<{ text: string; tone: "info" | "warning" | "error" } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => () => {
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+  }, []);
+
+  const notify = (text: string, tone: "info" | "warning" | "error" = "info") => {
+    onFeedback?.(text, tone);
+    setToast({ text, tone });
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => setToast(null), 2600);
+  };
+
+  const runAction = async () => {
+    if (busy) return;
+    const fieldsForRow = allFields && allFields.length > 0 ? allFields : [field];
+    if (cfg.action === "open_url") {
+      const resolved = interpolateButtonTemplate(cfg.target, record, fieldsForRow, members).trim();
+      if (!isSafeHttpUrl(resolved)) {
+        notify(t("链接地址无效或仅支持 http/https 协议"), "warning");
+        return;
+      }
+      window.open(resolved, "_blank", "noopener,noreferrer");
+      notify(t("已打开链接"), "info");
+      return;
+    }
+    if (cfg.action === "copy_row") {
+      const lines = fieldsForRow
+        .filter((f) => f.type !== "button")
+        .map((f) => {
+          const val = displayValue(record, f, members);
+          const text = REGISTRY[f.type].format(val, f, members);
+          return text ? `${f.name}: ${text}` : "";
+        })
+        .filter(Boolean);
+      const summary = lines.length > 0 ? lines.join("\n") : `#${record.id}`;
+      try {
+        if (navigator.clipboard?.writeText) {
+          await navigator.clipboard.writeText(summary);
+          notify(t("已复制记录摘要"), "info");
+        } else {
+          notify(t("当前环境不支持自动复制"), "warning");
+        }
+      } catch {
+        notify(t("复制失败，请检查剪贴板权限"), "warning");
+      }
+      return;
+    }
+    // webhook
+    const resolved = interpolateButtonTemplate(cfg.target, record, fieldsForRow, members).trim();
+    if (!resolved) {
+      notify(t("已执行「{label}」", { label: cfg.label }), "info");
+      return;
+    }
+    if (!isSafeHttpUrl(resolved)) {
+      notify(t("已执行「{label}」：{note}", { label: cfg.label, note: resolved }), "info");
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await fetch(resolved, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          baseId: record.baseId,
+          recordId: record.id,
+          fieldId: field.id,
+          label: cfg.label,
+          cells: record.cells,
+        }),
+      });
+      if (res.ok) notify(t("已触发 Webhook「{label}」", { label: cfg.label }), "info");
+      else notify(t("Webhook 返回状态 {status}", { status: res.status }), "warning");
+    } catch {
+      notify(t("Webhook 请求发送失败，请检查目标地址"), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const ActionIcon = cfg.action === "copy_row" ? Copy : cfg.action === "webhook" ? Webhook : ExternalLink;
+  return (
+    <>
+      <button
+        type="button"
+        disabled={busy}
+        data-cell-button={field.id}
+        data-button-action={cfg.action}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          void runAction();
+        }}
+        className="inline-flex h-6 max-w-full cursor-pointer items-center gap-1 rounded-md border border-primary/30 bg-[#edf2ff] px-2.5 text-[12px] font-medium text-primary transition-colors hover:bg-[#dfe8ff] active:scale-[0.98] disabled:opacity-50 dark:bg-primary/15 dark:hover:bg-primary/25"
+        title={cfg.target || cfg.label}
+      >
+        <ActionIcon size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+        <span className="truncate">{busy ? t("执行中…") : cfg.label}</span>
+      </button>
+      {toast && typeof document !== "undefined" && createPortal(
+        <div
+          role="status"
+          data-base-cell-toast
+          className={cn(
+            "fixed bottom-6 left-1/2 z-[200] -translate-x-1/2 rounded-lg border px-3.5 py-2 text-[13px] font-medium shadow-lg",
+            toast.tone === "warning"
+              ? "border-amber-200 bg-amber-50 text-amber-800"
+              : toast.tone === "error"
+                ? "border-rose-200 bg-rose-50 text-rose-700"
+                : "border-[#d6e4ff] bg-surface text-foreground",
+          )}
+        >
+          {toast.text}
+        </div>,
+        document.body,
+      )}
+    </>
+  );
+}
+
+function ProgressCellEditor({
+  value,
+  seed,
+  onDraft,
+  onCommit,
+  onCancel,
+}: {
+  value: number;
+  seed?: string;
+  onDraft?: (value: Cell | null) => void;
+  onCommit: (v: Cell | null, dir?: "down" | "right", raw?: string) => void;
+  onCancel: () => void;
+}) {
+  const initialNum = (() => {
+    if (seed !== undefined) {
+      const parsed = Number(seed.replace(/%$/, "").trim());
+      if (Number.isFinite(parsed)) return clampProgress(parsed);
+    }
+    return clampProgress(value);
+  })();
+  const [rawText, setRawText] = useState(seed !== undefined ? seed : String(initialNum));
+  const [sliderVal, setSliderVal] = useState(initialNum);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const completed = useRef(false);
+
+  const commit = (dir?: "down" | "right") => {
+    if (completed.current) return;
+    completed.current = true;
+    const trimmed = rawText.trim().replace(/%$/, "").trim();
+    if (trimmed === "") {
+      onCommit(null, dir, "");
+      return;
+    }
+    const n = Number(trimmed);
+    const next = Number.isFinite(n) ? clampProgress(n) : sliderVal;
+    onCommit(next, dir, String(next));
+  };
+
+  return (
+    <div
+      ref={wrapRef}
+      data-progress-editor
+      className="flex w-full items-center gap-1.5"
+      onMouseDown={(e) => e.stopPropagation()}
+      onBlur={(e) => {
+        if (wrapRef.current?.contains(e.relatedTarget as Node | null)) return;
+        commit();
+      }}
+    >
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={1}
+        value={sliderVal}
+        aria-label={t("进度滑块")}
+        className="h-1.5 min-w-[44px] flex-1 cursor-pointer accent-primary"
+        onChange={(e) => {
+          const n = clampProgress(Number(e.target.value));
+          setSliderVal(n);
+          setRawText(String(n));
+          onDraft?.(n);
+        }}
+      />
+      <input
+        autoFocus
+        type="number"
+        min={0}
+        max={100}
+        step="any"
+        aria-label={t("进度数值")}
+        className="w-12 rounded border border-primary/40 bg-surface px-1 text-right text-[12px] tabular-nums outline-none"
+        value={rawText}
+        onChange={(e) => {
+          setRawText(e.target.value);
+          const n = Number(e.target.value);
+          if (Number.isFinite(n)) {
+            const clamped = clampProgress(n);
+            setSliderVal(clamped);
+            onDraft?.(clamped);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit("down");
+          }
+          if (e.key === "Tab") {
+            e.preventDefault();
+            commit("right");
+          }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            completed.current = true;
+            onCancel();
+          }
+        }}
+      />
+      <span className="text-[11px] text-subtle">%</span>
+    </div>
+  );
+}
+
+function LocationCellEditor({
+  value,
+  seed,
+  onDraft,
+  onCommit,
+  onCancel,
+}: {
+  value: string;
+  seed?: string;
+  onDraft?: (value: Cell | null) => void;
+  onCommit: (v: Cell | null, dir?: "down" | "right", raw?: string) => void;
+  onCancel: () => void;
+}) {
+  const parsed = parseLocation(seed ?? value);
+  const [address, setAddress] = useState(parsed.address);
+  const [coords, setCoords] = useState(parsed.coords);
+  const ref = useRef<HTMLDivElement>(null);
+  const completed = useRef(false);
+
+  const commit = (dir?: "down" | "right") => {
+    if (completed.current) return;
+    completed.current = true;
+    const formatted = formatLocationValue(address, coords);
+    onCommit(formatted ? formatted : null, dir, formatted);
+  };
+
+  useEffect(() => {
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) commit();
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  });
+
+  const update = (nextAddr: string, nextCoords: string) => {
+    setAddress(nextAddr);
+    setCoords(nextCoords);
+    const f = formatLocationValue(nextAddr, nextCoords);
+    onDraft?.(f || null);
+  };
+
+  return (
+    <div
+      ref={ref}
+      data-location-editor
+      className="absolute left-0 top-8 z-30 w-64 space-y-2 rounded-lg border bg-surface p-2.5 text-[12px] shadow-lg"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <label className="block space-y-1">
+        <span className="text-[11px] text-muted-foreground">{t("地址")}</span>
+        <input
+          autoFocus
+          value={address}
+          onChange={(e) => update(e.target.value, coords)}
+          placeholder={t("输入地址，如 北京市海淀区")}
+          className="h-7 w-full rounded border bg-surface px-2 text-[12px] outline-none focus:border-primary"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit("down");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              completed.current = true;
+              onCancel();
+            }
+          }}
+        />
+      </label>
+      <label className="block space-y-1">
+        <span className="text-[11px] text-muted-foreground">{t("经纬度（可选）")}</span>
+        <input
+          value={coords}
+          onChange={(e) => update(address, e.target.value)}
+          placeholder={t("如 39.98,116.31")}
+          className="h-7 w-full rounded border bg-surface px-2 font-mono text-[12px] outline-none focus:border-primary"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit("down");
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              completed.current = true;
+              onCancel();
+            }
+          }}
+        />
+      </label>
+      <div className="flex justify-end gap-1.5 pt-0.5">
+        <button
+          type="button"
+          className="h-6 rounded border px-2 text-[12px] hover:bg-hover"
+          onClick={() => {
+            completed.current = true;
+            onCancel();
+          }}
+        >
+          {t("取消")}
+        </button>
+        <button
+          type="button"
+          className="h-6 rounded bg-primary px-2 text-[12px] text-white"
+          onClick={() => commit()}
+        >
+          {t("确定")}
+        </button>
+      </div>
     </div>
   );
 }

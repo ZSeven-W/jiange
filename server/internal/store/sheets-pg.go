@@ -110,14 +110,14 @@ func lockSheetPG(ctx context.Context, tx pgx.Tx, g RestoreGuard, nodeID int64, m
 	return info, expires, nil
 }
 
-const worksheetMetaCols = "id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, charts, pivot_tables, revision"
+const worksheetMetaCols = "id, node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, charts, pivot_tables, sparklines, outline_groups, revision"
 
 func scanWorksheetMetaPG(row pgx.Row) (SheetWorksheet, error) {
 	var ws SheetWorksheet
-	var mergesRaw, filterRaw, validationsRaw, condFormatsRaw, protectedRaw, chartsRaw, pivotsRaw []byte
+	var mergesRaw, filterRaw, validationsRaw, condFormatsRaw, protectedRaw, chartsRaw, pivotsRaw, sparklinesRaw, outlineGroupsRaw []byte
 	err := row.Scan(
 		&ws.ID, &ws.NodeID, &ws.Title, &ws.Pos, &ws.FrozenRows, &ws.FrozenCols,
-		&mergesRaw, &filterRaw, &validationsRaw, &condFormatsRaw, &protectedRaw, &chartsRaw, &pivotsRaw, &ws.Revision,
+		&mergesRaw, &filterRaw, &validationsRaw, &condFormatsRaw, &protectedRaw, &chartsRaw, &pivotsRaw, &sparklinesRaw, &outlineGroupsRaw, &ws.Revision,
 	)
 	if err != nil {
 		return SheetWorksheet{}, err
@@ -160,6 +160,18 @@ func scanWorksheetMetaPG(row pgx.Row) (SheetWorksheet, error) {
 	ws.PivotTables = []SheetPivotTable{}
 	if len(pivotsRaw) > 0 {
 		if err := json.Unmarshal(pivotsRaw, &ws.PivotTables); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.Sparklines = []SheetSparkline{}
+	if len(sparklinesRaw) > 0 {
+		if err := json.Unmarshal(sparklinesRaw, &ws.Sparklines); err != nil {
+			return SheetWorksheet{}, err
+		}
+	}
+	ws.OutlineGroups = []SheetOutlineGroup{}
+	if len(outlineGroupsRaw) > 0 {
+		if err := json.Unmarshal(outlineGroupsRaw, &ws.OutlineGroups); err != nil {
 			return SheetWorksheet{}, err
 		}
 	}
@@ -975,6 +987,22 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 				return ErrConflict
 			}
 		}
+		nextSparklines := ws.Sparklines
+		if patch.Sparklines != nil {
+			var ok bool
+			nextSparklines, ok = validateAndNormalizeSheetSparklines(*patch.Sparklines, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
+		nextOutlineGroups := ws.OutlineGroups
+		if patch.OutlineGroups != nil {
+			var ok bool
+			nextOutlineGroups, ok = validateAndNormalizeSheetOutlineGroups(*patch.OutlineGroups, rowCount, colCount)
+			if !ok {
+				return ErrConflict
+			}
+		}
 
 		if e = drivePGEnd(ctx, g, expires); e != nil {
 			return e
@@ -1033,8 +1061,16 @@ func (p *Postgres) UpdateWorksheetMeta(ctx context.Context, g RestoreGuard, node
 		if e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET title=$2, frozen_rows=$3, frozen_cols=$4, merges=$5::jsonb, filter_config=$6::jsonb, validations=$7::jsonb, conditional_formats=$8::jsonb, protected_ranges=$9::jsonb, charts=$10::jsonb, pivot_tables=$11::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
-			worksheetID, nextTitle, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(pivotsJSON)))
+		sparklinesJSON, e := json.Marshal(nextSparklines)
+		if e != nil {
+			return e
+		}
+		outlineGroupsJSON, e := json.Marshal(nextOutlineGroups)
+		if e != nil {
+			return e
+		}
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET title=$2, frozen_rows=$3, frozen_cols=$4, merges=$5::jsonb, filter_config=$6::jsonb, validations=$7::jsonb, conditional_formats=$8::jsonb, protected_ranges=$9::jsonb, charts=$10::jsonb, pivot_tables=$11::jsonb, sparklines=$12::jsonb, outline_groups=$13::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
+			worksheetID, nextTitle, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(pivotsJSON), string(sparklinesJSON), string(outlineGroupsJSON)))
 		if e != nil {
 			return e
 		}
@@ -1150,6 +1186,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		nextProtected := ws.ProtectedRanges
 		nextCharts := ws.Charts
 		nextPivots := ws.PivotTables
+		nextSparklines := ws.Sparklines
+		nextOutlineGroups := ws.OutlineGroups
 
 		switch op.Op {
 		case "insert_row":
@@ -1171,6 +1209,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextProtected = adjustSheetProtectedInsert(nextProtected, "row", op.Index, count)
 			nextCharts = adjustSheetChartsInsert(nextCharts, "row", op.Index, count)
 			nextPivots = adjustSheetPivotsInsert(nextPivots, worksheetID, "row", op.Index, count)
+			nextSparklines = adjustSheetSparklinesInsert(nextSparklines, "row", op.Index, count)
+			nextOutlineGroups = adjustSheetOutlineGroupsInsert(nextOutlineGroups, "row", op.Index, count)
 		case "delete_row":
 			if count < 1 || count > 50 || op.Index < 0 || op.Index+count > rowCount || rowCount-count < 1 {
 				return ErrConflict
@@ -1193,6 +1233,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextProtected = adjustSheetProtectedDelete(nextProtected, "row", op.Index, count)
 			nextCharts = adjustSheetChartsDelete(nextCharts, "row", op.Index, count)
 			nextPivots = adjustSheetPivotsDelete(nextPivots, worksheetID, "row", op.Index, count)
+			nextSparklines = adjustSheetSparklinesDelete(nextSparklines, "row", op.Index, count)
+			nextOutlineGroups = adjustSheetOutlineGroupsDelete(nextOutlineGroups, "row", op.Index, count)
 			newRows := rowCount - count
 			if nextFrozenRows > newRows-1 {
 				nextFrozenRows = max(0, newRows-1)
@@ -1229,6 +1271,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextProtected = adjustSheetProtectedInsert(nextProtected, "col", op.Index, count)
 			nextCharts = adjustSheetChartsInsert(nextCharts, "col", op.Index, count)
 			nextPivots = adjustSheetPivotsInsert(nextPivots, worksheetID, "col", op.Index, count)
+			nextSparklines = adjustSheetSparklinesInsert(nextSparklines, "col", op.Index, count)
+			nextOutlineGroups = adjustSheetOutlineGroupsInsert(nextOutlineGroups, "col", op.Index, count)
 		case "delete_col":
 			if count < 1 || count > 50 || op.Index < 0 || op.Index+count > colCount || colCount-count < 1 {
 				return ErrConflict
@@ -1251,6 +1295,8 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 			nextProtected = adjustSheetProtectedDelete(nextProtected, "col", op.Index, count)
 			nextCharts = adjustSheetChartsDelete(nextCharts, "col", op.Index, count)
 			nextPivots = adjustSheetPivotsDelete(nextPivots, worksheetID, "col", op.Index, count)
+			nextSparklines = adjustSheetSparklinesDelete(nextSparklines, "col", op.Index, count)
+			nextOutlineGroups = adjustSheetOutlineGroupsDelete(nextOutlineGroups, "col", op.Index, count)
 			newCols := colCount - count
 			if nextFrozenCols > newCols-1 {
 				nextFrozenCols = max(0, newCols-1)
@@ -1300,8 +1346,16 @@ func (p *Postgres) MutateSheetAxis(ctx context.Context, g RestoreGuard, nodeID, 
 		if e != nil {
 			return e
 		}
-		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET frozen_rows=$2, frozen_cols=$3, merges=$4::jsonb, filter_config=$5::jsonb, validations=$6::jsonb, conditional_formats=$7::jsonb, protected_ranges=$8::jsonb, charts=$9::jsonb, pivot_tables=$10::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
-			worksheetID, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(pivotsJSON)))
+		sparklinesJSON, e := json.Marshal(nextSparklines)
+		if e != nil {
+			return e
+		}
+		outlineGroupsJSON, e := json.Marshal(nextOutlineGroups)
+		if e != nil {
+			return e
+		}
+		out, e = scanWorksheetMetaPG(tx.QueryRow(ctx, `UPDATE sheet_worksheets SET frozen_rows=$2, frozen_cols=$3, merges=$4::jsonb, filter_config=$5::jsonb, validations=$6::jsonb, conditional_formats=$7::jsonb, protected_ranges=$8::jsonb, charts=$9::jsonb, pivot_tables=$10::jsonb, sparklines=$11::jsonb, outline_groups=$12::jsonb, revision=revision+1, updated_at=now() WHERE id=$1 RETURNING `+worksheetMetaCols,
+			worksheetID, nextFrozenRows, nextFrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(pivotsJSON), string(sparklinesJSON), string(outlineGroupsJSON)))
 		if e != nil {
 			return e
 		}
@@ -1599,9 +1653,17 @@ func (p *Postgres) CopySheetWorkbook(ctx context.Context, c SheetWorkbookCopy) (
 			if e != nil {
 				return e
 			}
+			sparklinesJSON, e := json.Marshal(cloneSheetSparklines(src.Sparklines))
+			if e != nil {
+				return e
+			}
+			outlineGroupsJSON, e := json.Marshal(cloneSheetOutlineGroups(src.OutlineGroups))
+			if e != nil {
+				return e
+			}
 			var wid int64
-			if e = tx.QueryRow(ctx, `INSERT INTO sheet_worksheets (node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, charts, pivot_tables, revision) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,'[]'::jsonb,1) RETURNING id`,
-				meta.ID, src.Title, pos, src.FrozenRows, src.FrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON)).Scan(&wid); e != nil {
+			if e = tx.QueryRow(ctx, `INSERT INTO sheet_worksheets (node_id, title, pos, frozen_rows, frozen_cols, merges, filter_config, validations, conditional_formats, protected_ranges, charts, pivot_tables, sparklines, outline_groups, revision) VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb,$9::jsonb,$10::jsonb,$11::jsonb,'[]'::jsonb,$12::jsonb,$13::jsonb,1) RETURNING id`,
+				meta.ID, src.Title, pos, src.FrozenRows, src.FrozenCols, string(mergesJSON), string(filterJSON), string(validationsJSON), string(condFormatsJSON), string(protectedJSON), string(chartsJSON), string(sparklinesJSON), string(outlineGroupsJSON)).Scan(&wid); e != nil {
 				return e
 			}
 			wsIDMap[src.ID] = wid

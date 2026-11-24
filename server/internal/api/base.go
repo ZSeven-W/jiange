@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/mail"
 	"reflect"
@@ -247,7 +248,11 @@ type fieldInput struct {
 }
 
 // defaultableTypes may carry a 默认值; derived, link and attachment fields cannot.
-var defaultableTypes = map[string]bool{"text": true, "number": true, "select": true, "multi_select": true, "checkbox": true, "date": true, "url": true, "phone": true, "email": true, "rating": true, "person": true}
+var defaultableTypes = map[string]bool{
+	"text": true, "number": true, "select": true, "multi_select": true, "checkbox": true,
+	"date": true, "url": true, "phone": true, "email": true, "rating": true, "person": true,
+	"currency": true, "progress": true, "location": true,
+}
 
 func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	if in.Name != nil {
@@ -333,6 +338,82 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 
 var lookupRollupAggs = map[string]bool{
 	"raw": true, "sum": true, "avg": true, "count": true, "min": true, "max": true,
+}
+
+var validCurrencyCodes = map[string]bool{
+	"CNY": true, "USD": true, "EUR": true, "GBP": true, "JPY": true, "HKD": true,
+}
+
+var validProgressStyles = map[string]bool{
+	"bar": true, "ring": true, "percent": true,
+}
+
+var validButtonActions = map[string]bool{
+	"open_url": true, "copy_row": true, "webhook": true,
+}
+
+func validateExtendedFieldOptions(w http.ResponseWriter, f store.Field) bool {
+	switch f.Type {
+	case "currency":
+		if len(f.Options) > 2 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "货币字段配置无效")
+			return false
+		}
+		if len(f.Options) >= 1 && f.Options[0] != "" && !validCurrencyCodes[strings.ToUpper(f.Options[0])] {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "不支持的货币类型")
+			return false
+		}
+		if len(f.Options) >= 2 && f.Options[1] != "" {
+			prec, err := strconv.Atoi(f.Options[1])
+			if err != nil || prec < 0 || prec > 4 {
+				httpx.Error(w, http.StatusBadRequest, "invalid_options", "货币小数位数需为 0-4")
+				return false
+			}
+		}
+	case "progress":
+		if len(f.Options) > 1 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "进度字段配置无效")
+			return false
+		}
+		if len(f.Options) == 1 && f.Options[0] != "" && !validProgressStyles[f.Options[0]] {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "不支持的进度展示样式")
+			return false
+		}
+	case "autonumber":
+		if len(f.Options) > 2 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "自动编号配置无效")
+			return false
+		}
+		if len(f.Options) >= 1 && utf8.RuneCountInString(f.Options[0]) > 32 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "编号前缀最多 32 个字符")
+			return false
+		}
+		if len(f.Options) >= 2 && f.Options[1] != "" {
+			digits, err := strconv.Atoi(f.Options[1])
+			if err != nil || digits < 1 || digits > 10 {
+				httpx.Error(w, http.StatusBadRequest, "invalid_options", "编号位数需为 1-10")
+				return false
+			}
+		}
+	case "button":
+		if len(f.Options) > 3 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "按钮字段配置无效")
+			return false
+		}
+		if len(f.Options) >= 1 && utf8.RuneCountInString(f.Options[0]) > 64 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "按钮文案最多 64 个字符")
+			return false
+		}
+		if len(f.Options) >= 2 && f.Options[1] != "" && !validButtonActions[f.Options[1]] {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "不支持的按钮动作类型")
+			return false
+		}
+		if len(f.Options) >= 3 && utf8.RuneCountInString(f.Options[2]) > 2000 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_options", "按钮目标内容过长")
+			return false
+		}
+	}
+	return true
 }
 
 func validateLookupOptions(w http.ResponseWriter, f store.Field) bool {
@@ -472,6 +553,9 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	if !validateLookupOptions(w, f) {
 		return
 	}
+	if !validateExtendedFieldOptions(w, f) {
+		return
+	}
 	guard, ok := s.viewGuard(w, r)
 	if !ok {
 		return
@@ -530,6 +614,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !validateLookupOptions(w, f) {
+		return
+	}
+	if !validateExtendedFieldOptions(w, f) {
 		return
 	}
 	guard, ok := s.viewGuard(w, r)
@@ -665,7 +752,7 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 	switch val := x.(type) {
 	case string:
 		switch to.Type {
-		case "text", "date", "select":
+		case "text", "date", "select", "location":
 			if to.Type == "select" && !slices.Contains(to.Options, val) {
 				return nil
 			}
@@ -674,9 +761,22 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 					return nil
 				}
 			}
+			if to.Type == "location" && utf8.RuneCountInString(val) > 500 {
+				return nil
+			}
 			return mustJSON(val)
-		case "number":
-			if n, err := strconv.ParseFloat(strings.TrimSpace(val), 64); err == nil {
+		case "number", "currency":
+			cleaned := strings.TrimSpace(val)
+			if to.Type == "currency" {
+				cleaned = strings.NewReplacer("¥", "", "$", "", "€", "", "£", "", "HK$", "", ",", "").Replace(cleaned)
+				cleaned = strings.TrimSpace(cleaned)
+			}
+			if n, err := strconv.ParseFloat(cleaned, 64); err == nil && !math.IsNaN(n) && !math.IsInf(n, 0) {
+				return mustJSON(n)
+			}
+		case "progress":
+			cleaned := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(val), "%"))
+			if n, err := strconv.ParseFloat(cleaned, 64); err == nil && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 && n <= 100 {
 				return mustJSON(n)
 			}
 		case "checkbox":
@@ -690,9 +790,13 @@ func convertCell(from, to store.Field, v json.RawMessage) json.RawMessage {
 		}
 	case float64:
 		switch to.Type {
-		case "number":
+		case "number", "currency":
 			return mustJSON(val)
-		case "text":
+		case "progress":
+			if val >= 0 && val <= 100 {
+				return mustJSON(val)
+			}
+		case "text", "location":
 			return mustJSON(strconv.FormatFloat(val, 'f', -1, 64))
 		case "checkbox":
 			return mustJSON(val != 0)
@@ -790,10 +894,13 @@ func checkCells(fields []store.Field, cells map[string]json.RawMessage) string {
 		if i < 0 {
 			return "unknown field " + k
 		}
+		f := fields[i]
+		if f.Type == "autonumber" {
+			return f.Name + " 是自动编号字段，不能编辑"
+		}
 		if len(v) == 0 || string(v) == "null" {
 			continue
 		}
-		f := fields[i]
 		if store.FieldReadOnly(f.Type) {
 			return f.Name + " 是自动填充字段，不能编辑"
 		}
@@ -893,6 +1000,18 @@ func validCell(f store.Field, v json.RawMessage) bool {
 	case "rating":
 		var n float64
 		return json.Unmarshal(v, &n) == nil && n >= 1 && n <= 5 && n == float64(int(n))
+	case "currency":
+		var n float64
+		return json.Unmarshal(v, &n) == nil && !math.IsNaN(n) && !math.IsInf(n, 0)
+	case "progress":
+		var n float64
+		return json.Unmarshal(v, &n) == nil && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 0 && n <= 100
+	case "autonumber":
+		var n float64
+		return json.Unmarshal(v, &n) == nil && !math.IsNaN(n) && !math.IsInf(n, 0) && n >= 1 && n == math.Trunc(n)
+	case "location":
+		var s string
+		return json.Unmarshal(v, &s) == nil && utf8.RuneCountInString(s) <= 500
 	}
 	return false
 }

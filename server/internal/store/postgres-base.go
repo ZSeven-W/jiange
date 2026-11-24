@@ -227,17 +227,34 @@ func (p *Postgres) Records(ctx context.Context, base int64) ([]Record, error) {
 	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (Record, error) { return scanRecord(r) })
 }
 
-func (p *Postgres) AddRecord(ctx context.Context, r Record) (Record, error) {
-	if r.Cells == nil {
-		r.Cells = map[string]json.RawMessage{}
+func (p *Postgres) AddRecord(ctx context.Context, r Record) (out Record, err error) {
+	cells := make(map[string]json.RawMessage, len(r.Cells))
+	for k, v := range r.Cells {
+		cells[k] = v
 	}
 	var creator any
 	if r.CreatorID != nil {
 		creator = *r.CreatorID
 	}
-	return scanRecord(p.Pool.QueryRow(ctx, `INSERT INTO base_records (base_id, table_id, cells, position, creator_id)
-		VALUES ($1,$2,$3, CASE WHEN $4::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $4 END, $5)
-		RETURNING `+recordCols, r.BaseID, nullableID(r.TableID), r.Cells, r.Position, creator))
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		tid := r.TableID
+		if tid == 0 {
+			var defTID int64
+			if e := tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, r.BaseID).Scan(&defTID); e == nil {
+				tid = defTID
+			}
+		}
+		seeds, e := pgAutonumberSeeds(ctx, tx, r.BaseID, tid)
+		if e != nil {
+			return e
+		}
+		applyAutonumbers(cells, seeds)
+		out, e = scanRecord(tx.QueryRow(ctx, `INSERT INTO base_records (base_id, table_id, cells, position, creator_id)
+			VALUES ($1,$2,$3, CASE WHEN $4::float8 = 0 THEN COALESCE((SELECT max(position) FROM base_records WHERE base_id=$1), 0) + 1 ELSE $4 END, $5)
+			RETURNING `+recordCols, r.BaseID, nullableID(r.TableID), cells, r.Position, creator))
+		return e
+	})
+	return out, err
 }
 
 // SetCells merges cells; jsonb_strip_nulls drops cells set to null.
@@ -340,23 +357,43 @@ func (p *Postgres) AddRecordsBulk(ctx context.Context, base int64, records []Rec
 	if len(records) == 0 {
 		return nil
 	}
-	b := &pgx.Batch{}
-	var pos float64
-	if err := p.Pool.QueryRow(ctx, `SELECT COALESCE(max(position), 0) FROM base_records WHERE base_id=$1`, base).Scan(&pos); err != nil {
-		return err
-	}
-	for _, r := range records {
-		pos++
-		if r.Cells == nil {
-			r.Cells = map[string]json.RawMessage{}
+	return pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var defaultTID int64
+		_ = tx.QueryRow(ctx, `SELECT id FROM bt_tables WHERE base_id=$1 AND is_default LIMIT 1`, base).Scan(&defaultTID)
+		var pos float64
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(max(position), 0) FROM base_records WHERE base_id=$1`, base).Scan(&pos); err != nil {
+			return err
 		}
-		var creator any
-		if r.CreatorID != nil {
-			creator = *r.CreatorID
+		seedsByTable := map[int64]map[string]int64{}
+		b := &pgx.Batch{}
+		for _, r := range records {
+			pos++
+			cells := make(map[string]json.RawMessage, len(r.Cells))
+			for k, v := range r.Cells {
+				cells[k] = v
+			}
+			tid := r.TableID
+			if tid == 0 {
+				tid = defaultTID
+			}
+			seeds, loaded := seedsByTable[tid]
+			if !loaded {
+				var err error
+				seeds, err = pgAutonumberSeeds(ctx, tx, base, tid)
+				if err != nil {
+					return err
+				}
+				seedsByTable[tid] = seeds
+			}
+			applyAutonumbers(cells, seeds)
+			var creator any
+			if r.CreatorID != nil {
+				creator = *r.CreatorID
+			}
+			b.Queue(`INSERT INTO base_records (base_id, table_id, cells, position, creator_id) VALUES ($1, $2, $3, $4, $5)`, base, nullableID(r.TableID), cells, pos, creator)
 		}
-		b.Queue(`INSERT INTO base_records (base_id, table_id, cells, position, creator_id) VALUES ($1, $2, $3, $4, $5)`, base, nullableID(r.TableID), r.Cells, pos, creator)
-	}
-	return p.Pool.SendBatch(ctx, b).Close()
+		return tx.SendBatch(ctx, b).Close()
+	})
 }
 
 func (p *Postgres) SetLinks(ctx context.Context, baseID, fieldID, fromRecord int64, toRecords []int64) error {

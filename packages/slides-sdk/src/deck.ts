@@ -125,6 +125,7 @@ function clonePages(pages: readonly SlidesPage[]): SlidesPage[] {
       chart: s.chart
         ? { ...s.chart, categories: [...s.chart.categories], series: s.chart.series.map((ser) => ({ ...ser, values: [...ser.values] })) }
         : undefined,
+      crop: s.crop ? { ...s.crop } : undefined,
     })),
   }));
 }

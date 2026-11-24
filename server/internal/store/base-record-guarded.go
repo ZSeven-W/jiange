@@ -292,6 +292,11 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 					cells[k] = v
 				}
 			}
+			seeds, err := pgAutonumberSeeds(ctx, tx, baseID, tid)
+			if err != nil {
+				return err
+			}
+			applyAutonumbers(cells, seeds)
 			result, err = scanRecord(tx.QueryRow(ctx, `INSERT INTO base_records (base_id,table_id,cells,position,creator_id) VALUES ($1,$2,$3,CASE WHEN $4::float8=0 THEN COALESCE((SELECT max(position) FROM base_records WHERE table_id=$2),0)+1 ELSE $4 END,$5) RETURNING `+recordCols, baseID, tid, cells, mutation.Position, guard.UserID))
 		case "update":
 			var current Record
@@ -302,11 +307,15 @@ func (p *Postgres) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard
 			if err := checkExpectedCells(current.Cells, mutation); err != nil {
 				return err
 			}
+			protected := autonumberKeysForTable(fields, current.TableID)
 			cells := make(map[string]json.RawMessage, len(current.Cells)+len(mutation.Cells))
 			for k, v := range current.Cells {
 				cells[k] = slices.Clone(v)
 			}
 			for k, v := range mutation.Cells {
+				if protected[k] {
+					continue
+				}
 				if nullCell(v) {
 					delete(cells, k)
 				} else {
@@ -518,6 +527,7 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 				cells[k] = slices.Clone(v)
 			}
 		}
+		applyAutonumbers(cells, m.autonumberSeedsLocked(baseID, tid))
 		uid := guard.UserID
 		next := m.b.nextID + 1
 		result = Record{ID: next, BaseID: baseID, TableID: tid, Cells: cells, CreatorID: &uid, CreatedAt: &now, UpdatedAt: &now, Position: mutation.Position}
@@ -525,11 +535,15 @@ func (m *Memory) MutateRecordGuarded(ctx context.Context, guard BaseWriteGuard, 
 			result.Position = float64(next)
 		}
 	case "update":
+		protected := autonumberKeysForTable(fields, result.TableID)
 		cells := map[string]json.RawMessage{}
 		for k, v := range result.Cells {
 			cells[k] = slices.Clone(v)
 		}
 		for k, v := range mutation.Cells {
+			if protected[k] {
+				continue
+			}
 			if nullCell(v) {
 				delete(cells, k)
 			} else {

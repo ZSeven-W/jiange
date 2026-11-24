@@ -69,7 +69,7 @@ func (s *Server) documentFileAccess(r *http.Request, file store.FileMeta, guard 
 		for _, block := range doc.View().Blocks {
 			if block.Props["fileId"] == want {
 				imageReference = imageReference || block.Type == "image"
-				fileReference = fileReference || block.Type == "file"
+				fileReference = fileReference || block.Type == "file" || block.Type == "audio" || block.Type == "video"
 			}
 			if block.Type == "flowchart" && flowchartReferencesImage(block.Props, want) {
 				imageReference = true

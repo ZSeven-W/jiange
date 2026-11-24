@@ -184,4 +184,48 @@ describe("presentation surfaces", () => {
     expect(htmlStep1).toContain("jiange-shape-fade-in");
     expect(htmlStep1).toContain("jiange-shape-slide-up");
   });
+
+  it("renders SlideMasterMeta overlay, brand font, and audience sync toggle in PresenterView", () => {
+    const master = {
+      brandName: "Jiange Studio",
+      footerText: "Q4 Strategy Deck",
+      showPageNumber: true,
+      logoUrl: "/api/files/99",
+      accentColor: "#00b42a",
+      fontFamily: "serif",
+      headerRule: true,
+    };
+    const surfaceHtml = renderToStaticMarkup(
+      <SlideSurface
+        content={page}
+        master={master}
+        slideIndex={1}
+        totalSlides={8}
+      />,
+    );
+    expect(surfaceHtml).toContain("data-slide-master-overlay");
+    expect(surfaceHtml).toContain("data-slide-master-header-rule");
+    expect(surfaceHtml).toContain("Jiange Studio");
+    expect(surfaceHtml).toContain("Q4 Strategy Deck");
+    expect(surfaceHtml).toContain("2 / 8");
+    expect(surfaceHtml).toContain("/api/files/99");
+    expect(surfaceHtml).toContain("Source Han Serif SC");
+
+    const presenterHtml = renderToStaticMarkup(
+      <PresenterView
+        pages={[page, page2]}
+        currentId={page.id}
+        content={page}
+        contentFor={() => page}
+        masters={{ [page.id]: master }}
+        syncAudience
+        onToggleSyncAudience={() => {}}
+        onSelect={() => {}}
+        onExit={() => {}}
+      />,
+    );
+    expect(presenterHtml).toContain("data-presenter-sync-toggle");
+    expect(presenterHtml).toContain("已同步放映给观众");
+    expect(presenterHtml).toContain("Jiange Studio");
+  });
 });

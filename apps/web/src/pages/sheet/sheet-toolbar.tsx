@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import type { SheetCellStyle, SheetNumFmt, SheetWorksheet } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import {
+  Activity,
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -18,9 +19,12 @@ import {
   Eraser,
   FileUp,
   Filter,
+  FoldHorizontal,
+  FoldVertical,
   Grid2X2,
   Highlighter,
   History,
+  Image as ImageIcon,
   Italic,
   Layers,
   ListChecks,
@@ -325,6 +329,14 @@ export interface SheetToolbarProps {
   activePanel: SheetPanelMode | null;
   unresolvedCommentCount: number;
   onTogglePanel: (mode: SheetPanelMode) => void;
+  sparklineOpen?: boolean;
+  onOpenSparkline?: (anchor: { left: number; top: number; bottom: number; right: number }) => void;
+  cellImageOpen?: boolean;
+  onOpenCellImage?: (anchor: { left: number; top: number; bottom: number; right: number }) => void;
+  hasRowGroupInSelection?: boolean;
+  hasColGroupInSelection?: boolean;
+  onToggleGroupRows?: () => void;
+  onToggleGroupCols?: () => void;
   onCollapseToolbar?: () => void;
 }
 
@@ -403,6 +415,14 @@ export function SheetToolbar(props: SheetToolbarProps) {
     activePanel,
     unresolvedCommentCount,
     onTogglePanel,
+    sparklineOpen,
+    onOpenSparkline,
+    cellImageOpen,
+    onOpenCellImage,
+    hasRowGroupInSelection,
+    hasColGroupInSelection,
+    onToggleGroupRows,
+    onToggleGroupCols,
     onCollapseToolbar,
   } = props;
 
@@ -907,6 +927,80 @@ export function SheetToolbar(props: SheetToolbarProps) {
 
       {labeledBtn(t("图表"), activePanel === "charts", false, () => onTogglePanel("charts"), <BarChart3 size={15} />, "charts")}
       {labeledBtn(t("透视表"), activePanel === "pivot", false, () => onTogglePanel("pivot"), <TableProperties size={15} />, "pivot")}
+      {onOpenSparkline && (
+        <button
+          type="button"
+          title={t("插入迷你图")}
+          aria-label={t("迷你图")}
+          aria-expanded={!!sparklineOpen}
+          disabled={!canEdit}
+          data-sheet-sparkline-btn
+          data-sheet-tool="sparkline"
+          onClick={(e) => {
+            closeMenu();
+            const r = e.currentTarget.getBoundingClientRect();
+            onOpenSparkline({ left: r.left, top: r.top, bottom: r.bottom, right: r.right });
+          }}
+          className={`flex h-12 min-w-[34px] shrink-0 flex-col items-center justify-center gap-0.5 rounded px-1 text-[10.5px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${sparklineOpen ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
+        >
+          <Activity size={15} />
+          <span>{t("迷你图")}</span>
+        </button>
+      )}
+      {onOpenCellImage && (
+        <button
+          type="button"
+          title={t("插入单元格图片")}
+          aria-label={t("插入单元格图片")}
+          aria-expanded={!!cellImageOpen}
+          disabled={!canEdit}
+          data-sheet-cell-image-btn
+          data-sheet-tool="cell-image"
+          onClick={(e) => {
+            closeMenu();
+            const r = e.currentTarget.getBoundingClientRect();
+            onOpenCellImage({ left: r.left, top: r.top, bottom: r.bottom, right: r.right });
+          }}
+          className={`flex h-12 min-w-[34px] shrink-0 flex-col items-center justify-center gap-0.5 rounded px-1 text-[10.5px] text-[#4b5058] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${cellImageOpen ? "bg-[#e1eaff] text-[#3370ff]" : ""}`}
+        >
+          <ImageIcon size={15} />
+          <span>{t("单元格图片")}</span>
+        </button>
+      )}
+      {(onToggleGroupRows || onToggleGroupCols) && (
+        <div className="flex shrink-0 flex-col gap-0.5 px-0.5">
+          {onToggleGroupRows && (
+            <button
+              type="button"
+              title={hasRowGroupInSelection ? t("取消行分组") : t("行分组")}
+              aria-label={hasRowGroupInSelection ? t("取消行分组") : t("行分组")}
+              disabled={!canEdit}
+              data-sheet-group-rows-btn
+              data-sheet-tool="group-rows"
+              onClick={onToggleGroupRows}
+              className={`flex h-5 items-center gap-1 rounded px-1.5 text-[11px] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${hasRowGroupInSelection ? "bg-[#e1eaff] text-[#3370ff]" : "text-[#4b5058]"}`}
+            >
+              <FoldVertical size={12} />
+              <span>{hasRowGroupInSelection ? t("取消行分组") : t("行分组")}</span>
+            </button>
+          )}
+          {onToggleGroupCols && (
+            <button
+              type="button"
+              title={hasColGroupInSelection ? t("取消列分组") : t("列分组")}
+              aria-label={hasColGroupInSelection ? t("取消列分组") : t("列分组")}
+              disabled={!canEdit}
+              data-sheet-group-cols-btn
+              data-sheet-tool="group-cols"
+              onClick={onToggleGroupCols}
+              className={`flex h-5 items-center gap-1 rounded px-1.5 text-[11px] enabled:hover:bg-[#e9ecf1] disabled:cursor-not-allowed disabled:opacity-45 ${hasColGroupInSelection ? "bg-[#e1eaff] text-[#3370ff]" : "text-[#4b5058]"}`}
+            >
+              <FoldHorizontal size={12} />
+              <span>{hasColGroupInSelection ? t("取消列分组") : t("列分组")}</span>
+            </button>
+          )}
+        </div>
+      )}
       {labeledBtn(t("数据验证"), activePanel === "validation", false, () => onTogglePanel("validation"), <ListChecks size={15} />, "validation")}
       {labeledBtn(t("条件格式"), activePanel === "condfmt", false, () => onTogglePanel("condfmt"), <Sparkles size={15} />, "cond-fmt")}
       {labeledBtn(t("保护区域"), activePanel === "protect", false, () => onTogglePanel("protect"), <Lock size={15} />, "protect")}
