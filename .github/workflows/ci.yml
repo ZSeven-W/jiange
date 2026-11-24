@@ -93,7 +93,8 @@ jobs:
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -p 1 -race -count=1 ./...
-      - run: go test ./collab -run '^$' -fuzz FuzzDecode -fuzztime 20s
+      - run: go test ./collab -run '^$' -fuzz '^FuzzDecode$' -fuzztime 15s
+      - run: go test ./collab -run '^$' -fuzz '^FuzzDecodeState$' -fuzztime 15s
 
   e2e:
     runs-on: ubuntu-latest

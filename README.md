@@ -156,7 +156,7 @@ cd sdk/go && go test -race -cover ./...          # Go 后端 SDK (10 包 100.0% 
 cd sdk/go-pgstore && go test -race -cover ./...  # PostgreSQL 适配器 (100.0% 覆盖)
 cd server && go test ./... && go vet ./...       # Jiange 主服务端 20 包全测（含 OpenAPI 100% 路由一致 & 多副本同步）
 JIANGE_TEST_DATABASE_URL=postgres://jiange:jiange@localhost:5432/jiange_test?sslmode=disable go test ./internal/store
-go test ./collab -run '^$' -fuzz FuzzDecode -fuzztime 30s
+go test ./collab -run '^$' -fuzz '^FuzzDecode$' -fuzztime 30s
 ```
 
 跨语言一致性：TS 生成 `spec/vectors/encoding.json`（ops ↔ 十六进制字节）和 `scenarios.json`（ops → 期望物化视图，含 5 个随机 3 副本会话）。Go 测试逐字节比对编码，并以 25 种随机乱序 + 重复投递重放每个场景，结果必须与 TS 完全一致。
