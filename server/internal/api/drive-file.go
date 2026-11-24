@@ -121,6 +121,9 @@ func (s *Server) postDriveFile(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if att, attErr := s.Store.GetDriveFile(r.Context(), u.ID, entry.ID); attErr == nil {
+		s.indexAttachmentText(r.Context(), att, entry.WorkspaceID, body)
+	}
 	httpx.JSON(w, http.StatusCreated, entry)
 }
 

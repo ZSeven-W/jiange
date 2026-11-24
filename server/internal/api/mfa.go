@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -118,6 +119,48 @@ func (s *Server) firstWorkspaceID(r *http.Request, userID int64) int64 {
 	return 0
 }
 
+func (s *Server) userMFAPolicyStatus(ctx context.Context, userID int64) (bool, []string, error) {
+	auditStore, ok := s.Store.(store.AuditLogStore)
+	if !ok {
+		return false, []string{}, nil
+	}
+	required, workspaces, err := auditStore.UserHasMFARequiredWorkspace(ctx, userID)
+	if err != nil {
+		return false, nil, err
+	}
+	if workspaces == nil {
+		workspaces = []string{}
+	}
+	return required, workspaces, nil
+}
+
+func (s *Server) userPasskeyCount(ctx context.Context, userID int64) (int, error) {
+	pkStore, ok := s.Store.(store.PasskeyStore)
+	if !ok {
+		return 0, nil
+	}
+	list, err := pkStore.ListUserPasskeys(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	return len(list), nil
+}
+
+func (s *Server) userTOTPEnabled(ctx context.Context, userID int64) (bool, error) {
+	mfaStore, ok := s.mfaStore()
+	if !ok {
+		return false, nil
+	}
+	state, err := mfaStore.GetUserMFA(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return state.Enabled, nil
+}
+
 type mfaChallengeResponse struct {
 	MFARequired bool   `json:"mfaRequired"`
 	MFAToken    string `json:"mfaToken"`
@@ -128,6 +171,9 @@ type mfaStatusResponse struct {
 	Enabled                bool       `json:"enabled"`
 	RecoveryCodesRemaining int        `json:"recoveryCodesRemaining"`
 	EnabledAt              *time.Time `json:"enabledAt"`
+	MFARequiredByPolicy    bool       `json:"mfaRequiredByPolicy"`
+	MFARequiredWorkspaces  []string   `json:"mfaRequiredWorkspaces"`
+	MFASetupRequired       bool       `json:"mfaSetupRequired"`
 }
 
 type mfaSetupResponse struct {
@@ -341,22 +387,45 @@ func (s *Server) getMyMFA(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, err := mfaStore.GetUserMFA(r.Context(), u.ID)
-	if errors.Is(err, store.ErrNotFound) || (err == nil && !state.Enabled) {
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.fail(w, r, err)
+		return
+	}
+	totpEnabled := err == nil && state.Enabled
+
+	requiredByPolicy, requiredWorkspaces, err := s.userMFAPolicyStatus(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	mfaSetupRequired := false
+	if requiredByPolicy && !totpEnabled {
+		pkCount, pkErr := s.userPasskeyCount(r.Context(), u.ID)
+		if pkErr != nil {
+			s.fail(w, r, pkErr)
+			return
+		}
+		mfaSetupRequired = pkCount == 0
+	}
+
+	if !totpEnabled {
 		httpx.JSON(w, http.StatusOK, mfaStatusResponse{
 			Enabled:                false,
 			RecoveryCodesRemaining: 0,
 			EnabledAt:              nil,
+			MFARequiredByPolicy:    requiredByPolicy,
+			MFARequiredWorkspaces:  requiredWorkspaces,
+			MFASetupRequired:       mfaSetupRequired,
 		})
-		return
-	}
-	if err != nil {
-		s.fail(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, mfaStatusResponse{
 		Enabled:                true,
 		RecoveryCodesRemaining: len(state.RecoveryCodesHash),
 		EnabledAt:              state.EnabledAt,
+		MFARequiredByPolicy:    requiredByPolicy,
+		MFARequiredWorkspaces:  requiredWorkspaces,
+		MFASetupRequired:       false,
 	})
 }
 
@@ -535,6 +604,23 @@ func (s *Server) disableMyMFA(w http.ResponseWriter, r *http.Request) {
 	if method == "" {
 		httpx.Error(w, http.StatusUnauthorized, "invalid_credentials", "密码或验证码不正确，无法关闭二步验证")
 		return
+	}
+
+	requiredByPolicy, _, err := s.userMFAPolicyStatus(r.Context(), u.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if requiredByPolicy {
+		pkCount, pkErr := s.userPasskeyCount(r.Context(), u.ID)
+		if pkErr != nil {
+			s.fail(w, r, pkErr)
+			return
+		}
+		if pkCount == 0 {
+			httpx.Error(w, http.StatusConflict, "mfa_required_by_policy", "所在工作空间已强制要求开启二步验证，请先绑定通行密钥或联系管理员后再关闭")
+			return
+		}
 	}
 
 	if err := mfaStore.DeleteUserMFA(r.Context(), u.ID); err != nil {

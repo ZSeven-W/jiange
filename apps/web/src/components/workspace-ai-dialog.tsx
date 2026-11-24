@@ -14,10 +14,10 @@ import {
   X,
 } from "lucide-react";
 import {
-  aiSuiteApi,
+  askWorkspaceStream,
   type WorkspaceAiCitation,
   type WorkspaceAiHistoryMessage,
-} from "@/lib/ai-suite-api";
+} from "@/lib/workspace-ai-api";
 import { aiErrorText, openAISettings } from "@/lib/ai";
 import { useI18n } from "@/lib/i18n";
 import { go } from "@/lib/route";
@@ -30,6 +30,7 @@ export interface WorkspaceAiTurn {
   citations?: WorkspaceAiCitation[];
   mode?: "llm" | "local";
   model?: string;
+  streaming?: boolean;
 }
 
 export const WORKSPACE_AI_STARTER_QUESTIONS: readonly string[] = [
@@ -101,22 +102,55 @@ function renderInlineAnswer(line: string) {
   });
 }
 
-function GroundedAnswerBody({ text }: { text: string }) {
+function StreamingCursor() {
+  return (
+    <span
+      data-workspace-ai-cursor
+      aria-hidden
+      className="ml-0.5 inline-block h-[1em] w-[2px] align-text-bottom bg-[#3370ff] animate-pulse"
+    />
+  );
+}
+
+function GroundedAnswerBody({ text, streaming }: { text: string; streaming?: boolean }) {
   const lines = text.split("\n");
+  let lastNonEmptyIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (lines[i].trim()) {
+      lastNonEmptyIdx = i;
+      break;
+    }
+  }
+  if (lastNonEmptyIdx < 0) {
+    return (
+      <div className="min-h-[20px] text-[13.5px] leading-relaxed text-[#1f2329] dark:text-foreground">
+        {streaming ? <StreamingCursor /> : null}
+      </div>
+    );
+  }
   return (
     <div className="space-y-1.5 text-[13.5px] leading-relaxed text-[#1f2329] dark:text-foreground">
       {lines.map((raw, idx) => {
         const line = raw.trim();
+        const showCursor = Boolean(streaming && idx === lastNonEmptyIdx);
         if (!line) return <div key={idx} className="h-1" />;
         if (line.startsWith("- ") || line.startsWith("• ")) {
           return (
             <div key={idx} className="flex items-start gap-2">
               <span className="mt-2 size-1.5 shrink-0 rounded-full bg-[#3370ff]" aria-hidden />
-              <p className="min-w-0 flex-1">{renderInlineAnswer(line.slice(2))}</p>
+              <p className="min-w-0 flex-1">
+                {renderInlineAnswer(line.slice(2))}
+                {showCursor && <StreamingCursor />}
+              </p>
             </div>
           );
         }
-        return <p key={idx}>{renderInlineAnswer(line)}</p>;
+        return (
+          <p key={idx}>
+            {renderInlineAnswer(line)}
+            {showCursor && <StreamingCursor />}
+          </p>
+        );
       })}
     </div>
   );
@@ -196,6 +230,7 @@ export function WorkspaceAiDialog({
       role: "user",
       content: q,
     };
+    const assistantId = `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     const history = buildWorkspaceHistory(turns);
     setTurns((prev) => [...prev, userTurn]);
     setInput("");
@@ -203,30 +238,72 @@ export function WorkspaceAiDialog({
     setBusy(true);
     const controller = new AbortController();
     abortRef.current = controller;
+
+    const upsertAssistant = (updater: (prev?: WorkspaceAiTurn) => WorkspaceAiTurn) => {
+      setTurns((prev) => {
+        const idx = prev.findIndex((t) => t.id === assistantId);
+        if (idx < 0) return [...prev, updater(undefined)];
+        const next = prev.slice();
+        next[idx] = updater(prev[idx]);
+        return next;
+      });
+    };
+
     try {
-      const res = await aiSuiteApi.askWorkspace(
+      await askWorkspaceStream(
         {
           question: q,
           workspaceId: workspaceId && workspaceId > 0 ? workspaceId : undefined,
           wikiSpaceId: wikiSpaceId && wikiSpaceId > 0 ? wikiSpaceId : undefined,
           history,
         },
+        {
+          onCitations: (meta) => {
+            setMode(meta.mode);
+            setModel(meta.model);
+            upsertAssistant((cur) => ({
+              id: assistantId,
+              role: "assistant",
+              content: cur?.content ?? "",
+              citations: meta.citations ?? [],
+              mode: meta.mode,
+              model: meta.model,
+              streaming: true,
+            }));
+          },
+          onDelta: (chunk) => {
+            upsertAssistant((cur) => ({
+              id: assistantId,
+              role: "assistant",
+              content: (cur?.content ?? "") + chunk,
+              citations: cur?.citations ?? [],
+              mode: cur?.mode ?? mode,
+              model: cur?.model ?? model,
+              streaming: true,
+            }));
+          },
+          onDone: (res) => {
+            setMode(res.mode);
+            setModel(res.model);
+            upsertAssistant((cur) => ({
+              id: assistantId,
+              role: "assistant",
+              content: res.answer || cur?.content || "",
+              citations: res.citations ?? cur?.citations ?? [],
+              mode: res.mode,
+              model: res.model,
+              streaming: false,
+            }));
+          },
+        },
         controller.signal,
       );
-      setMode(res.mode);
-      setModel(res.model);
-      setTurns((prev) => [
-        ...prev,
-        {
-          id: `a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-          role: "assistant",
-          content: res.answer,
-          citations: res.citations ?? [],
-          mode: res.mode,
-          model: res.model,
-        },
-      ]);
     } catch (err) {
+      setTurns((prev) =>
+        prev
+          .map((t) => (t.id === assistantId ? { ...t, streaming: false } : t))
+          .filter((t) => t.id !== assistantId || t.content.trim().length > 0),
+      );
       if (!controller.signal.aborted) {
         setError(aiErrorText(err));
       }
@@ -370,9 +447,10 @@ export function WorkspaceAiDialog({
                   <article
                     key={turn.id}
                     data-workspace-ai-answer
+                    data-workspace-ai-streaming={turn.streaming ? "true" : undefined}
                     className="rounded-xl border border-[#e5e6eb] bg-surface p-4 shadow-[0_2px_8px_rgba(31,35,41,0.04)]"
                   >
-                    <GroundedAnswerBody text={turn.content} />
+                    <GroundedAnswerBody text={turn.content} streaming={turn.streaming} />
 
                     {turn.citations && turn.citations.length > 0 && (
                       <div className="mt-3.5 border-t border-[#eff0f1] pt-3" data-workspace-ai-citations>
@@ -401,7 +479,7 @@ export function WorkspaceAiDialog({
                 ),
               )}
 
-              {busy && (
+              {busy && !turns.some((turn) => turn.streaming) && (
                 <div className="flex items-center gap-2 rounded-xl border border-[#e5e6eb] bg-[#f7f8fa] px-4 py-3 text-[13px] text-[#646a73]">
                   <Loader2 size={15} className="animate-spin text-[#3370ff]" />
                   <span>{t("正在检索知识库并生成回答…")}</span>

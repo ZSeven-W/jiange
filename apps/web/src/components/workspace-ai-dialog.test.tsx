@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { aiSuiteApi } from "@/lib/ai-suite-api";
+import { askWorkspaceStream, parseSseEventBlock } from "@/lib/workspace-ai-api";
 import {
   buildWorkspaceHistory,
   citationHref,
@@ -119,5 +120,138 @@ describe("WorkspaceAiDialog", () => {
     });
     expect(res.mode).toBe("local");
     expect(res.citations[0].docId).toBe(7);
+  });
+
+  it("streams SSE citations, chunked delta tokens, and done payload in order", async () => {
+    const encoder = new TextEncoder();
+    const ssePayload = [
+      'event: citations\ndata: {"citations":[{"docId":12,"title":"混合检索规范.pdf","kind":"file","snippet":"128 维向量混合检索","score":0.91}],"mode":"llm","model":"gpt-4o-mini","retrieval":"hybrid"}\n\n',
+      'event: delta\ndata: {"text":"系统支持 "}\n\n',
+      'event: delta\ndata: {"text":"混合向量检索 [1]。"}\n\n',
+      'event: done\ndata: {"answer":"系统支持 混合向量检索 [1]。","citations":[{"docId":12,"title":"混合检索规范.pdf","kind":"file","snippet":"128 维向量混合检索","score":0.91}],"mode":"llm","model":"gpt-4o-mini","retrieval":"hybrid"}\n\n',
+    ].join("");
+
+    // Split bytes awkwardly mid-frame and mid-UTF-8 multibyte character to verify streaming buffer assembly.
+    const fullBytes = encoder.encode(ssePayload);
+    const cuts = [0, 41, 130, 211, fullBytes.length];
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (let i = 0; i < cuts.length - 1; i++) {
+          controller.enqueue(fullBytes.slice(cuts[i], cuts[i + 1]));
+        }
+        controller.close();
+      },
+    });
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream; charset=utf-8" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const events: string[] = [];
+    const deltas: string[] = [];
+    let gotCitations = 0;
+    const done = await askWorkspaceStream(
+      { question: "介绍混合检索", workspaceId: 5 },
+      {
+        onCitations: (meta) => {
+          events.push("citations");
+          gotCitations = meta.citations.length;
+          expect(meta.mode).toBe("llm");
+          expect(meta.retrieval).toBe("hybrid");
+        },
+        onDelta: (text) => {
+          events.push("delta");
+          deltas.push(text);
+        },
+        onDone: (res) => {
+          events.push("done");
+          expect(res.retrieval).toBe("hybrid");
+        },
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/ai/workspace-ask/stream");
+    expect(gotCitations).toBe(1);
+    expect(events).toEqual(["citations", "delta", "delta", "done"]);
+    expect(deltas.join("")).toBe("系统支持 混合向量检索 [1]。");
+    expect(done.answer).toBe("系统支持 混合向量检索 [1]。");
+    expect(done.citations[0].docId).toBe(12);
+    expect(done.citations[0].kind).toBe("file");
+  });
+
+  it("falls back automatically to /api/ai/ask-workspace when stream endpoint returns 404", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        headers: new Headers(),
+        json: async () => ({ error: "not_found" }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "Content-Type": "application/json" }),
+        json: async () => ({
+          answer: "降级模式返回结果 [1]",
+          citations: [{ docId: 99, title: "附件手册.docx", kind: "doc", snippet: "摘要", score: 0.77 }],
+          mode: "local",
+          model: "built-in-rag",
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const receivedDeltas: string[] = [];
+    let citationCount = 0;
+    const res = await askWorkspaceStream(
+      { question: "查看附件手册" },
+      {
+        onCitations: (m) => {
+          citationCount = m.citations.length;
+        },
+        onDelta: (t) => receivedDeltas.push(t),
+      },
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0][0]).toBe("/api/ai/workspace-ask/stream");
+    expect(fetchMock.mock.calls[1][0]).toBe("/api/ai/ask-workspace");
+    expect(citationCount).toBe(1);
+    expect(receivedDeltas).toEqual(["降级模式返回结果 [1]"]);
+    expect(res.answer).toBe("降级模式返回结果 [1]");
+  });
+
+  it("renders live streaming bubble with immediate citations and blinking cursor", () => {
+    const turns: WorkspaceAiTurn[] = [
+      { id: "u1", role: "user", content: "总结架构附件" },
+      {
+        id: "a1",
+        role: "assistant",
+        content: "正在流式输出架构摘要 [1]",
+        streaming: true,
+        mode: "llm",
+        model: "gpt-4o-mini",
+        citations: [
+          { docId: 12, title: "架构白皮书.pdf", kind: "file", snippet: "混合检索与流式响应", score: 0.88 },
+        ],
+      },
+    ];
+    const html = renderToStaticMarkup(
+      <WorkspaceAiDialog open onClose={() => {}} initialTurns={turns} initialMode="llm" initialModel="gpt-4o-mini" />,
+    );
+    expect(html).toContain('data-workspace-ai-streaming="true"');
+    expect(html).toContain("data-workspace-ai-cursor");
+    expect(html).toContain('data-ai-citation-id="12"');
+    expect(html).toContain("架构白皮书.pdf");
+    expect(parseSseEventBlock("event: delta\ndata: {\"text\":\"hi\"}")).toEqual({
+      event: "delta",
+      data: '{"text":"hi"}',
+    });
   });
 });

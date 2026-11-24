@@ -1,6 +1,6 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, FileUp, KeyRound, Play, Plus, RefreshCw, ShieldAlert, Sparkles, Trash2 } from "lucide-react";
+import { Check, CloudDownload, Copy, FileUp, KeyRound, Play, Plus, RefreshCw, Settings2, ShieldAlert, Sparkles, Trash2 } from "lucide-react";
 import {
   ApiError,
   orgSyncApi,
@@ -9,9 +9,16 @@ import {
   type OrgSyncGroupInput,
   type OrgSyncMemberInput,
   type OrgSyncProvider,
-  type OrgSyncRun,
-  type OrgSyncSource,
 } from "@/lib/api";
+import {
+  isPullConnectorProvider,
+  pullOrgSync,
+  saveConnectorConfig,
+  type OrgConnectorConfig,
+  type OrgSyncPullFetched,
+  type OrgSyncRunExtended,
+  type OrgSyncSourceExtended,
+} from "@/lib/org-sync-pull-api";
 import { ask } from "@/components/ui/ask";
 import { FeishuSelect } from "@/components/feishu-select";
 import { useI18n } from "@/lib/i18n";
@@ -25,11 +32,27 @@ const PROVIDER_LABELS: Record<OrgSyncProvider, string> = {
   custom: "自定义 Webhook",
 };
 
-const TRIGGER_LABELS: Record<OrgSyncRun["triggerMode"], string> = {
+const TRIGGER_LABELS: Record<string, string> = {
   manual: "手动导入",
   push: "Webhook 推送",
   scim: "SCIM 2.0",
+  pull: "主动拉取",
+  scheduled: "定时同步",
 };
+
+const SYNC_INTERVAL_OPTIONS = [
+  { value: "0", label: "关闭" },
+  { value: "30", label: "每 30 分钟" },
+  { value: "60", label: "每小时" },
+  { value: "360", label: "每 6 小时" },
+  { value: "1440", label: "每 24 小时" },
+] as const;
+
+function intervalLabel(minutes?: number): string {
+  const m = String(minutes ?? 0);
+  const found = SYNC_INTERVAL_OPTIONS.find((opt) => opt.value === m);
+  return found ? found.label : `${minutes} min`;
+}
 
 export const SAMPLE_ORG_DIRECTORY_CSV = [
   "部门路径,姓名,邮箱,角色,用户组,负责人",
@@ -286,8 +309,29 @@ export function OrgSyncPanel({
   const [format, setFormat] = useState<"csv" | "json">("csv");
   const [rawInput, setRawInput] = useState("");
   const [overridePrune, setOverridePrune] = useState(false);
-  const [previewRun, setPreviewRun] = useState<OrgSyncRun | null>(null);
+  const [previewRun, setPreviewRun] = useState<OrgSyncRunExtended | null>(null);
+  const [pullFetched, setPullFetched] = useState<OrgSyncPullFetched | null>(null);
   const [parseWarnings, setParseWarnings] = useState<string[]>([]);
+
+  // Active Directory Pull Connector form state
+  const [connectorFormOpen, setConnectorFormOpen] = useState(true);
+  const [editedConnectorSourceId, setEditedConnectorSourceId] = useState<number | null>(null);
+  const [connEndpointUrl, setConnEndpointUrl] = useState("");
+  const [connInterval, setConnInterval] = useState("0");
+  const [ldapBindDn, setLdapBindDn] = useState("");
+  const [ldapBindPassword, setLdapBindPassword] = useState("");
+  const [ldapBaseDn, setLdapBaseDn] = useState("");
+  const [ldapUserFilter, setLdapUserFilter] = useState("(objectClass=inetOrgPerson)");
+  const [ldapDeptFilter, setLdapDeptFilter] = useState("(objectClass=organizationalUnit)");
+  const [ldapEmailAttr, setLdapEmailAttr] = useState("mail");
+  const [ldapNameAttr, setLdapNameAttr] = useState("cn");
+  const [ldapDeptAttr, setLdapDeptAttr] = useState("ou");
+  const [ldapInsecureSkipVerify, setLdapInsecureSkipVerify] = useState(false);
+  const [wecomCorpId, setWecomCorpId] = useState("");
+  const [wecomCorpSecret, setWecomCorpSecret] = useState("");
+  const [dingAppKey, setDingAppKey] = useState("");
+  const [dingAppSecret, setDingAppSecret] = useState("");
+  const [rootDeptId, setRootDeptId] = useState("1");
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -302,13 +346,32 @@ export function OrgSyncPanel({
     enabled: canAdmin && workspaceId > 0,
   });
 
-  const sources = syncQuery.data?.sources ?? [];
-  const runs = syncQuery.data?.runs ?? [];
+  const sources = (syncQuery.data?.sources ?? []) as OrgSyncSourceExtended[];
+  const runs = (syncQuery.data?.runs ?? []) as OrgSyncRunExtended[];
 
-  const activeSource: OrgSyncSource | null = useMemo(() => {
+  const activeSource: OrgSyncSourceExtended | null = useMemo(() => {
     if (!sources.length) return null;
     return sources.find((s) => s.id === selectedSourceId) ?? sources[0];
   }, [sources, selectedSourceId]);
+
+  const effectiveEndpointUrl =
+    editedConnectorSourceId === activeSource?.id
+      ? connEndpointUrl
+      : (activeSource?.endpointUrl ?? "");
+  const effectiveInterval =
+    editedConnectorSourceId === activeSource?.id
+      ? connInterval
+      : String(activeSource?.syncIntervalMinutes ?? 0);
+
+  useEffect(() => {
+    if (!activeSource) return;
+    setEditedConnectorSourceId(null);
+    setConnEndpointUrl(activeSource.endpointUrl ?? "");
+    setConnInterval(String(activeSource.syncIntervalMinutes ?? 0));
+    setLdapBindPassword("");
+    setWecomCorpSecret("");
+    setDingAppSecret("");
+  }, [activeSource?.id, activeSource?.endpointUrl, activeSource?.syncIntervalMinutes]);
 
   const origin = typeof window !== "undefined" ? window.location.origin : "https://your-jiange.example";
 
@@ -376,6 +439,7 @@ export function OrgSyncPanel({
     void withFeedback(async () => {
       const payload = buildPayload(dryRun);
       const run = await orgSyncApi.run(workspaceId, activeSource.id, userId, payload);
+      setPullFetched(null);
       setPreviewRun(run);
       await qc.invalidateQueries({ queryKey: syncQueryKey });
       if (!dryRun) {
@@ -383,6 +447,109 @@ export function OrgSyncPanel({
         return t("目录同步已完成，部门、用户组与成员邀请已生效");
       }
       return t("差异预演完成（未修改现有组织数据）");
+    });
+  };
+
+  const handleSaveConnector = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!activeSource || !isPullConnectorProvider(activeSource.provider)) return;
+    void withFeedback(async () => {
+      const intervalNum = Number(effectiveInterval) || 0;
+      const parsedRootDept = Math.max(1, Number.parseInt(rootDeptId, 10) || 1);
+      const trimmedEndpoint = effectiveEndpointUrl.trim();
+
+      let connectorConfig: OrgConnectorConfig | undefined;
+      if (activeSource.provider === "ldap") {
+        const hasCredInput = Boolean(
+          ldapBindDn.trim() ||
+            ldapBindPassword ||
+            ldapBaseDn.trim() ||
+            !activeSource.hasConnectorConfig,
+        );
+        if (hasCredInput) {
+          connectorConfig = {
+            endpointUrl: trimmedEndpoint || undefined,
+            bindDn: ldapBindDn.trim(),
+            ...(ldapBindPassword ? { bindPassword: ldapBindPassword } : {}),
+            baseDn: ldapBaseDn.trim(),
+            userFilter: ldapUserFilter.trim() || undefined,
+            deptFilter: ldapDeptFilter.trim() || undefined,
+            emailAttr: ldapEmailAttr.trim() || undefined,
+            nameAttr: ldapNameAttr.trim() || undefined,
+            deptAttr: ldapDeptAttr.trim() || undefined,
+            insecureSkipVerify: ldapInsecureSkipVerify,
+          };
+        }
+      } else if (activeSource.provider === "wecom") {
+        const hasCredInput = Boolean(
+          wecomCorpId.trim() || wecomCorpSecret || !activeSource.hasConnectorConfig,
+        );
+        if (hasCredInput) {
+          connectorConfig = {
+            endpointUrl: trimmedEndpoint || undefined,
+            corpId: wecomCorpId.trim(),
+            ...(wecomCorpSecret ? { corpSecret: wecomCorpSecret } : {}),
+            rootDeptId: parsedRootDept,
+          };
+        }
+      } else if (activeSource.provider === "dingtalk") {
+        const hasCredInput = Boolean(
+          dingAppKey.trim() || dingAppSecret || !activeSource.hasConnectorConfig,
+        );
+        if (hasCredInput) {
+          connectorConfig = {
+            endpointUrl: trimmedEndpoint || undefined,
+            appKey: dingAppKey.trim(),
+            ...(dingAppSecret ? { appSecret: dingAppSecret } : {}),
+            rootDeptId: parsedRootDept,
+          };
+        }
+      }
+
+      await saveConnectorConfig(
+        workspaceId,
+        activeSource.id,
+        {
+          endpointUrl: trimmedEndpoint,
+          syncIntervalMinutes: intervalNum,
+          ...(connectorConfig ? { connectorConfig } : {}),
+        },
+        userId,
+      );
+      setLdapBindPassword("");
+      setWecomCorpSecret("");
+      setDingAppSecret("");
+      await qc.invalidateQueries({ queryKey: syncQueryKey });
+      return t("连接器配置已保存");
+    });
+  };
+
+  const handlePullSync = (dryRun: boolean) => {
+    if (!activeSource || !isPullConnectorProvider(activeSource.provider)) return;
+    void withFeedback(async () => {
+      const result = await pullOrgSync(
+        workspaceId,
+        activeSource.id,
+        dryRun,
+        userId,
+        overridePrune ? true : undefined,
+      );
+      setPullFetched(result.fetched);
+      setPreviewRun(result.run);
+      await qc.invalidateQueries({ queryKey: syncQueryKey });
+      if (!dryRun) {
+        await qc.invalidateQueries({ queryKey: orgQueryKey });
+        return t("主动拉取同步完成（拉取 {departments} 个部门、{groups} 个用户组、{members} 名成员）", {
+          departments: result.fetched.departments,
+          groups: result.fetched.groups,
+          members: result.fetched.members,
+        });
+      }
+      return t("主动拉取预演完成（拉取 {departments} 个部门、{groups} 个用户组、{members} 名成员，未修改现有组织数据）", {
+        departments: result.fetched.departments,
+        groups: result.fetched.groups,
+        members: result.fetched.members,
+      });
     });
   };
 
@@ -562,6 +729,7 @@ export function OrgSyncPanel({
                     onClick={() => {
                       setSelectedSourceId(src.id);
                       setPreviewRun(null);
+                      setPullFetched(null);
                     }}
                     className="min-w-0 flex-1 text-left"
                   >
@@ -578,6 +746,23 @@ export function OrgSyncPanel({
                       >
                         {src.enabled ? t("已启用") : t("已停用")}
                       </span>
+                      {isPullConnectorProvider(src.provider) && (
+                        <span
+                          className={cn(
+                            "rounded border px-1.5 py-0.5 text-[11px]",
+                            src.hasConnectorConfig
+                              ? "border-primary/30 text-primary"
+                              : "text-subtle",
+                          )}
+                        >
+                          {src.hasConnectorConfig ? t("已配置拉取凭证") : t("未配置拉取凭证")}
+                        </span>
+                      )}
+                      {isPullConnectorProvider(src.provider) && (src.syncIntervalMinutes ?? 0) > 0 && (
+                        <span className="rounded border px-1.5 py-0.5 text-[11px] text-subtle">
+                          {t("定时：{interval}", { interval: t(intervalLabel(src.syncIntervalMinutes)) })}
+                        </span>
+                      )}
                       {src.autoInviteMissing && (
                         <span className="rounded border px-1.5 py-0.5 text-[11px] text-subtle">{t("自动邀请")}</span>
                       )}
@@ -650,6 +835,342 @@ export function OrgSyncPanel({
           )}
         </div>
       </section>
+
+      {/* Active Directory Pull Connector (LDAP / WeCom / DingTalk) */}
+      {activeSource && isPullConnectorProvider(activeSource.provider) && (
+        <section
+          className="rounded-lg border bg-surface p-4"
+          data-org-sync-connector-section
+          data-connector-provider={activeSource.provider}
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2 border-b pb-3">
+            <div className="min-w-0">
+              <h3 className="truncate text-[15px] font-semibold">
+                {t("主动目录拉取连接器")} · {activeSource.name}
+              </h3>
+              <p className="mt-0.5 text-[12px] text-subtle">
+                {t("配置 LDAP / 企业微信 / 钉钉连接凭证后，支持一键拉取目录架构与成员，或按计划自动同步。")}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button
+                type="button"
+                data-org-sync-config-toggle
+                onClick={() => setConnectorFormOpen((v) => !v)}
+                className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[12px] hover:bg-hover"
+              >
+                <Settings2 size={13} />
+                {connectorFormOpen ? t("收起配置") : t("配置连接器")}
+              </button>
+              <button
+                type="button"
+                disabled={busy || !activeSource.hasConnectorConfig}
+                data-org-sync-pull-dry-run
+                onClick={() => handlePullSync(true)}
+                className="inline-flex h-8 items-center gap-1 rounded-md border px-2.5 text-[12px] font-medium hover:bg-hover disabled:opacity-50"
+              >
+                {t("预览拉取 (Dry-Run)")}
+              </button>
+              <button
+                type="button"
+                disabled={busy || !activeSource.hasConnectorConfig}
+                data-org-sync-pull
+                onClick={() => handlePullSync(false)}
+                className="inline-flex h-8 items-center gap-1 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+              >
+                <CloudDownload size={13} />
+                {t("立即拉取同步")}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-subtle">
+            {activeSource.hasConnectorConfig ? (
+              <>
+                <span>
+                  {t("当前凭证摘要：")}
+                  <code className="font-mono text-foreground">{activeSource.connectorConfigHint || "****"}</code>
+                </span>
+                {activeSource.lastAutoSyncAt && (
+                  <span>
+                    {t("上次自动同步：")}
+                    {new Date(activeSource.lastAutoSyncAt).toLocaleString()}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span>{t("尚未保存连接器凭证，请先填写下方配置并保存。")}</span>
+            )}
+          </div>
+
+          {pullFetched && (
+            <div
+              data-org-sync-pull-fetched
+              className="mt-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-[12px] text-primary"
+            >
+              {t("最近拉取统计：共拉取 {departments} 个部门、{groups} 个用户组、{members} 名成员", {
+                departments: pullFetched.departments,
+                groups: pullFetched.groups,
+                members: pullFetched.members,
+              })}
+            </div>
+          )}
+
+          {connectorFormOpen && (
+            <form
+              data-org-sync-connector-form
+              onSubmit={handleSaveConnector}
+              className="mt-3 space-y-3 rounded-md border bg-canvas p-3.5"
+            >
+              {activeSource.provider === "ldap" && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("LDAP 服务地址")}</span>
+                    <input
+                      type="text"
+                      value={effectiveEndpointUrl}
+                      onChange={(e) => {
+                        setEditedConnectorSourceId(activeSource.id);
+                        setConnEndpointUrl(e.target.value);
+                        setConnInterval(effectiveInterval);
+                      }}
+                      placeholder="ldaps://ad.example.com:636"
+                      data-connector-endpoint
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("Base DN")}</span>
+                    <input
+                      type="text"
+                      value={ldapBaseDn}
+                      onChange={(e) => setLdapBaseDn(e.target.value)}
+                      placeholder="dc=example,dc=com"
+                      data-connector-ldap-base-dn
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("Bind DN")}</span>
+                    <input
+                      type="text"
+                      value={ldapBindDn}
+                      onChange={(e) => setLdapBindDn(e.target.value)}
+                      placeholder="cn=readonly,dc=example,dc=com"
+                      data-connector-ldap-bind-dn
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("Bind 密码")}</span>
+                    <input
+                      type="password"
+                      value={ldapBindPassword}
+                      onChange={(e) => setLdapBindPassword(e.target.value)}
+                      placeholder={activeSource.hasConnectorConfig ? t("留空则保持已保存密钥不变") : "••••••••"}
+                      data-connector-ldap-bind-password
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("用户过滤条件")}</span>
+                    <input
+                      type="text"
+                      value={ldapUserFilter}
+                      onChange={(e) => setLdapUserFilter(e.target.value)}
+                      placeholder="(objectClass=inetOrgPerson)"
+                      data-connector-ldap-user-filter
+                      className="h-9 w-full rounded-md border bg-surface px-3 font-mono text-[12px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("部门过滤条件")}</span>
+                    <input
+                      type="text"
+                      value={ldapDeptFilter}
+                      onChange={(e) => setLdapDeptFilter(e.target.value)}
+                      placeholder="(objectClass=organizationalUnit)"
+                      data-connector-ldap-dept-filter
+                      className="h-9 w-full rounded-md border bg-surface px-3 font-mono text-[12px]"
+                    />
+                  </label>
+                  <div className="grid grid-cols-3 gap-2 sm:col-span-2">
+                    <label className="block space-y-1 text-[12px]">
+                      <span className="font-medium text-muted-foreground">{t("邮箱属性")}</span>
+                      <input
+                        type="text"
+                        value={ldapEmailAttr}
+                        onChange={(e) => setLdapEmailAttr(e.target.value)}
+                        className="h-9 w-full rounded-md border bg-surface px-2.5 font-mono text-[12px]"
+                      />
+                    </label>
+                    <label className="block space-y-1 text-[12px]">
+                      <span className="font-medium text-muted-foreground">{t("姓名属性")}</span>
+                      <input
+                        type="text"
+                        value={ldapNameAttr}
+                        onChange={(e) => setLdapNameAttr(e.target.value)}
+                        className="h-9 w-full rounded-md border bg-surface px-2.5 font-mono text-[12px]"
+                      />
+                    </label>
+                    <label className="block space-y-1 text-[12px]">
+                      <span className="font-medium text-muted-foreground">{t("部门属性")}</span>
+                      <input
+                        type="text"
+                        value={ldapDeptAttr}
+                        onChange={(e) => setLdapDeptAttr(e.target.value)}
+                        className="h-9 w-full rounded-md border bg-surface px-2.5 font-mono text-[12px]"
+                      />
+                    </label>
+                  </div>
+                  <label className="inline-flex items-center gap-1.5 text-[12px] text-muted-foreground sm:col-span-2">
+                    <input
+                      type="checkbox"
+                      checked={ldapInsecureSkipVerify}
+                      onChange={(e) => setLdapInsecureSkipVerify(e.target.checked)}
+                    />
+                    {t("跳过自签名 LDAPS 证书校验（仅限内网受信目录）")}
+                  </label>
+                </div>
+              )}
+
+              {activeSource.provider === "wecom" && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("企业微信 API 地址")}</span>
+                    <input
+                      type="text"
+                      value={effectiveEndpointUrl}
+                      onChange={(e) => {
+                        setEditedConnectorSourceId(activeSource.id);
+                        setConnEndpointUrl(e.target.value);
+                        setConnInterval(effectiveInterval);
+                      }}
+                      placeholder="https://qyapi.weixin.qq.com"
+                      data-connector-endpoint
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("根部门 ID")}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={rootDeptId}
+                      onChange={(e) => setRootDeptId(e.target.value)}
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("企业 ID (CorpID)")}</span>
+                    <input
+                      type="text"
+                      value={wecomCorpId}
+                      onChange={(e) => setWecomCorpId(e.target.value)}
+                      placeholder="ww1234567890abcdef"
+                      data-connector-wecom-corpid
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("通讯录 Secret (CorpSecret)")}</span>
+                    <input
+                      type="password"
+                      value={wecomCorpSecret}
+                      onChange={(e) => setWecomCorpSecret(e.target.value)}
+                      placeholder={activeSource.hasConnectorConfig ? t("留空则保持已保存密钥不变") : "••••••••"}
+                      data-connector-wecom-secret
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                </div>
+              )}
+
+              {activeSource.provider === "dingtalk" && (
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("钉钉开放平台地址")}</span>
+                    <input
+                      type="text"
+                      value={effectiveEndpointUrl}
+                      onChange={(e) => {
+                        setEditedConnectorSourceId(activeSource.id);
+                        setConnEndpointUrl(e.target.value);
+                        setConnInterval(effectiveInterval);
+                      }}
+                      placeholder="https://oapi.dingtalk.com"
+                      data-connector-endpoint
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("根部门 ID")}</span>
+                    <input
+                      type="number"
+                      min={1}
+                      value={rootDeptId}
+                      onChange={(e) => setRootDeptId(e.target.value)}
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("应用 AppKey")}</span>
+                    <input
+                      type="text"
+                      value={dingAppKey}
+                      onChange={(e) => setDingAppKey(e.target.value)}
+                      placeholder="dingxxxxxxxx"
+                      data-connector-dingtalk-appkey
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                  <label className="block space-y-1 text-[12px]">
+                    <span className="font-medium text-muted-foreground">{t("应用 AppSecret")}</span>
+                    <input
+                      type="password"
+                      value={dingAppSecret}
+                      onChange={(e) => setDingAppSecret(e.target.value)}
+                      placeholder={activeSource.hasConnectorConfig ? t("留空则保持已保存密钥不变") : "••••••••"}
+                      data-connector-dingtalk-secret
+                      className="h-9 w-full rounded-md border bg-surface px-3 text-[13px]"
+                    />
+                  </label>
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+                <div className="flex items-center gap-2 text-[12px]">
+                  <span className="font-medium text-muted-foreground">{t("定时自动同步频率")}</span>
+                  <FeishuSelect
+                    ariaLabel={t("定时自动同步频率")}
+                    value={effectiveInterval}
+                    options={SYNC_INTERVAL_OPTIONS.map((opt) => ({
+                      value: opt.value,
+                      label: t(opt.label),
+                    }))}
+                    onChange={(val) => {
+                      setEditedConnectorSourceId(activeSource.id);
+                      setConnEndpointUrl(effectiveEndpointUrl);
+                      setConnInterval(val);
+                    }}
+                    dataAttr={{ "data-org-sync-interval-select": true }}
+                    className="h-8 border bg-surface px-2.5 text-[12px]"
+                    menuMinWidth={140}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  disabled={busy}
+                  data-org-sync-save-connector
+                  className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
+                >
+                  {t("保存连接器配置")}
+                </button>
+              </div>
+            </form>
+          )}
+        </section>
+      )}
 
       {/* Manual Snapshot Import & Dry-Run */}
       {activeSource && (

@@ -215,7 +215,15 @@ func (s *Server) searchMaterializedFiltered(ctx context.Context, uid int64, quer
 	}
 	// Recheck every candidate's grant and title. A rename may have happened
 	// since enumeration, even for a candidate whose old title didn't match.
-	checked := make([]store.DocMeta, 0)
+	type verifiedCandidate struct {
+		fresh   store.DocMeta
+		matched bool
+	}
+	verified := make([]verifiedCandidate, 0, len(scanned))
+	unmatchedForAttachment := make([]int64, 0)
+	attStore, hasAttStore := s.Store.(store.AttachmentTextStore)
+	fold := cases.Fold()
+
 	for _, scan := range scanned {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -239,9 +247,50 @@ func (s *Server) searchMaterializedFiltered(ctx context.Context, uid int64, quer
 		if filters.UpdatedTo != nil && !fresh.UpdatedAt.Before(*filters.UpdatedTo) {
 			continue
 		}
-		if needle != "" && !scan.bodyMatch && !strings.Contains(cases.Fold().String(fresh.Title), needle) {
+		if fresh.WorkspaceName == "" {
+			fresh.WorkspaceName = scan.meta.WorkspaceName
+		}
+		directMatch := needle == "" || scan.bodyMatch || strings.Contains(fold.String(fresh.Title), needle)
+		if !directMatch {
+			if !hasAttStore {
+				continue
+			}
+			// Never leak attachment text on restricted bases where locked views hide rows/fields.
+			if fresh.Kind == "base" {
+				restricted, rErr := s.baseRestricted(ctx, fresh)
+				if rErr != nil {
+					if errors.Is(rErr, store.ErrNotFound) {
+						continue
+					}
+					return nil, rErr
+				}
+				if restricted {
+					continue
+				}
+			}
+			unmatchedForAttachment = append(unmatchedForAttachment, fresh.ID)
+		}
+		verified = append(verified, verifiedCandidate{fresh: fresh, matched: directMatch})
+	}
+
+	var attachmentHits map[int64]bool
+	if needle != "" && hasAttStore && len(unmatchedForAttachment) > 0 {
+		var attErr error
+		attachmentHits, attErr = attStore.SearchAttachmentDocIDs(ctx, unmatchedForAttachment, needle)
+		if attErr != nil {
+			return nil, attErr
+		}
+	}
+
+	checked := make([]store.DocMeta, 0, len(verified))
+	for _, vc := range verified {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if !vc.matched && !attachmentHits[vc.fresh.ID] {
 			continue
 		}
+		fresh := vc.fresh
 		if filters.FolderID > 0 {
 			if fresh.ID == filters.FolderID {
 				continue
@@ -256,9 +305,6 @@ func (s *Server) searchMaterializedFiltered(ctx context.Context, uid int64, quer
 			if !inFolder {
 				continue
 			}
-		}
-		if fresh.WorkspaceName == "" {
-			fresh.WorkspaceName = scan.meta.WorkspaceName
 		}
 		checked = append(checked, fresh)
 	}

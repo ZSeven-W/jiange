@@ -45,12 +45,13 @@ const (
 // ErrInvalidSecurityPolicy reports invalid DLP or data-retention policy values.
 var ErrInvalidSecurityPolicy = fmt.Errorf("store: invalid workspace security policy: %w", ErrConflict)
 
-// memEnterprise holds in-memory audit logs and workspace security policies for Memory store.
+// memEnterprise holds in-memory audit logs, workspace security policies, and passkey state for Memory store.
 type memEnterprise struct {
 	nextAuditID    int64
 	auditLogs      []AuditLogEntry
 	policies       map[int64]WorkspaceSecurityPolicy
 	trashDeletedAt map[int64]time.Time
+	passkeys       memPasskeys
 }
 
 // AuditLogEntry records a security-relevant event inside a workspace.
@@ -108,6 +109,7 @@ type WorkspaceSecurityPolicy struct {
 	DLPAction           string    `json:"dlpAction"`
 	DLPBlockPublicShare bool      `json:"dlpBlockPublicShare"`
 	RetentionDays       int       `json:"retentionDays"`
+	RequireMFA          bool      `json:"requireMfa"`
 	UpdatedBy           int64     `json:"updatedBy"`
 	UpdatedAt           time.Time `json:"updatedAt"`
 }
@@ -125,6 +127,7 @@ type WorkspaceSecurityPolicyPatch struct {
 	DLPAction           *string   `json:"dlpAction,omitempty"`
 	DLPBlockPublicShare *bool     `json:"dlpBlockPublicShare,omitempty"`
 	RetentionDays       *int      `json:"retentionDays,omitempty"`
+	RequireMFA          *bool     `json:"requireMfa,omitempty"`
 }
 
 // RetentionPurgeStats summarizes one workspace data-retention cleanup run.
@@ -142,6 +145,7 @@ type AuditLogStore interface {
 	ListAuditLogsGuarded(ctx context.Context, guard RestoreGuard, wsID int64, filter AuditLogFilter) (AuditLogPage, error)
 	GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID int64) (WorkspaceSecurityPolicy, error)
 	UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard RestoreGuard, wsID int64, patch WorkspaceSecurityPolicyPatch) (WorkspaceSecurityPolicy, error)
+	UserHasMFARequiredWorkspace(ctx context.Context, userID int64) (bool, []string, error)
 	ListRetentionPolicies(ctx context.Context) ([]WorkspaceSecurityPolicy, error)
 	PurgeExpiredRetentionData(ctx context.Context, workspaceID int64, cutoff time.Time) (purgedAuditLogs int64, purgedTrashNodes int64, err error)
 }
@@ -167,6 +171,7 @@ func DefaultWorkspaceSecurityPolicy(wsID int64) WorkspaceSecurityPolicy {
 		DLPAction:           DLPActionWarn,
 		DLPBlockPublicShare: true,
 		RetentionDays:       0,
+		RequireMFA:          false,
 	}
 }
 
@@ -370,6 +375,9 @@ func applySecurityPolicyPatch(base WorkspaceSecurityPolicy, patch WorkspaceSecur
 		}
 		out.RetentionDays = *patch.RetentionDays
 	}
+	if patch.RequireMFA != nil {
+		out.RequireMFA = *patch.RequireMFA
+	}
 	out.UpdatedBy = updatedBy
 	out.UpdatedAt = now.UTC()
 	return cloneSecurityPolicy(out), nil
@@ -557,6 +565,42 @@ func (m *Memory) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard
 	}
 	m.enterprise.policies[wsID] = cloneSecurityPolicy(next)
 	return cloneSecurityPolicy(next), nil
+}
+
+// UserHasMFARequiredWorkspace reports whether any workspace the user belongs to
+// enforces MFA (require_mfa = true) and returns the names of those workspaces.
+func (m *Memory) UserHasMFARequiredWorkspace(ctx context.Context, userID int64) (bool, []string, error) {
+	if err := ctx.Err(); err != nil {
+		return false, nil, err
+	}
+	if userID <= 0 {
+		return false, []string{}, nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	wsIDs := m.members[userID]
+	if len(wsIDs) == 0 || len(m.enterprise.policies) == 0 {
+		return false, []string{}, nil
+	}
+	seen := make(map[int64]struct{}, len(wsIDs))
+	matchedIDs := make([]int64, 0, len(wsIDs))
+	for _, wsID := range wsIDs {
+		if _, dup := seen[wsID]; dup {
+			continue
+		}
+		seen[wsID] = struct{}{}
+		if p, ok := m.enterprise.policies[wsID]; ok && p.RequireMFA {
+			if wsID > 0 && int(wsID) <= len(m.workspaces) {
+				matchedIDs = append(matchedIDs, wsID)
+			}
+		}
+	}
+	sort.Slice(matchedIDs, func(i, j int) bool { return matchedIDs[i] < matchedIDs[j] })
+	names := make([]string, 0, len(matchedIDs))
+	for _, wsID := range matchedIDs {
+		names = append(names, m.workspaces[wsID-1].Name)
+	}
+	return len(names) > 0, names, nil
 }
 
 // SetMemoryNodeDeletedAt sets an explicit deletion timestamp on a node in Memory store
@@ -827,13 +871,13 @@ func (p *Postgres) GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID 
 		var pol WorkspaceSecurityPolicy
 		e := tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
-			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
+			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days, require_mfa,
 			COALESCE(updated_by, 0), updated_at
 			FROM workspace_security_policies WHERE workspace_id=$1`, wsID).Scan(
 			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
 			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
 			&pol.WatermarkOpacity,
-			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays,
+			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays, &pol.RequireMFA,
 			&pol.UpdatedBy, &pol.UpdatedAt,
 		)
 		if errors.Is(e, pgx.ErrNoRows) {
@@ -866,13 +910,13 @@ func (p *Postgres) GetWorkspaceSecurityPolicySystem(ctx context.Context, wsID in
 		var pol WorkspaceSecurityPolicy
 		e := tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
-			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
+			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days, require_mfa,
 			COALESCE(updated_by, 0), updated_at
 			FROM workspace_security_policies WHERE workspace_id=$1`, wsID).Scan(
 			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
 			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
 			&pol.WatermarkOpacity,
-			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays,
+			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays, &pol.RequireMFA,
 			&pol.UpdatedBy, &pol.UpdatedAt,
 		)
 		if errors.Is(e, pgx.ErrNoRows) {
@@ -900,13 +944,13 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 		cur := DefaultWorkspaceSecurityPolicy(wsID)
 		e = tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
-			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
+			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days, require_mfa,
 			COALESCE(updated_by, 0), updated_at
 			FROM workspace_security_policies WHERE workspace_id=$1 FOR UPDATE`, wsID).Scan(
 			&cur.WorkspaceID, &cur.WatermarkEnabled, &cur.WatermarkText,
 			&cur.WatermarkShowUser, &cur.WatermarkShowEmail, &cur.WatermarkShowDate,
 			&cur.WatermarkOpacity,
-			&cur.DLPEnabled, &cur.DLPKeywords, &cur.DLPAction, &cur.DLPBlockPublicShare, &cur.RetentionDays,
+			&cur.DLPEnabled, &cur.DLPKeywords, &cur.DLPAction, &cur.DLPBlockPublicShare, &cur.RetentionDays, &cur.RequireMFA,
 			&cur.UpdatedBy, &cur.UpdatedAt,
 		)
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
@@ -921,8 +965,8 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 			workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date,
 			watermark_opacity, dlp_enabled, dlp_keywords, dlp_action,
-			dlp_block_public_share, retention_days, updated_by, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+			dlp_block_public_share, retention_days, require_mfa, updated_by, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
 		ON CONFLICT (workspace_id) DO UPDATE SET
 			watermark_enabled      = EXCLUDED.watermark_enabled,
 			watermark_text         = EXCLUDED.watermark_text,
@@ -935,12 +979,13 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 			dlp_action             = EXCLUDED.dlp_action,
 			dlp_block_public_share = EXCLUDED.dlp_block_public_share,
 			retention_days         = EXCLUDED.retention_days,
+			require_mfa            = EXCLUDED.require_mfa,
 			updated_by             = EXCLUDED.updated_by,
 			updated_at             = EXCLUDED.updated_at
 		RETURNING workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date,
 			watermark_opacity, dlp_enabled, dlp_keywords, dlp_action,
-			dlp_block_public_share, retention_days, COALESCE(updated_by, 0), updated_at`,
+			dlp_block_public_share, retention_days, require_mfa, COALESCE(updated_by, 0), updated_at`,
 			next.WorkspaceID,
 			next.WatermarkEnabled,
 			next.WatermarkText,
@@ -953,13 +998,14 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 			next.DLPAction,
 			next.DLPBlockPublicShare,
 			next.RetentionDays,
+			next.RequireMFA,
 			nullablePositiveID(next.UpdatedBy),
 			next.UpdatedAt,
 		).Scan(
 			&out.WorkspaceID, &out.WatermarkEnabled, &out.WatermarkText,
 			&out.WatermarkShowUser, &out.WatermarkShowEmail, &out.WatermarkShowDate,
 			&out.WatermarkOpacity,
-			&out.DLPEnabled, &out.DLPKeywords, &out.DLPAction, &out.DLPBlockPublicShare, &out.RetentionDays,
+			&out.DLPEnabled, &out.DLPKeywords, &out.DLPAction, &out.DLPBlockPublicShare, &out.RetentionDays, &out.RequireMFA,
 			&out.UpdatedBy, &out.UpdatedAt,
 		)
 		if e != nil {
@@ -971,11 +1017,39 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 	return out, orgPGError(err)
 }
 
+// UserHasMFARequiredWorkspace reports whether any workspace the user belongs to
+// enforces MFA (require_mfa = true) and returns the names of those workspaces.
+func (p *Postgres) UserHasMFARequiredWorkspace(ctx context.Context, userID int64) (bool, []string, error) {
+	if userID <= 0 {
+		return false, []string{}, nil
+	}
+	rows, err := p.Pool.Query(ctx, `SELECT w.name
+		FROM workspace_members m
+		JOIN workspaces w ON w.id = m.workspace_id
+		JOIN workspace_security_policies p ON p.workspace_id = m.workspace_id
+		WHERE m.user_id = $1 AND p.require_mfa = true
+		ORDER BY w.id ASC`, userID)
+	if err != nil {
+		return false, nil, err
+	}
+	names, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (name string, err error) {
+		err = r.Scan(&name)
+		return
+	})
+	if err != nil {
+		return false, nil, err
+	}
+	if names == nil {
+		names = []string{}
+	}
+	return len(names) > 0, names, nil
+}
+
 // ListRetentionPolicies returns all workspace security policies with retention_days > 0.
 func (p *Postgres) ListRetentionPolicies(ctx context.Context) ([]WorkspaceSecurityPolicy, error) {
 	rows, err := p.Pool.Query(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
 		watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
-		dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
+		dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days, require_mfa,
 		COALESCE(updated_by, 0), updated_at
 		FROM workspace_security_policies
 		WHERE retention_days > 0
@@ -988,7 +1062,7 @@ func (p *Postgres) ListRetentionPolicies(ctx context.Context) ([]WorkspaceSecuri
 			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
 			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
 			&pol.WatermarkOpacity,
-			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays,
+			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays, &pol.RequireMFA,
 			&pol.UpdatedBy, &pol.UpdatedAt,
 		)
 		if err == nil {

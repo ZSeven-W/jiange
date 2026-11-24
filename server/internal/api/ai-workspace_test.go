@@ -1,19 +1,26 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
+	"math"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/netip"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/ZSeven-W/jiange/server/collab"
+	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 	"github.com/ZSeven-W/jiange/server/internal/syncsrv"
@@ -23,6 +30,7 @@ func newAIWorkspaceTestServer(t *testing.T, mem *store.Memory, secret []byte) (*
 	t.Helper()
 	s := &Server{
 		Store:        mem,
+		Blobs:        blob.NewMemory(),
 		Log:          slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SessionTTL:   time.Hour,
 		Iterations:   1000,
@@ -33,6 +41,7 @@ func newAIWorkspaceTestServer(t *testing.T, mem *store.Memory, secret []byte) (*
 	baseHandler := s.Handler()
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/ai/ask-workspace", s.requireUser(http.HandlerFunc(s.aiAskWorkspace)))
+	mux.Handle("POST /api/ai/workspace-ask/stream", s.requireUser(http.HandlerFunc(s.aiWorkspaceAskStream)))
 	mux.Handle("POST /api/ai/sheet-assist", s.requireUser(http.HandlerFunc(s.aiSheetAssist)))
 	mux.Handle("POST /api/ai/base-fill", s.requireUser(http.HandlerFunc(s.aiBaseFill)))
 	mux.Handle("/", baseHandler)
@@ -79,6 +88,7 @@ func TestAIWorkspaceAuthRequired(t *testing.T) {
 		body any
 	}{
 		{"/api/ai/ask-workspace", map[string]any{"question": "hello"}},
+		{"/api/ai/workspace-ask/stream", map[string]any{"question": "hello"}},
 		{"/api/ai/sheet-assist", map[string]any{"prompt": "求和"}},
 		{"/api/ai/base-fill", map[string]any{"baseId": 1, "preset": "summarize", "rows": []map[string]any{{"recordId": 1, "text": "x"}}}},
 	} {
@@ -479,5 +489,412 @@ func TestAIWorkspaceBaseFillPermissionsLocalAndLLM(t *testing.T) {
 	res.Body.Close()
 	if res.StatusCode != http.StatusOK || llmOut.Mode != "llm" || len(llmOut.Results) != 2 || llmOut.Results[0].Value != "高" {
 		t.Fatalf("base-fill LLM failed: status=%d out=%+v", res.StatusCode, llmOut)
+	}
+}
+
+type parsedSSEFrame struct {
+	Event string
+	Data  string
+}
+
+func readSSEFrames(t *testing.T, r io.Reader) []parsedSSEFrame {
+	t.Helper()
+	var frames []parsedSSEFrame
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	var curEvent string
+	var dataLines []string
+	flush := func() {
+		if curEvent == "" && len(dataLines) == 0 {
+			return
+		}
+		frames = append(frames, parsedSSEFrame{
+			Event: curEvent,
+			Data:  strings.Join(dataLines, "\n"),
+		})
+		curEvent = ""
+		dataLines = nil
+	}
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			flush()
+			continue
+		}
+		if strings.HasPrefix(line, "event:") {
+			curEvent = strings.TrimSpace(strings.TrimPrefix(line, "event:"))
+		} else if strings.HasPrefix(line, "data:") {
+			dataLines = append(dataLines, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("readSSEFrames: %v", err)
+	}
+	flush()
+	return frames
+}
+
+func TestAIWorkspaceHybridEmbeddingsAndAttachmentRAG(t *testing.T) {
+	// 1. Unit checks on ComputeLocalEmbedding (128 dims, unit norm, semantic similarity).
+	v1 := ComputeLocalEmbedding("Encrypting workspace documents and auditing compliance policies")
+	v2 := ComputeLocalEmbedding("Encrypted document audit compliance policy")
+	vDisjoint := ComputeLocalEmbedding("Banana smoothie recipe with strawberries and yogurt")
+	if len(v1) != localEmbeddingDims || len(v2) != localEmbeddingDims {
+		t.Fatalf("expected %d dims, got %d and %d", localEmbeddingDims, len(v1), len(v2))
+	}
+	var normSq float64
+	for _, x := range v1 {
+		normSq += float64(x) * float64(x)
+	}
+	if math.Abs(math.Sqrt(normSq)-1.0) > 1e-4 {
+		t.Fatalf("expected unit L2 norm, got %f", math.Sqrt(normSq))
+	}
+	simRelated := cosineSimilarity(v1, v2)
+	simDisjoint := cosineSimilarity(v1, vDisjoint)
+	if simRelated < 0.45 || simRelated <= simDisjoint+0.25 {
+		t.Fatalf("expected strong semantic similarity over disjoint text: related=%.4f disjoint=%.4f", simRelated, simDisjoint)
+	}
+
+	zhA := ComputeLocalEmbedding("企业级私有化部署与安全审计策略")
+	zhB := ComputeLocalEmbedding("私有化部署安全审计规范")
+	if c := cosineSimilarity(zhA, zhB); c < 0.40 {
+		t.Fatalf("expected strong CJK semantic cosine similarity, got %.4f", c)
+	}
+
+	// 2. End-to-end hybrid retrieval + embedding persistence + attachment RAG.
+	mem := store.NewMemory()
+	_, ts := newAIWorkspaceTestServer(t, mem, AISecretFromEnv("ws-ai-hybrid-secret"))
+	alice := newTestClient()
+
+	var aliceMe struct {
+		User       store.User        `json:"user"`
+		Workspaces []store.Workspace `json:"workspaces"`
+	}
+	regRes := post(t, alice, ts.URL+"/api/auth/register", map[string]string{
+		"email": "hybrid-alice@example.test", "name": "Alice", "password": "password123",
+	})
+	_ = json.NewDecoder(regRes.Body).Decode(&aliceMe)
+	regRes.Body.Close()
+
+	ctx := context.Background()
+	wsID := aliceMe.Workspaces[0].ID
+
+	// Create a regular doc using morphological variants ("encrypted", "deployments").
+	secDoc, err := mem.CreateDoc(ctx, wsID, aliceMe.User.ID, nil, "Security Architecture", syncsrv.InitialOps("Security Architecture"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendDocBodyText(t, mem, secDoc.ID, "All customer records are encrypted at rest and automated deployments verify cryptographic signatures.")
+
+	// Upload a Drive FlateDecode PDF file with unique searchable knowledge.
+	uploadFile := func(endpoint, filename string, data []byte) *http.Response {
+		t.Helper()
+		var body bytes.Buffer
+		mw := multipart.NewWriter(&body)
+		part, err := mw.CreateFormFile("file", filename)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = part.Write(data)
+		_ = mw.Close()
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+endpoint, &body)
+		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("X-Jiange-Upload", "1")
+		res, err := alice.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	pdfBytes := buildTestPDF(t, "BT /F1 12 Tf (Quarterly SLA uptime target is 99.995 percent for Helios Cluster) Tj ET", true)
+	driveRes := uploadFile("/api/drive/files", "helios-sla.pdf", pdfBytes)
+	var pdfNode store.DriveEntry
+	_ = json.NewDecoder(driveRes.Body).Decode(&pdfNode)
+	driveRes.Body.Close()
+	if driveRes.StatusCode != http.StatusCreated {
+		t.Fatalf("upload drive pdf status=%d", driveRes.StatusCode)
+	}
+
+	// Create a doc with a DOCX attachment containing distinct compliance clauses.
+	parentDoc, err := mem.CreateDoc(ctx, wsID, aliceMe.User.ID, nil, "Vendor Onboarding", syncsrv.InitialOps("Vendor Onboarding"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	docxBytes := buildTestDOCX(t, []string{"供应商准入要求：必须通过等保三级认证并签署数据零留存协议"})
+	attRes := uploadFile("/api/docs/"+strconv.FormatInt(parentDoc.ID, 10)+"/files", "vendor-policy.docx", docxBytes)
+	attRes.Body.Close()
+	if attRes.StatusCode != http.StatusCreated {
+		t.Fatalf("upload doc docx status=%d", attRes.StatusCode)
+	}
+
+	// Query 1: hit content inside uploaded Drive PDF.
+	res := send(t, alice, http.MethodPost, ts.URL+"/api/ai/ask-workspace", map[string]any{
+		"question": "What is the Helios Cluster SLA uptime target?",
+	})
+	var pdfAsk aiAskWorkspaceResp
+	_ = json.NewDecoder(res.Body).Decode(&pdfAsk)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || pdfAsk.Retrieval != "hybrid" {
+		t.Fatalf("drive pdf ask failed: status=%d resp=%+v", res.StatusCode, pdfAsk)
+	}
+	if len(pdfAsk.Citations) == 0 || pdfAsk.Citations[0].DocID != pdfNode.ID || pdfAsk.Citations[0].Kind != "file" {
+		t.Fatalf("expected Drive PDF citation first, got %+v", pdfAsk.Citations)
+	}
+	if !strings.Contains(pdfAsk.Citations[0].Snippet, "99.995") {
+		t.Fatalf("expected PDF snippet in citation, got %+v", pdfAsk.Citations[0])
+	}
+
+	// Verify doc_embeddings were persisted for all accessible candidates!
+	embs, err := mem.GetDocEmbeddings(ctx, []int64{secDoc.ID, pdfNode.ID, parentDoc.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []int64{secDoc.ID, pdfNode.ID, parentDoc.ID} {
+		e, ok := embs[id]
+		if !ok || e.Model != localEmbeddingModel || e.Dimensions != localEmbeddingDims || e.ContentHash == "" || len(e.Vector) != localEmbeddingDims {
+			t.Fatalf("missing or invalid persisted embedding for doc %d: %+v", id, e)
+		}
+	}
+
+	// Query 2: hit content inside the DOCX attachment attached to parentDoc.
+	res = send(t, alice, http.MethodPost, ts.URL+"/api/ai/ask-workspace", map[string]any{
+		"question": "供应商准入需要通过什么安全认证和协议？",
+	})
+	var docxAsk aiAskWorkspaceResp
+	_ = json.NewDecoder(res.Body).Decode(&docxAsk)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(docxAsk.Citations) == 0 || docxAsk.Citations[0].DocID != parentDoc.ID {
+		t.Fatalf("expected parentDoc citation from DOCX attachment, got status=%d resp=%+v", res.StatusCode, docxAsk)
+	}
+	if !strings.Contains(docxAsk.Citations[0].Snippet, "等保三级") {
+		t.Fatalf("expected DOCX attachment snippet, got %+v", docxAsk.Citations[0])
+	}
+
+	// Query 3: semantic / morphological English retrieval ("encrypting" / "deploying" matching "encrypted" / "deployments").
+	res = send(t, alice, http.MethodPost, ts.URL+"/api/ai/ask-workspace", map[string]any{
+		"question": "encrypting customer records and deploying cryptographic verification",
+	})
+	var semAsk aiAskWorkspaceResp
+	_ = json.NewDecoder(res.Body).Decode(&semAsk)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || len(semAsk.Citations) == 0 || semAsk.Citations[0].DocID != secDoc.ID {
+		t.Fatalf("expected semantic hit on secDoc, got status=%d resp=%+v", res.StatusCode, semAsk)
+	}
+
+	// Query 4: remote OpenAI /v1/embeddings endpoint is used when available and stored in doc_embeddings.
+	remoteEmbCalled := false
+	embProvider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/embeddings":
+			remoteEmbCalled = true
+			var in struct {
+				Model string   `json:"model"`
+				Input []string `json:"input"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			data := make([]map[string]any, len(in.Input))
+			for i, txt := range in.Input {
+				// Give secDoc + query identical unit vector [1, 0, 0, 0], others [0, 1, 0, 0].
+				vec := []float32{0, 1, 0, 0}
+				if i == 0 || strings.Contains(txt, "Security Architecture") {
+					vec = []float32{1, 0, 0, 0}
+				}
+				data[i] = map[string]any{"index": i, "embedding": vec}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		case "/v1/chat/completions":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"Remote embedding grounded answer [1]."}}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer embProvider.Close()
+
+	saveRes := send(t, alice, http.MethodPut, ts.URL+"/api/me/ai", map[string]string{
+		"provider": "openai",
+		"baseUrl":  embProvider.URL + "/v1",
+		"model":    "gpt-4o-mini",
+		"apiKey":   "sk-remote-emb-test-1234",
+	})
+	saveRes.Body.Close()
+
+	res = send(t, alice, http.MethodPost, ts.URL+"/api/ai/ask-workspace", map[string]any{
+		"question": "zero-overlap query routed purely via remote embedding",
+	})
+	var remoteAsk aiAskWorkspaceResp
+	_ = json.NewDecoder(res.Body).Decode(&remoteAsk)
+	res.Body.Close()
+	if !remoteEmbCalled {
+		t.Fatal("expected remote /v1/embeddings to be invoked")
+	}
+	if res.StatusCode != http.StatusOK || len(remoteAsk.Citations) == 0 || remoteAsk.Citations[0].DocID != secDoc.ID {
+		t.Fatalf("expected remote embedding vector match on secDoc, got status=%d resp=%+v", res.StatusCode, remoteAsk)
+	}
+	embsAfter, err := mem.GetDocEmbeddings(ctx, []int64{secDoc.ID})
+	if err != nil || embsAfter[secDoc.ID].Model != aiDefaultEmbeddingModel || embsAfter[secDoc.ID].Dimensions != 4 {
+		t.Fatalf("expected remote embedding persisted with model=%q dims=4, got %+v err=%v", aiDefaultEmbeddingModel, embsAfter[secDoc.ID], err)
+	}
+}
+
+func TestAIWorkspaceAskStreamSSELocalAndOpenAI(t *testing.T) {
+	var upstreamSawStream bool
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			http.NotFound(w, r)
+			return
+		}
+		var payload struct {
+			Stream bool `json:"stream"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		upstreamSawStream = payload.Stream
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		flusher, _ := w.(http.Flusher)
+		chunks := []string{"根据检索结果，", "系统已启用 ", "混合向量检索", " 与流式输出 [1]。"}
+		for _, tok := range chunks {
+			b, _ := json.Marshal(map[string]any{
+				"choices": []map[string]any{{"delta": map[string]string{"content": tok}}},
+			})
+			fmt.Fprintf(w, "data: %s\n\n", b)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}))
+	defer provider.Close()
+
+	mem := store.NewMemory()
+	_, ts := newAIWorkspaceTestServer(t, mem, AISecretFromEnv("ws-ai-stream-secret"))
+	client := newTestClient()
+
+	var me struct {
+		User       store.User        `json:"user"`
+		Workspaces []store.Workspace `json:"workspaces"`
+	}
+	regRes := post(t, client, ts.URL+"/api/auth/register", map[string]string{
+		"email": "stream-user@example.test", "name": "StreamUser", "password": "password123",
+	})
+	_ = json.NewDecoder(regRes.Body).Decode(&me)
+	regRes.Body.Close()
+
+	ctx := context.Background()
+	doc, err := mem.CreateDoc(ctx, me.Workspaces[0].ID, me.User.ID, nil, "流式知识检索设计", syncsrv.InitialOps("流式知识检索设计"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	appendDocBodyText(t, mem, doc.ID, "本系统支持 128 维语义向量混合检索、附件全文提取与 SSE 实时流式输出。")
+
+	// 1. Local extractive SSE mode (no API key configured).
+	res := send(t, client, http.MethodPost, ts.URL+"/api/ai/workspace-ask/stream", map[string]any{
+		"question": "介绍混合检索与流式输出能力",
+	})
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("local stream status=%d", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("expected text/event-stream content-type, got %q", ct)
+	}
+	localFrames := readSSEFrames(t, res.Body)
+	if len(localFrames) < 3 {
+		t.Fatalf("expected citations + delta(s) + done frames, got %d: %+v", len(localFrames), localFrames)
+	}
+	if localFrames[0].Event != "citations" {
+		t.Fatalf("first SSE event=%q, want citations", localFrames[0].Event)
+	}
+	var localCitEvent struct {
+		Citations []aiWorkspaceCitation `json:"citations"`
+		Mode      string                `json:"mode"`
+		Model     string                `json:"model"`
+		Retrieval string                `json:"retrieval"`
+	}
+	if err := json.Unmarshal([]byte(localFrames[0].Data), &localCitEvent); err != nil {
+		t.Fatalf("decode local citations event: %v", err)
+	}
+	if localCitEvent.Mode != "local" || localCitEvent.Retrieval != "hybrid" || len(localCitEvent.Citations) != 1 || localCitEvent.Citations[0].DocID != doc.ID {
+		t.Fatalf("unexpected local citations event: %+v", localCitEvent)
+	}
+	var localJoined strings.Builder
+	deltaCount := 0
+	for _, f := range localFrames[1 : len(localFrames)-1] {
+		if f.Event != "delta" {
+			t.Fatalf("expected delta event, got %q", f.Event)
+		}
+		var d struct {
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(f.Data), &d); err != nil {
+			t.Fatalf("decode delta: %v", err)
+		}
+		localJoined.WriteString(d.Text)
+		deltaCount++
+	}
+	if deltaCount == 0 {
+		t.Fatal("expected at least one local delta event")
+	}
+	lastLocal := localFrames[len(localFrames)-1]
+	if lastLocal.Event != "done" {
+		t.Fatalf("last SSE event=%q, want done", lastLocal.Event)
+	}
+	var localDone aiAskWorkspaceResp
+	if err := json.Unmarshal([]byte(lastLocal.Data), &localDone); err != nil {
+		t.Fatalf("decode done event: %v", err)
+	}
+	if localDone.Answer != strings.TrimSpace(localJoined.String()) || localDone.Mode != "local" || localDone.Retrieval != "hybrid" {
+		t.Fatalf("local done mismatch: done=%+v joined=%q", localDone, localJoined.String())
+	}
+
+	// 2. Mock OpenAI streaming upstream mode.
+	saveRes := send(t, client, http.MethodPut, ts.URL+"/api/me/ai", map[string]string{
+		"provider": "openai",
+		"baseUrl":  provider.URL + "/v1",
+		"model":    "gpt-4o-mini",
+		"apiKey":   "sk-stream-test-998877",
+	})
+	saveRes.Body.Close()
+	if saveRes.StatusCode != http.StatusOK {
+		t.Fatalf("save AI settings status=%d", saveRes.StatusCode)
+	}
+
+	res2 := send(t, client, http.MethodPost, ts.URL+"/api/ai/workspace-ask/stream", map[string]any{
+		"question": "系统如何实现混合向量检索？",
+	})
+	defer res2.Body.Close()
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("openai stream status=%d", res2.StatusCode)
+	}
+	llmFrames := readSSEFrames(t, res2.Body)
+	if !upstreamSawStream {
+		t.Fatal("expected upstream OpenAI request to set stream=true")
+	}
+	if len(llmFrames) != 6 { // 1 citations + 4 deltas + 1 done
+		t.Fatalf("expected 6 SSE frames (citations + 4 deltas + done), got %d: %+v", len(llmFrames), llmFrames)
+	}
+	if llmFrames[0].Event != "citations" || llmFrames[5].Event != "done" {
+		t.Fatalf("unexpected frame envelope: first=%q last=%q", llmFrames[0].Event, llmFrames[5].Event)
+	}
+	var llmJoined strings.Builder
+	for _, f := range llmFrames[1:5] {
+		if f.Event != "delta" {
+			t.Fatalf("expected delta frame, got %q", f.Event)
+		}
+		var d struct {
+			Text string `json:"text"`
+		}
+		_ = json.Unmarshal([]byte(f.Data), &d)
+		llmJoined.WriteString(d.Text)
+	}
+	var llmDone aiAskWorkspaceResp
+	_ = json.Unmarshal([]byte(llmFrames[5].Data), &llmDone)
+	wantAnswer := "根据检索结果，系统已启用 混合向量检索 与流式输出 [1]。"
+	if llmJoined.String() != wantAnswer || llmDone.Answer != wantAnswer || llmDone.Mode != "llm" || llmDone.Model != "gpt-4o-mini" || llmDone.Retrieval != "hybrid" {
+		t.Fatalf("unexpected OpenAI streaming result: joined=%q done=%+v", llmJoined.String(), llmDone)
 	}
 }

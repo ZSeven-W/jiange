@@ -31,6 +31,11 @@ func (s *Server) listOrgSyncState(w http.ResponseWriter, r *http.Request) {
 		s.orgError(w, r, err)
 		return
 	}
+	sources, err = s.Store.EnrichOrgSyncSources(r.Context(), wsID, sources)
+	if err != nil {
+		s.orgError(w, r, err)
+		return
+	}
 	httpx.JSON(w, http.StatusOK, map[string]any{
 		"sources": sources,
 		"runs":    runs,
@@ -51,10 +56,13 @@ func (s *Server) createOrgSyncSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name              string `json:"name"`
-		Provider          string `json:"provider"`
-		AutoInviteMissing *bool  `json:"autoInviteMissing"`
-		PruneMissing      bool   `json:"pruneMissing"`
+		Name                string              `json:"name"`
+		Provider            string              `json:"provider"`
+		AutoInviteMissing   *bool               `json:"autoInviteMissing"`
+		PruneMissing        bool                `json:"pruneMissing"`
+		EndpointURL         string              `json:"endpointUrl"`
+		ConnectorConfig     *OrgConnectorConfig `json:"connectorConfig"`
+		SyncIntervalMinutes int                 `json:"syncIntervalMinutes"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
@@ -71,6 +79,39 @@ func (s *Server) createOrgSyncSource(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_provider", "不支持的目录同步协议类型")
 		return
 	}
+	if in.SyncIntervalMinutes < 0 || in.SyncIntervalMinutes > 10080 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_interval", "定时同步间隔需在 0 至 10080 分钟之间")
+		return
+	}
+
+	opts := s.orgConnectorNetOpts()
+	hasConnectorUpdate := strings.TrimSpace(in.EndpointURL) != "" || in.ConnectorConfig != nil || in.SyncIntervalMinutes > 0
+	var validatedCfg OrgConnectorConfig
+	var resolvedEndpoint string
+	if in.ConnectorConfig != nil {
+		var err error
+		validatedCfg, resolvedEndpoint, err = mergeAndValidateConnectorConfig(provider, in.EndpointURL, *in.ConnectorConfig, nil, opts)
+		if err != nil {
+			if errors.Is(err, errBlockedAddress) {
+				httpx.Error(w, http.StatusBadRequest, "blocked_address", "连接器地址被安全策略拦截")
+				return
+			}
+			httpx.Error(w, http.StatusBadRequest, "invalid_connector_config", err.Error())
+			return
+		}
+	} else if strings.TrimSpace(in.EndpointURL) != "" {
+		var err error
+		resolvedEndpoint, err = validateOrgConnectorEndpoint(provider, in.EndpointURL, opts)
+		if err != nil {
+			if errors.Is(err, errBlockedAddress) {
+				httpx.Error(w, http.StatusBadRequest, "blocked_address", "连接器地址被安全策略拦截")
+				return
+			}
+			httpx.Error(w, http.StatusBadRequest, "invalid_endpoint_url", err.Error())
+			return
+		}
+	}
+
 	autoInvite := true
 	if in.AutoInviteMissing != nil {
 		autoInvite = *in.AutoInviteMissing
@@ -79,6 +120,24 @@ func (s *Server) createOrgSyncSource(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.orgError(w, r, err)
 		return
+	}
+	if hasConnectorUpdate {
+		var configEnc []byte
+		var configHint string
+		if in.ConnectorConfig != nil {
+			configEnc, err = sealOrgConnectorConfig(s.orgConnectorSecretKey(), wsID, created.Source.ID, validatedCfg)
+			if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			configHint = orgConnectorConfigHint(provider, validatedCfg)
+		}
+		updatedSrc, err := s.Store.UpdateOrgSyncConnector(r.Context(), guard, wsID, created.Source.ID, resolvedEndpoint, configEnc, configHint, in.SyncIntervalMinutes)
+		if err != nil {
+			s.orgError(w, r, err)
+			return
+		}
+		created.Source = updatedSrc
 	}
 	httpx.JSON(w, http.StatusCreated, created)
 }
@@ -101,17 +160,24 @@ func (s *Server) updateOrgSyncSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Name              *string `json:"name"`
-		Enabled           *bool   `json:"enabled"`
-		AutoInviteMissing *bool   `json:"autoInviteMissing"`
-		PruneMissing      *bool   `json:"pruneMissing"`
-		RotateToken       bool    `json:"rotateToken"`
+		Name                *string             `json:"name"`
+		Enabled             *bool               `json:"enabled"`
+		AutoInviteMissing   *bool               `json:"autoInviteMissing"`
+		PruneMissing        *bool               `json:"pruneMissing"`
+		RotateToken         bool                `json:"rotateToken"`
+		EndpointURL         *string             `json:"endpointUrl"`
+		ConnectorConfig     *OrgConnectorConfig `json:"connectorConfig"`
+		SyncIntervalMinutes *int                `json:"syncIntervalMinutes"`
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
 	if in.Name != nil && strings.TrimSpace(*in.Name) == "" {
 		httpx.Error(w, http.StatusBadRequest, "invalid_name", "同步源名称不能为空")
+		return
+	}
+	if in.SyncIntervalMinutes != nil && (*in.SyncIntervalMinutes < 0 || *in.SyncIntervalMinutes > 10080) {
+		httpx.Error(w, http.StatusBadRequest, "invalid_interval", "定时同步间隔需在 0 至 10080 分钟之间")
 		return
 	}
 	updated, err := s.Store.UpdateOrgSyncSourceGuarded(r.Context(), guard, wsID, sourceID, store.OrgSyncSourcePatch{
@@ -124,6 +190,73 @@ func (s *Server) updateOrgSyncSource(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.orgError(w, r, err)
 		return
+	}
+
+	if in.EndpointURL != nil || in.ConnectorConfig != nil || in.SyncIntervalMinutes != nil {
+		cur, err := s.Store.GetOrgSyncSourceSystem(r.Context(), sourceID)
+		if err != nil {
+			s.orgError(w, r, err)
+			return
+		}
+		opts := s.orgConnectorNetOpts()
+		endpointURL := cur.EndpointURL
+		if in.EndpointURL != nil {
+			endpointURL = strings.TrimSpace(*in.EndpointURL)
+		}
+		intervalMinutes := cur.SyncIntervalMinutes
+		if in.SyncIntervalMinutes != nil {
+			intervalMinutes = *in.SyncIntervalMinutes
+		}
+
+		var configEnc []byte
+		var configHint string
+		if in.ConnectorConfig != nil {
+			var existingCfg *OrgConnectorConfig
+			if len(cur.ConnectorConfigEnc) > 0 {
+				if opened, openErr := openOrgConnectorConfig(s.orgConnectorSecretKey(), wsID, sourceID, cur.ConnectorConfigEnc); openErr == nil {
+					existingCfg = &opened
+				}
+			}
+			mergedCfg, resolvedEp, err := mergeAndValidateConnectorConfig(updated.Source.Provider, endpointURL, *in.ConnectorConfig, existingCfg, opts)
+			if err != nil {
+				if errors.Is(err, errBlockedAddress) {
+					httpx.Error(w, http.StatusBadRequest, "blocked_address", "连接器地址被安全策略拦截")
+					return
+				}
+				httpx.Error(w, http.StatusBadRequest, "invalid_connector_config", err.Error())
+				return
+			}
+			endpointURL = resolvedEp
+			configEnc, err = sealOrgConnectorConfig(s.orgConnectorSecretKey(), wsID, sourceID, mergedCfg)
+			if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			configHint = orgConnectorConfigHint(updated.Source.Provider, mergedCfg)
+		} else if in.EndpointURL != nil && endpointURL != "" {
+			resolvedEp, err := validateOrgConnectorEndpoint(updated.Source.Provider, endpointURL, opts)
+			if err != nil {
+				if errors.Is(err, errBlockedAddress) {
+					httpx.Error(w, http.StatusBadRequest, "blocked_address", "连接器地址被安全策略拦截")
+					return
+				}
+				httpx.Error(w, http.StatusBadRequest, "invalid_endpoint_url", err.Error())
+				return
+			}
+			endpointURL = resolvedEp
+		}
+
+		updatedSrc, err := s.Store.UpdateOrgSyncConnector(r.Context(), guard, wsID, sourceID, endpointURL, configEnc, configHint, intervalMinutes)
+		if err != nil {
+			s.orgError(w, r, err)
+			return
+		}
+		updated.Source = updatedSrc
+	} else {
+		enriched, err := s.Store.EnrichOrgSyncSources(r.Context(), wsID, []store.OrgSyncSource{updated.Source})
+		if err == nil && len(enriched) == 1 {
+			updated.Source = enriched[0]
+		}
 	}
 	httpx.JSON(w, http.StatusOK, updated)
 }

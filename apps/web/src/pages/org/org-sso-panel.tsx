@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import {
+  buildSAMLAcsUrl,
+  buildSAMLMetadataUrl,
   buildSSOCallbackUrl,
   ssoApi,
   type SSODefaultRole,
@@ -47,6 +49,16 @@ export const SSO_PROVIDER_PRESETS: readonly SSOProviderPreset[] = [
     tokenUrl: "",
     userinfoUrl: "",
     scopes: "openid email profile",
+  },
+  {
+    type: "saml",
+    slugSuggestion: "corp-saml",
+    nameSuggestion: "企业 SAML 2.0",
+    issuerUrl: "",
+    authUrl: "",
+    tokenUrl: "",
+    userinfoUrl: "",
+    scopes: "",
   },
   {
     type: "feishu",
@@ -106,6 +118,8 @@ export function getSSOProviderTypeLabel(type: SSOProviderType, t: TFunc): string
       return t("通用 OIDC");
     case "oauth2":
       return "OAuth 2.0";
+    case "saml":
+      return "SAML 2.0";
     case "feishu":
       return t("飞书 SSO");
     case "wecom":
@@ -136,6 +150,12 @@ interface SSOFormState {
   allowedDomains: string;
   autoCreateUser: boolean;
   defaultRole: SSODefaultRole;
+  samlEntityId: string;
+  samlSsoUrl: string;
+  samlIdpCertPem: string;
+  samlSpEntityId: string;
+  samlAttributeEmail: string;
+  samlAttributeName: string;
 }
 
 function emptyFormState(): SSOFormState {
@@ -154,6 +174,12 @@ function emptyFormState(): SSOFormState {
     allowedDomains: "",
     autoCreateUser: true,
     defaultRole: "member",
+    samlEntityId: "",
+    samlSsoUrl: "",
+    samlIdpCertPem: "",
+    samlSpEntityId: "",
+    samlAttributeEmail: "email",
+    samlAttributeName: "displayName",
   };
 }
 
@@ -173,6 +199,12 @@ function formStateFromProvider(p: SSOProvider): SSOFormState {
     allowedDomains: p.allowedDomains,
     autoCreateUser: p.autoCreateUser,
     defaultRole: p.defaultRole === "admin" ? "admin" : "member",
+    samlEntityId: p.samlEntityId ?? "",
+    samlSsoUrl: p.samlSsoUrl ?? "",
+    samlIdpCertPem: p.samlIdpCertPem ?? "",
+    samlSpEntityId: p.samlSpEntityId ?? "",
+    samlAttributeEmail: p.samlAttributeEmail || "email",
+    samlAttributeName: p.samlAttributeName || "displayName",
   };
 }
 
@@ -320,47 +352,55 @@ export function OrgSSOPanel({
     if (busy) return;
     setFormError("");
     setFormNotice("");
-    if (!form.name.trim() || !form.slug.trim() || !form.authUrl.trim() || !form.tokenUrl.trim() || !form.clientId.trim()) {
+    const isSAML = form.providerType === "saml";
+    if (isSAML) {
+      if (!form.name.trim() || !form.slug.trim() || !form.samlSsoUrl.trim() || !form.samlIdpCertPem.trim()) {
+        setFormError(t("请完整填写名称、标识、IdP SSO 地址与 X.509 证书"));
+        return;
+      }
+    } else if (
+      !form.name.trim() ||
+      !form.slug.trim() ||
+      !form.authUrl.trim() ||
+      !form.tokenUrl.trim() ||
+      !form.clientId.trim()
+    ) {
       setFormError(t("请完整填写名称、标识、授权地址、令牌地址与 Client ID"));
       return;
     }
+    const payload = {
+      name: form.name.trim(),
+      slug: form.slug.trim().toLowerCase(),
+      providerType: form.providerType,
+      enabled: form.enabled,
+      issuerUrl: isSAML ? "" : form.issuerUrl.trim(),
+      authUrl: isSAML ? "" : form.authUrl.trim(),
+      tokenUrl: isSAML ? "" : form.tokenUrl.trim(),
+      userinfoUrl: isSAML ? "" : form.userinfoUrl.trim(),
+      clientId: isSAML ? "" : form.clientId.trim(),
+      ...(!isSAML && form.clientSecret.trim() ? { clientSecret: form.clientSecret.trim() } : {}),
+      scopes: isSAML ? "" : form.scopes.trim(),
+      allowedDomains: form.allowedDomains.trim(),
+      autoCreateUser: form.autoCreateUser,
+      defaultRole: form.defaultRole,
+      ...(isSAML
+        ? {
+            samlEntityId: form.samlEntityId.trim(),
+            samlSsoUrl: form.samlSsoUrl.trim(),
+            samlIdpCertPem: form.samlIdpCertPem.trim(),
+            samlSpEntityId: form.samlSpEntityId.trim(),
+            samlAttributeEmail: form.samlAttributeEmail.trim() || "email",
+            samlAttributeName: form.samlAttributeName.trim() || "displayName",
+          }
+        : {}),
+    };
     setBusy(true);
     try {
       if (editing) {
-        await ssoApi.updateProvider(workspaceId, editing.id, userId, {
-          name: form.name.trim(),
-          slug: form.slug.trim().toLowerCase(),
-          providerType: form.providerType,
-          enabled: form.enabled,
-          issuerUrl: form.issuerUrl.trim(),
-          authUrl: form.authUrl.trim(),
-          tokenUrl: form.tokenUrl.trim(),
-          userinfoUrl: form.userinfoUrl.trim(),
-          clientId: form.clientId.trim(),
-          ...(form.clientSecret.trim() ? { clientSecret: form.clientSecret.trim() } : {}),
-          scopes: form.scopes.trim(),
-          allowedDomains: form.allowedDomains.trim(),
-          autoCreateUser: form.autoCreateUser,
-          defaultRole: form.defaultRole,
-        });
+        await ssoApi.updateProvider(workspaceId, editing.id, userId, payload);
         setNotice(t("SSO 配置已更新"));
       } else {
-        await ssoApi.createProvider(workspaceId, userId, {
-          name: form.name.trim(),
-          slug: form.slug.trim().toLowerCase(),
-          providerType: form.providerType,
-          enabled: form.enabled,
-          issuerUrl: form.issuerUrl.trim(),
-          authUrl: form.authUrl.trim(),
-          tokenUrl: form.tokenUrl.trim(),
-          userinfoUrl: form.userinfoUrl.trim(),
-          clientId: form.clientId.trim(),
-          ...(form.clientSecret.trim() ? { clientSecret: form.clientSecret.trim() } : {}),
-          scopes: form.scopes.trim(),
-          allowedDomains: form.allowedDomains.trim(),
-          autoCreateUser: form.autoCreateUser,
-          defaultRole: form.defaultRole,
-        });
+        await ssoApi.createProvider(workspaceId, userId, payload);
         setNotice(t("SSO 提供商已创建"));
       }
       await qc.invalidateQueries({ queryKey: ssoQueryKey });
@@ -445,9 +485,14 @@ export function OrgSSOPanel({
             </div>
           ) : (
             providers.map((p) => {
+              const isSAMLCard = p.providerType === "saml";
               const callbackUrl = buildSSOCallbackUrl(p.slug);
+              const samlMetadataUrl = buildSAMLMetadataUrl(p.slug);
+              const samlAcsUrl = buildSAMLAcsUrl(p.slug);
               const copyKey = `card-${p.id}`;
               const copied = copiedKey === copyKey;
+              const copyMetaKey = `card-meta-${p.id}`;
+              const copyAcsKey = `card-acs-${p.id}`;
               return (
                 <div
                   key={p.id}
@@ -480,35 +525,93 @@ export function OrgSSOPanel({
                         </span>
                       </div>
 
-                      <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5">
-                        <Link2 size={12} className="shrink-0 text-subtle" />
-                        <span className="shrink-0 text-[11px] text-subtle">{t("回调地址")}</span>
-                        <code
-                          data-sso-callback-url={p.slug}
-                          className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground select-all"
-                        >
-                          {callbackUrl}
-                        </code>
-                        <button
-                          type="button"
-                          data-sso-copy-callback={p.slug}
-                          onClick={() => void handleCopy(copyKey, callbackUrl)}
-                          className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
-                        >
-                          {copied ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
-                          {copied ? t("已复制") : t("复制")}
-                        </button>
-                      </div>
+                      {isSAMLCard ? (
+                        <div className="mt-2 space-y-1.5">
+                          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5">
+                            <Link2 size={12} className="shrink-0 text-subtle" />
+                            <span className="shrink-0 text-[11px] text-subtle">{t("SP 元数据地址")}</span>
+                            <code
+                              data-sso-saml-metadata-url={p.slug}
+                              className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground select-all"
+                            >
+                              {samlMetadataUrl}
+                            </code>
+                            <button
+                              type="button"
+                              data-sso-copy-saml-metadata={p.slug}
+                              onClick={() => void handleCopy(copyMetaKey, samlMetadataUrl)}
+                              className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
+                            >
+                              {copiedKey === copyMetaKey ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
+                              {copiedKey === copyMetaKey ? t("已复制") : t("复制")}
+                            </button>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5">
+                            <Link2 size={12} className="shrink-0 text-subtle" />
+                            <span className="shrink-0 text-[11px] text-subtle">{t("ACS 回调地址")}</span>
+                            <code
+                              data-sso-saml-acs-url={p.slug}
+                              className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground select-all"
+                            >
+                              {samlAcsUrl}
+                            </code>
+                            <button
+                              type="button"
+                              data-sso-copy-saml-acs={p.slug}
+                              onClick={() => void handleCopy(copyAcsKey, samlAcsUrl)}
+                              className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
+                            >
+                              {copiedKey === copyAcsKey ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
+                              {copiedKey === copyAcsKey ? t("已复制") : t("复制")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-2 flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5">
+                          <Link2 size={12} className="shrink-0 text-subtle" />
+                          <span className="shrink-0 text-[11px] text-subtle">{t("回调地址")}</span>
+                          <code
+                            data-sso-callback-url={p.slug}
+                            className="min-w-0 flex-1 truncate font-mono text-[11px] text-foreground select-all"
+                          >
+                            {callbackUrl}
+                          </code>
+                          <button
+                            type="button"
+                            data-sso-copy-callback={p.slug}
+                            onClick={() => void handleCopy(copyKey, callbackUrl)}
+                            className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
+                          >
+                            {copied ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
+                            {copied ? t("已复制") : t("复制")}
+                          </button>
+                        </div>
+                      )}
 
                       <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[12px] text-subtle">
-                        <span>
-                          Client ID: <code className="font-mono text-muted-foreground">{p.clientId}</code>
-                        </span>
-                        <span>
-                          {p.hasClientSecret
-                            ? t("密钥已保存（末四位 {hint}）", { hint: p.secretHint || "****" })
-                            : t("未配置密钥")}
-                        </span>
+                        {isSAMLCard ? (
+                          <>
+                            {p.samlEntityId && (
+                              <span>
+                                IdP Entity ID: <code className="font-mono text-muted-foreground">{p.samlEntityId}</code>
+                              </span>
+                            )}
+                            <span>
+                              {p.samlIdpCertPem ? t("已配置 X.509 证书") : t("未配置 X.509 证书")}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span>
+                              Client ID: <code className="font-mono text-muted-foreground">{p.clientId}</code>
+                            </span>
+                            <span>
+                              {p.hasClientSecret
+                                ? t("密钥已保存（末四位 {hint}）", { hint: p.secretHint || "****" })
+                                : t("未配置密钥")}
+                            </span>
+                          </>
+                        )}
                         {p.allowedDomains && (
                           <span>
                             {t("允许域名")}：{p.allowedDomains}
@@ -640,32 +743,64 @@ export function OrgSSOPanel({
                 </div>
               </div>
 
-              {/* OIDC Discovery */}
-              <div className="rounded-lg border bg-sidebar/40 p-3">
-                <label className="block text-[12px] font-medium text-foreground">
-                  {t("Issuer 地址（可选，支持 OIDC 自动发现）")}
-                </label>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <input
-                    type="url"
-                    value={form.issuerUrl}
-                    onChange={(e) => setForm((f) => ({ ...f, issuerUrl: e.target.value }))}
-                    placeholder="https://accounts.google.com"
-                    data-sso-issuer-input
-                    className="h-9 min-w-0 flex-1 rounded-md border bg-surface px-2.5 text-[13px] outline-none focus:border-primary"
+              {/* Provider protocol type selector (FeishuSelect, zero native select) */}
+              <div>
+                <span className="block text-[12px] font-medium text-foreground">{t("提供商协议类型")}</span>
+                <div className="mt-1">
+                  <FeishuSelect
+                    ariaLabel={t("提供商协议类型")}
+                    value={form.providerType}
+                    options={[
+                      { value: "oidc", label: t("通用 OIDC") },
+                      { value: "oauth2", label: "OAuth 2.0" },
+                      { value: "saml", label: "SAML 2.0" },
+                      { value: "feishu", label: t("飞书 SSO") },
+                      { value: "wecom", label: t("企业微信") },
+                      { value: "dingtalk", label: t("钉钉") },
+                      { value: "google", label: "Google" },
+                      { value: "github", label: "GitHub" },
+                    ]}
+                    onChange={(val) => {
+                      const nextType = val as SSOProviderType;
+                      setForm((f) => ({ ...f, providerType: nextType }));
+                      setFormError("");
+                      setFormNotice("");
+                    }}
+                    dataAttr={{ "data-sso-provider-type-select": true }}
+                    className="h-9 w-full border bg-surface px-2.5 text-[13px]"
+                    menuMinWidth={200}
                   />
-                  <button
-                    type="button"
-                    disabled={discovering || !form.issuerUrl.trim()}
-                    onClick={() => void handleDiscover()}
-                    data-sso-discover-btn
-                    className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border bg-surface px-3 text-[12px] font-medium text-primary hover:bg-hover disabled:opacity-50"
-                  >
-                    <Sparkles size={13} />
-                    {discovering ? t("发现中…") : t("OIDC 自动发现")}
-                  </button>
                 </div>
               </div>
+
+              {/* OIDC Discovery (hidden for SAML 2.0) */}
+              {form.providerType !== "saml" && (
+                <div className="rounded-lg border bg-sidebar/40 p-3">
+                  <label className="block text-[12px] font-medium text-foreground">
+                    {t("Issuer 地址（可选，支持 OIDC 自动发现）")}
+                  </label>
+                  <div className="mt-1.5 flex items-center gap-2">
+                    <input
+                      type="url"
+                      value={form.issuerUrl}
+                      onChange={(e) => setForm((f) => ({ ...f, issuerUrl: e.target.value }))}
+                      placeholder="https://accounts.google.com"
+                      data-sso-issuer-input
+                      className="h-9 min-w-0 flex-1 rounded-md border bg-surface px-2.5 text-[13px] outline-none focus:border-primary"
+                    />
+                    <button
+                      type="button"
+                      disabled={discovering || !form.issuerUrl.trim()}
+                      onClick={() => void handleDiscover()}
+                      data-sso-discover-btn
+                      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md border bg-surface px-3 text-[12px] font-medium text-primary hover:bg-hover disabled:opacity-50"
+                    >
+                      <Sparkles size={13} />
+                      {discovering ? t("发现中…") : t("OIDC 自动发现")}
+                    </button>
+                  </div>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <label className="block text-[12px] font-medium">
@@ -687,121 +822,252 @@ export function OrgSSOPanel({
                     required
                     value={form.slug}
                     onChange={(e) => setForm((f) => ({ ...f, slug: e.target.value.toLowerCase() }))}
-                    placeholder="corp-oidc"
+                    placeholder={form.providerType === "saml" ? "corp-saml" : "corp-oidc"}
                     data-sso-slug-input
                     className={cn(fieldCls, "font-mono")}
                   />
                 </label>
               </div>
 
-              <div className="flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5 text-[11px]">
-                <span className="shrink-0 text-subtle">{t("回调地址")}：</span>
-                <code className="min-w-0 flex-1 truncate font-mono text-foreground select-all">
-                  {buildSSOCallbackUrl(form.slug)}
-                </code>
-                <button
-                  type="button"
-                  onClick={() => void handleCopy("modal-cb", buildSSOCallbackUrl(form.slug))}
-                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
-                >
-                  {copiedKey === "modal-cb" ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
-                  {copiedKey === "modal-cb" ? t("已复制") : t("复制")}
-                </button>
-              </div>
+              {form.providerType === "saml" ? (
+                <>
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5 text-[11px]">
+                      <span className="shrink-0 text-subtle">{t("SP 元数据地址")}：</span>
+                      <code
+                        data-sso-modal-saml-metadata-url
+                        className="min-w-0 flex-1 truncate font-mono text-foreground select-all"
+                      >
+                        {buildSAMLMetadataUrl(form.slug)}
+                      </code>
+                      <button
+                        type="button"
+                        data-sso-modal-copy-saml-metadata
+                        onClick={() => void handleCopy("modal-saml-meta", buildSAMLMetadataUrl(form.slug))}
+                        className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
+                      >
+                        {copiedKey === "modal-saml-meta" ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
+                        {copiedKey === "modal-saml-meta" ? t("已复制") : t("复制")}
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5 text-[11px]">
+                      <span className="shrink-0 text-subtle">{t("ACS 回调地址")}：</span>
+                      <code
+                        data-sso-modal-saml-acs-url
+                        className="min-w-0 flex-1 truncate font-mono text-foreground select-all"
+                      >
+                        {buildSAMLAcsUrl(form.slug)}
+                      </code>
+                      <button
+                        type="button"
+                        data-sso-modal-copy-saml-acs
+                        onClick={() => void handleCopy("modal-saml-acs", buildSAMLAcsUrl(form.slug))}
+                        className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
+                      >
+                        {copiedKey === "modal-saml-acs" ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
+                        {copiedKey === "modal-saml-acs" ? t("已复制") : t("复制")}
+                      </button>
+                    </div>
+                  </div>
 
-              <div className="space-y-2.5">
-                <label className="block text-[12px] font-medium">
-                  {t("授权地址（Auth URL）")} *
-                  <input
-                    type="url"
-                    required
-                    value={form.authUrl}
-                    onChange={(e) => setForm((f) => ({ ...f, authUrl: e.target.value }))}
-                    placeholder="https://idp.example.com/oauth2/authorize"
-                    data-sso-auth-url-input
-                    className={fieldCls}
-                  />
-                </label>
-                <label className="block text-[12px] font-medium">
-                  {t("令牌地址（Token URL）")} *
-                  <input
-                    type="url"
-                    required
-                    value={form.tokenUrl}
-                    onChange={(e) => setForm((f) => ({ ...f, tokenUrl: e.target.value }))}
-                    placeholder="https://idp.example.com/oauth2/token"
-                    data-sso-token-url-input
-                    className={fieldCls}
-                  />
-                </label>
-                <label className="block text-[12px] font-medium">
-                  {t("用户信息地址（Userinfo URL）")}
-                  <input
-                    type="url"
-                    value={form.userinfoUrl}
-                    onChange={(e) => setForm((f) => ({ ...f, userinfoUrl: e.target.value }))}
-                    placeholder="https://idp.example.com/oauth2/userinfo"
-                    data-sso-userinfo-url-input
-                    className={fieldCls}
-                  />
-                </label>
-              </div>
+                  <div className="space-y-2.5">
+                    <label className="block text-[12px] font-medium">
+                      {t("IdP 单点登录地址（SSO URL）")} *
+                      <input
+                        type="url"
+                        required
+                        value={form.samlSsoUrl}
+                        onChange={(e) => setForm((f) => ({ ...f, samlSsoUrl: e.target.value }))}
+                        placeholder="https://idp.example.com/app/sso/saml"
+                        data-sso-saml-sso-url-input
+                        className={fieldCls}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("IdP Entity ID（可选）")}
+                      <input
+                        type="text"
+                        value={form.samlEntityId}
+                        onChange={(e) => setForm((f) => ({ ...f, samlEntityId: e.target.value }))}
+                        placeholder="https://idp.example.com/metadata"
+                        data-sso-saml-entity-id-input
+                        className={fieldCls}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("IdP X.509 签名证书（PEM）")} *
+                      <textarea
+                        required
+                        rows={4}
+                        value={form.samlIdpCertPem}
+                        onChange={(e) => setForm((f) => ({ ...f, samlIdpCertPem: e.target.value }))}
+                        placeholder={"-----BEGIN CERTIFICATE-----\n...\n-----END CERTIFICATE-----"}
+                        data-sso-saml-cert-input
+                        className="mt-1 w-full rounded-md border bg-surface p-2.5 font-mono text-[12px] outline-none focus:border-primary"
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("SP Entity ID（可选，留空默认使用 SP 元数据地址）")}
+                      <input
+                        type="text"
+                        value={form.samlSpEntityId}
+                        onChange={(e) => setForm((f) => ({ ...f, samlSpEntityId: e.target.value }))}
+                        placeholder={buildSAMLMetadataUrl(form.slug)}
+                        data-sso-saml-sp-entity-id-input
+                        className={fieldCls}
+                      />
+                    </label>
+                  </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="block text-[12px] font-medium">
-                  Client ID *
-                  <input
-                    type="text"
-                    required
-                    value={form.clientId}
-                    onChange={(e) => setForm((f) => ({ ...f, clientId: e.target.value }))}
-                    placeholder="your-client-id"
-                    data-sso-client-id-input
-                    className={cn(fieldCls, "font-mono")}
-                  />
-                </label>
-                <label className="block text-[12px] font-medium">
-                  Client Secret
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    value={form.clientSecret}
-                    onChange={(e) => setForm((f) => ({ ...f, clientSecret: e.target.value }))}
-                    placeholder={
-                      editing?.hasClientSecret
-                        ? t("已保存（末四位 {hint}），留空则保持不变", { hint: editing.secretHint || "****" })
-                        : t("填写 Client Secret（可选，PKCE 客户端可留空）")
-                    }
-                    data-sso-client-secret-input
-                    className={fieldCls}
-                  />
-                </label>
-              </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block text-[12px] font-medium">
+                      {t("邮箱属性名（默认 email）")}
+                      <input
+                        type="text"
+                        value={form.samlAttributeEmail}
+                        onChange={(e) => setForm((f) => ({ ...f, samlAttributeEmail: e.target.value }))}
+                        placeholder="email"
+                        data-sso-saml-attr-email-input
+                        className={cn(fieldCls, "font-mono")}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("姓名属性名（默认 displayName）")}
+                      <input
+                        type="text"
+                        value={form.samlAttributeName}
+                        onChange={(e) => setForm((f) => ({ ...f, samlAttributeName: e.target.value }))}
+                        placeholder="displayName"
+                        data-sso-saml-attr-name-input
+                        className={cn(fieldCls, "font-mono")}
+                      />
+                    </label>
+                  </div>
 
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="block text-[12px] font-medium">
-                  Scopes
-                  <input
-                    type="text"
-                    value={form.scopes}
-                    onChange={(e) => setForm((f) => ({ ...f, scopes: e.target.value }))}
-                    placeholder="openid email profile"
-                    data-sso-scopes-input
-                    className={cn(fieldCls, "font-mono")}
-                  />
-                </label>
-                <label className="block text-[12px] font-medium">
-                  {t("允许登录的邮箱域名")}
-                  <input
-                    type="text"
-                    value={form.allowedDomains}
-                    onChange={(e) => setForm((f) => ({ ...f, allowedDomains: e.target.value }))}
-                    placeholder="company.com, sub.company.com"
-                    data-sso-domains-input
-                    className={fieldCls}
-                  />
-                </label>
-              </div>
+                  <label className="block text-[12px] font-medium">
+                    {t("允许登录的邮箱域名")}
+                    <input
+                      type="text"
+                      value={form.allowedDomains}
+                      onChange={(e) => setForm((f) => ({ ...f, allowedDomains: e.target.value }))}
+                      placeholder="company.com, sub.company.com"
+                      data-sso-domains-input
+                      className={fieldCls}
+                    />
+                  </label>
+                </>
+              ) : (
+                <>
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border bg-sidebar/40 px-2.5 py-1.5 text-[11px]">
+                    <span className="shrink-0 text-subtle">{t("回调地址")}：</span>
+                    <code className="min-w-0 flex-1 truncate font-mono text-foreground select-all">
+                      {buildSSOCallbackUrl(form.slug)}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => void handleCopy("modal-cb", buildSSOCallbackUrl(form.slug))}
+                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
+                    >
+                      {copiedKey === "modal-cb" ? <Check size={11} className="text-primary" /> : <Copy size={11} />}
+                      {copiedKey === "modal-cb" ? t("已复制") : t("复制")}
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <label className="block text-[12px] font-medium">
+                      {t("授权地址（Auth URL）")} *
+                      <input
+                        type="url"
+                        required
+                        value={form.authUrl}
+                        onChange={(e) => setForm((f) => ({ ...f, authUrl: e.target.value }))}
+                        placeholder="https://idp.example.com/oauth2/authorize"
+                        data-sso-auth-url-input
+                        className={fieldCls}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("令牌地址（Token URL）")} *
+                      <input
+                        type="url"
+                        required
+                        value={form.tokenUrl}
+                        onChange={(e) => setForm((f) => ({ ...f, tokenUrl: e.target.value }))}
+                        placeholder="https://idp.example.com/oauth2/token"
+                        data-sso-token-url-input
+                        className={fieldCls}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("用户信息地址（Userinfo URL）")}
+                      <input
+                        type="url"
+                        value={form.userinfoUrl}
+                        onChange={(e) => setForm((f) => ({ ...f, userinfoUrl: e.target.value }))}
+                        placeholder="https://idp.example.com/oauth2/userinfo"
+                        data-sso-userinfo-url-input
+                        className={fieldCls}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block text-[12px] font-medium">
+                      Client ID *
+                      <input
+                        type="text"
+                        required
+                        value={form.clientId}
+                        onChange={(e) => setForm((f) => ({ ...f, clientId: e.target.value }))}
+                        placeholder="your-client-id"
+                        data-sso-client-id-input
+                        className={cn(fieldCls, "font-mono")}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      Client Secret
+                      <input
+                        type="password"
+                        autoComplete="off"
+                        value={form.clientSecret}
+                        onChange={(e) => setForm((f) => ({ ...f, clientSecret: e.target.value }))}
+                        placeholder={
+                          editing?.hasClientSecret
+                            ? t("已保存（末四位 {hint}），留空则保持不变", { hint: editing.secretHint || "****" })
+                            : t("填写 Client Secret（可选，PKCE 客户端可留空）")
+                        }
+                        data-sso-client-secret-input
+                        className={fieldCls}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block text-[12px] font-medium">
+                      Scopes
+                      <input
+                        type="text"
+                        value={form.scopes}
+                        onChange={(e) => setForm((f) => ({ ...f, scopes: e.target.value }))}
+                        placeholder="openid email profile"
+                        data-sso-scopes-input
+                        className={cn(fieldCls, "font-mono")}
+                      />
+                    </label>
+                    <label className="block text-[12px] font-medium">
+                      {t("允许登录的邮箱域名")}
+                      <input
+                        type="text"
+                        value={form.allowedDomains}
+                        onChange={(e) => setForm((f) => ({ ...f, allowedDomains: e.target.value }))}
+                        placeholder="company.com, sub.company.com"
+                        data-sso-domains-input
+                        className={fieldCls}
+                      />
+                    </label>
+                  </div>
+                </>
+              )}
 
               <div className="grid grid-cols-1 items-center gap-3 rounded-lg border bg-sidebar/30 p-3 sm:grid-cols-2">
                 <div>

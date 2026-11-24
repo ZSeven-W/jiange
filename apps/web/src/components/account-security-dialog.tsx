@@ -1,28 +1,52 @@
 import { useEffect, useState } from "react";
-import { KeyRound, ShieldCheck, X } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Fingerprint, KeyRound, ShieldCheck, X } from "lucide-react";
+import { MFA_STATUS_QUERY_KEY, mfaApi, type MfaStatus } from "@/lib/mfa-api";
 import { MfaSettings } from "./mfa-settings";
+import { PasskeySettings } from "./passkey-settings";
 import { PatManager } from "./pat-manager";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 const OPEN_EVENT = "jiange:open-account-security";
 
-export type AccountSecurityTab = "mfa" | "pat";
+export type AccountSecurityTab = "mfa" | "passkey" | "pat";
+
+interface ExtendedMfaStatus extends MfaStatus {
+  mfaRequiredByPolicy?: boolean;
+  mfaRequiredWorkspaces?: string[];
+  mfaSetupRequired?: boolean;
+}
 
 export function openAccountSecurity(tab: AccountSecurityTab = "mfa") {
   if (typeof window === "undefined") return;
   window.dispatchEvent(new CustomEvent<AccountSecurityTab>(OPEN_EVENT, { detail: tab }));
 }
 
-export function AccountSecurityHost() {
+export interface AccountSecurityHostProps {
+  initialOpen?: boolean;
+  initialTab?: AccountSecurityTab;
+}
+
+export function AccountSecurityHost({
+  initialOpen = false,
+  initialTab = "mfa",
+}: AccountSecurityHostProps = {}) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [tab, setTab] = useState<AccountSecurityTab>("mfa");
+  const [open, setOpen] = useState(initialOpen);
+  const [tab, setTab] = useState<AccountSecurityTab>(initialTab);
+
+  const mfaStatusQuery = useQuery<ExtendedMfaStatus>({
+    queryKey: MFA_STATUS_QUERY_KEY,
+    queryFn: () => mfaApi.getStatus() as Promise<ExtendedMfaStatus>,
+    enabled: open,
+    retry: false,
+  });
 
   useEffect(() => {
     const onOpen = (e: Event) => {
       const detail = (e as CustomEvent<AccountSecurityTab | undefined>).detail;
-      if (detail === "mfa" || detail === "pat") setTab(detail);
+      if (detail === "mfa" || detail === "passkey" || detail === "pat") setTab(detail);
       setOpen(true);
     };
     window.addEventListener(OPEN_EVENT, onOpen);
@@ -39,6 +63,9 @@ export function AccountSecurityHost() {
   }, [open]);
 
   if (!open) return null;
+
+  const mfaSetupRequired = Boolean(mfaStatusQuery.data?.mfaSetupRequired);
+  const requiredWorkspaces = mfaStatusQuery.data?.mfaRequiredWorkspaces ?? [];
 
   return (
     <div
@@ -62,7 +89,9 @@ export function AccountSecurityHost() {
             </span>
             <div>
               <h2 className="text-[15px] font-semibold text-foreground">{t("账号安全与访问令牌")}</h2>
-              <p className="text-[12px] text-subtle">{t("管理二步验证（TOTP MFA）与开放 API 个人访问令牌（PAT）")}</p>
+              <p className="text-[12px] text-subtle">
+                {t("管理二步验证（TOTP MFA）、通行密钥（Passkey）与个人访问令牌（PAT）")}
+              </p>
             </div>
           </div>
           <button
@@ -83,11 +112,28 @@ export function AccountSecurityHost() {
             onClick={() => setTab("mfa")}
             className={cn(
               "inline-flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors",
-              tab === "mfa" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
+              tab === "mfa"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
             <ShieldCheck size={14} />
             {t("二步验证（MFA）")}
+          </button>
+          <button
+            type="button"
+            data-security-tab="passkey"
+            aria-selected={tab === "passkey"}
+            onClick={() => setTab("passkey")}
+            className={cn(
+              "inline-flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors",
+              tab === "passkey"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Fingerprint size={14} />
+            {t("通行密钥 / Passkey")}
           </button>
           <button
             type="button"
@@ -96,7 +142,9 @@ export function AccountSecurityHost() {
             onClick={() => setTab("pat")}
             className={cn(
               "inline-flex items-center gap-1.5 border-b-2 px-3 py-2.5 text-[13px] font-medium transition-colors",
-              tab === "pat" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
+              tab === "pat"
+                ? "border-primary text-primary"
+                : "border-transparent text-muted-foreground hover:text-foreground",
             )}
           >
             <KeyRound size={14} />
@@ -104,8 +152,34 @@ export function AccountSecurityHost() {
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto bg-canvas p-4 sm:p-5">
-          {tab === "mfa" ? <MfaSettings /> : <PatManager />}
+        <div className="flex-1 space-y-4 overflow-y-auto bg-canvas p-4 sm:p-5">
+          {mfaSetupRequired && (
+            <div
+              role="alert"
+              data-mfa-policy-required-banner
+              className="flex items-start gap-2.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-[13px] text-amber-800 dark:text-amber-200"
+            >
+              <AlertTriangle size={17} className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
+              <div className="min-w-0">
+                <p className="font-semibold">{t("工作空间要求开启二步验证")}</p>
+                <p className="mt-0.5 text-[12px] leading-5 opacity-90">
+                  {requiredWorkspaces.length > 0
+                    ? t("所在工作空间（{workspaces}）已强制要求开启二步验证，请尽快配置 TOTP 动态验证码或绑定通行密钥（Passkey）。", {
+                        workspaces: requiredWorkspaces.join("、"),
+                      })
+                    : t("所在工作空间已强制要求开启二步验证，请尽快配置 TOTP 动态验证码或绑定通行密钥（Passkey）。")}
+                </p>
+              </div>
+            </div>
+          )}
+
+          {tab === "mfa" ? (
+            <MfaSettings />
+          ) : tab === "passkey" ? (
+            <PasskeySettings />
+          ) : (
+            <PatManager />
+          )}
         </div>
       </section>
     </div>

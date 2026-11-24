@@ -2,6 +2,7 @@ package api
 
 import (
 	"bufio"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
@@ -542,6 +543,7 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.indexAttachmentText(r.Context(), meta, d.WorkspaceID, body)
 	httpx.JSON(w, http.StatusCreated, meta)
 }
 
@@ -577,6 +579,11 @@ func (s *Server) deleteFile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	if deleter, ok := s.Store.(interface {
+		DeleteAttachmentText(context.Context, int64) error
+	}); ok {
+		_ = deleter.DeleteAttachmentText(r.Context(), id)
 	}
 	if refs == 0 {
 		if delErr := s.Blobs.Delete(r.Context(), key); delErr != nil {

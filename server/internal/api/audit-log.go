@@ -437,6 +437,7 @@ func (s *Server) putWorkspaceSecurityPolicy(w http.ResponseWriter, r *http.Reque
 		"dlpAction":           policy.DLPAction,
 		"dlpBlockPublicShare": policy.DLPBlockPublicShare,
 		"retentionDays":       policy.RetentionDays,
+		"requireMfa":          policy.RequireMFA,
 	})
 	httpx.JSON(w, http.StatusOK, policy)
 }

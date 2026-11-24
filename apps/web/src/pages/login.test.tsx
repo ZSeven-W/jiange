@@ -106,3 +106,30 @@ describe("LoginPage MFA challenge integration", () => {
     expect(html).not.toMatch(/<select[\s>]/i);
   });
 });
+
+describe("LoginPage Passkey integration", () => {
+  it("renders passwordless Passkey login button when WebAuthn is supported", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage initialPasskeySupported={true} />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("data-passkey-login-btn");
+    expect(html).toContain("使用通行密钥（Passkey）登录");
+    expect(html).not.toMatch(/<select[\s>]/i);
+  });
+
+  it("omits Passkey login button when WebAuthn is unsupported", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage initialPasskeySupported={false} />
+      </QueryClientProvider>,
+    );
+    expect(html).not.toContain("data-passkey-login-btn");
+    expect(html).not.toContain("使用通行密钥（Passkey）登录");
+  });
+});

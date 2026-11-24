@@ -96,7 +96,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/auth/sso/providers", s.listPublicSSOProviders)
 	mux.HandleFunc("GET /api/auth/sso/{slug}/start", s.startSSO)
 	mux.HandleFunc("GET /api/auth/sso/{slug}/callback", s.callbackSSO)
+	mux.HandleFunc("GET /api/auth/sso/{slug}/metadata.xml", s.samlMetadata)
+	mux.HandleFunc("POST /api/auth/sso/{slug}/acs", s.acsSAML)
 	mux.HandleFunc("POST /api/auth/mfa/verify", s.verifyMFALogin)
+	mux.HandleFunc("POST /api/auth/passkey/login/begin", s.beginPasskeyLogin)
+	mux.HandleFunc("POST /api/auth/passkey/login/finish", s.finishPasskeyLogin)
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
@@ -298,14 +302,15 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/bases/{id}/records/{rid}/comments/{cid}/reactions": s.setRecordCommentReaction,
 
 		// 个人 AI 设置与文档 AI
-		"GET /api/me/ai":             s.getAISettings,
-		"PUT /api/me/ai":             s.putAISettings,
-		"DELETE /api/me/ai":          s.deleteAISettings,
-		"POST /api/me/ai/test":       s.testAISettings,
-		"POST /api/docs/{id}/ai":     s.docAI,
-		"POST /api/ai/ask-workspace": s.aiAskWorkspace,
-		"POST /api/ai/sheet-assist":  s.aiSheetAssist,
-		"POST /api/ai/base-fill":     s.aiBaseFill,
+		"GET /api/me/ai":                    s.getAISettings,
+		"PUT /api/me/ai":                    s.putAISettings,
+		"DELETE /api/me/ai":                 s.deleteAISettings,
+		"POST /api/me/ai/test":              s.testAISettings,
+		"POST /api/docs/{id}/ai":            s.docAI,
+		"POST /api/ai/ask-workspace":        s.aiAskWorkspace,
+		"POST /api/ai/workspace-ask/stream": s.aiWorkspaceAskStream,
+		"POST /api/ai/sheet-assist":         s.aiSheetAssist,
+		"POST /api/ai/base-fill":            s.aiBaseFill,
 
 		// 我的模板
 		"GET /api/me/templates":          s.listUserTemplates,
@@ -333,31 +338,32 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/sheets/{id}/defined-names":           s.putSheetDefinedNames,
 
 		// 企业组织架构（成员角色 / 部门 / 用户组）
-		"GET /api/workspaces":                                         s.listMyWorkspaces,
-		"POST /api/workspaces":                                        s.createWorkspace,
-		"PATCH /api/workspaces/{wsId}":                                s.renameWorkspace,
-		"DELETE /api/workspaces/{wsId}":                               s.deleteWorkspace,
-		"POST /api/workspaces/{wsId}/transfer-owner":                  s.transferWorkspaceOwner,
-		"POST /api/workspaces/{wsId}/leave":                           s.leaveWorkspace,
-		"GET /api/workspaces/{wsId}/org":                              s.getWorkspaceOrg,
-		"POST /api/workspaces/{wsId}/members":                         s.upsertWorkspaceMember,
-		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":        s.revokeWorkspaceInvitation,
-		"GET /api/invitations":                                        s.listMyInvitations,
-		"POST /api/invitations/{inviteId}/accept":                     s.respondInvitation(true),
-		"POST /api/invitations/{inviteId}/decline":                    s.respondInvitation(false),
-		"POST /api/workspaces/{wsId}/departments":                     s.createDepartment,
-		"PATCH /api/workspaces/{wsId}/departments/{deptId}":           s.updateDepartment,
-		"DELETE /api/workspaces/{wsId}/departments/{deptId}":          s.deleteDepartment,
-		"PUT /api/workspaces/{wsId}/departments/{deptId}/members":     s.setDepartmentMember,
-		"POST /api/workspaces/{wsId}/groups":                          s.createUserGroup,
-		"PATCH /api/workspaces/{wsId}/groups/{groupId}":               s.updateUserGroup,
-		"DELETE /api/workspaces/{wsId}/groups/{groupId}":              s.deleteUserGroup,
-		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":         s.setUserGroupMember,
-		"GET /api/workspaces/{wsId}/org/sync-sources":                 s.listOrgSyncState,
-		"POST /api/workspaces/{wsId}/org/sync-sources":                s.createOrgSyncSource,
-		"PATCH /api/workspaces/{wsId}/org/sync-sources/{sourceId}":    s.updateOrgSyncSource,
-		"DELETE /api/workspaces/{wsId}/org/sync-sources/{sourceId}":   s.deleteOrgSyncSource,
-		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run": s.runOrgDirectorySync,
+		"GET /api/workspaces":                                          s.listMyWorkspaces,
+		"POST /api/workspaces":                                         s.createWorkspace,
+		"PATCH /api/workspaces/{wsId}":                                 s.renameWorkspace,
+		"DELETE /api/workspaces/{wsId}":                                s.deleteWorkspace,
+		"POST /api/workspaces/{wsId}/transfer-owner":                   s.transferWorkspaceOwner,
+		"POST /api/workspaces/{wsId}/leave":                            s.leaveWorkspace,
+		"GET /api/workspaces/{wsId}/org":                               s.getWorkspaceOrg,
+		"POST /api/workspaces/{wsId}/members":                          s.upsertWorkspaceMember,
+		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":         s.revokeWorkspaceInvitation,
+		"GET /api/invitations":                                         s.listMyInvitations,
+		"POST /api/invitations/{inviteId}/accept":                      s.respondInvitation(true),
+		"POST /api/invitations/{inviteId}/decline":                     s.respondInvitation(false),
+		"POST /api/workspaces/{wsId}/departments":                      s.createDepartment,
+		"PATCH /api/workspaces/{wsId}/departments/{deptId}":            s.updateDepartment,
+		"DELETE /api/workspaces/{wsId}/departments/{deptId}":           s.deleteDepartment,
+		"PUT /api/workspaces/{wsId}/departments/{deptId}/members":      s.setDepartmentMember,
+		"POST /api/workspaces/{wsId}/groups":                           s.createUserGroup,
+		"PATCH /api/workspaces/{wsId}/groups/{groupId}":                s.updateUserGroup,
+		"DELETE /api/workspaces/{wsId}/groups/{groupId}":               s.deleteUserGroup,
+		"PUT /api/workspaces/{wsId}/groups/{groupId}/members":          s.setUserGroupMember,
+		"GET /api/workspaces/{wsId}/org/sync-sources":                  s.listOrgSyncState,
+		"POST /api/workspaces/{wsId}/org/sync-sources":                 s.createOrgSyncSource,
+		"PATCH /api/workspaces/{wsId}/org/sync-sources/{sourceId}":     s.updateOrgSyncSource,
+		"DELETE /api/workspaces/{wsId}/org/sync-sources/{sourceId}":    s.deleteOrgSyncSource,
+		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run":  s.runOrgDirectorySync,
+		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/pull": s.pullOrgDirectorySync,
 
 		// 企业单点登录（SSO）、安全审计日志与全套件水印策略
 		"GET /api/workspaces/{wsId}/sso/providers":          s.listWorkspaceSSOProviders,
@@ -380,6 +386,10 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/me/mfa/setup":                               s.setupMyMFA,
 		"POST /api/me/mfa/enable":                              s.enableMyMFA,
 		"POST /api/me/mfa/disable":                             s.disableMyMFA,
+		"GET /api/me/passkeys":                                 s.listMyPasskeys,
+		"DELETE /api/me/passkeys/{pid}":                        s.deleteMyPasskey,
+		"POST /api/me/passkeys/register/begin":                 s.beginPasskeyRegister,
+		"POST /api/me/passkeys/register/finish":                s.finishPasskeyRegister,
 		"GET /api/workspaces/{wsId}/webhooks":                  s.listWorkspaceWebhooks,
 		"POST /api/workspaces/{wsId}/webhooks":                 s.createWorkspaceWebhook,
 		"PATCH /api/workspaces/{wsId}/webhooks/{wid}":          s.updateWorkspaceWebhook,

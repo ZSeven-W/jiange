@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api";
 export type SSOProviderType =
   | "oidc"
   | "oauth2"
+  | "saml"
   | "feishu"
   | "wecom"
   | "dingtalk"
@@ -36,6 +37,12 @@ export interface SSOProvider {
   autoCreateUser: boolean;
   defaultRole: SSODefaultRole;
   allowedDomains: string;
+  samlEntityId?: string;
+  samlSsoUrl?: string;
+  samlIdpCertPem?: string;
+  samlSpEntityId?: string;
+  samlAttributeEmail?: string;
+  samlAttributeName?: string;
   createdBy?: number;
   createdAt: string;
   updatedAt: string;
@@ -47,15 +54,21 @@ export interface SSOProviderInput {
   providerType: SSOProviderType;
   enabled: boolean;
   issuerUrl?: string;
-  authUrl: string;
-  tokenUrl: string;
+  authUrl?: string;
+  tokenUrl?: string;
   userinfoUrl?: string;
-  clientId: string;
+  clientId?: string;
   clientSecret?: string;
   scopes?: string;
   autoCreateUser: boolean;
   defaultRole: SSODefaultRole;
   allowedDomains?: string;
+  samlEntityId?: string;
+  samlSsoUrl?: string;
+  samlIdpCertPem?: string;
+  samlSpEntityId?: string;
+  samlAttributeEmail?: string;
+  samlAttributeName?: string;
 }
 
 export interface SSOProviderPatch {
@@ -74,6 +87,12 @@ export interface SSOProviderPatch {
   autoCreateUser?: boolean;
   defaultRole?: SSODefaultRole;
   allowedDomains?: string;
+  samlEntityId?: string;
+  samlSsoUrl?: string;
+  samlIdpCertPem?: string;
+  samlSpEntityId?: string;
+  samlAttributeEmail?: string;
+  samlAttributeName?: string;
 }
 
 export interface SSODiscoveryResult {
@@ -112,12 +131,26 @@ async function ssoRequest<T>(
   return data as T;
 }
 
-export function buildSSOCallbackUrl(slug: string, origin?: string): string {
+function ssoBaseOrigin(origin?: string): string {
   const base =
     origin ??
     (typeof window !== "undefined" ? window.location.origin : "https://your-jiange.example");
+  return base.replace(/\/+$/, "");
+}
+
+export function buildSSOCallbackUrl(slug: string, origin?: string): string {
   const cleanSlug = slug.trim() || "your-slug";
-  return `${base.replace(/\/+$/, "")}/api/auth/sso/${encodeURIComponent(cleanSlug)}/callback`;
+  return `${ssoBaseOrigin(origin)}/api/auth/sso/${encodeURIComponent(cleanSlug)}/callback`;
+}
+
+export function buildSAMLMetadataUrl(slug: string, origin?: string): string {
+  const cleanSlug = slug.trim() || "your-slug";
+  return `${ssoBaseOrigin(origin)}/api/auth/sso/${encodeURIComponent(cleanSlug)}/metadata.xml`;
+}
+
+export function buildSAMLAcsUrl(slug: string, origin?: string): string {
+  const cleanSlug = slug.trim() || "your-slug";
+  return `${ssoBaseOrigin(origin)}/api/auth/sso/${encodeURIComponent(cleanSlug)}/acs`;
 }
 
 export function buildSSOStartUrl(slug: string, redirectTo?: string): string {

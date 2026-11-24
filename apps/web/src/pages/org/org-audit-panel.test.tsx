@@ -283,9 +283,63 @@ describe("OrgAuditPanel", () => {
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-retention-run-btn=""/);
   });
 
+  it("renders workspace-enforced MFA policy toggle (data-require-mfa-toggle) and disables it for non-admins", () => {
+    const qcAdmin = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qcAdmin.setQueryData(workspaceSecurityPolicyQueryKey(10), {
+      ...samplePolicy,
+      requireMfa: true,
+    });
+    qcAdmin.setQueryData(
+      auditLogsQueryKey(10, 1, { action: "", resourceType: "", q: "", offset: 0 }),
+      sampleAuditPage,
+    );
+
+    const adminHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qcAdmin}>
+        <OrgAuditPanel
+          workspaceId={10}
+          userId={1}
+          userName="林晓"
+          userEmail="linxiao@corp.com"
+          canAdmin={true}
+        />
+      </QueryClientProvider>,
+    );
+    expect(adminHtml).toContain("强制工作空间全员开启二步验证（MFA / Passkey）");
+    const adminToggle = adminHtml.match(/<button[^>]*data-require-mfa-toggle=""[^>]*>/)?.[0] ?? "";
+    expect(adminToggle).toContain('role="switch"');
+    expect(adminToggle).toContain('aria-checked="true"');
+    expect(adminToggle).not.toContain(' disabled=""');
+    expect(adminHtml).not.toMatch(/<select[\s>]/i);
+
+    const qcMember = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qcMember.setQueryData(workspaceSecurityPolicyQueryKey(10), {
+      ...samplePolicy,
+      requireMfa: false,
+    });
+    const memberHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qcMember}>
+        <OrgAuditPanel
+          workspaceId={10}
+          userId={2}
+          userName="陈明"
+          userEmail="chenming@corp.com"
+          canAdmin={false}
+        />
+      </QueryClientProvider>,
+    );
+    const memberToggle = memberHtml.match(/<button[^>]*data-require-mfa-toggle=""[^>]*>/)?.[0] ?? "";
+    expect(memberToggle).toContain('role="switch"');
+    expect(memberToggle).toContain('aria-checked="false"');
+    expect(memberToggle).toContain(' disabled=""');
+  });
+
   it("localizes known audit action and resource labels and preserves unknown ones", () => {
     expect(formatAuditActionLabel("auth.login")).toBe("账号登录");
     expect(formatAuditActionLabel("auth.sso_login")).toBe("SSO 单点登录");
+    expect(formatAuditActionLabel("auth.passkey_registered")).toBe("绑定通行密钥");
+    expect(formatAuditActionLabel("auth.passkey_login")).toBe("通行密钥登录");
+    expect(formatAuditActionLabel("auth.passkey_deleted")).toBe("移除通行密钥");
     expect(formatAuditActionLabel("doc.create")).toBe("创建文档");
     expect(formatAuditActionLabel("doc.delete")).toBe("删除文档");
     expect(formatAuditActionLabel("share.update")).toBe("变更共享权限");
@@ -395,6 +449,7 @@ describe("OrgAuditPanel", () => {
         dlpAction: "block",
         dlpBlockPublicShare: true,
         retentionDays: 180,
+        requireMfa: true,
       },
       1,
     );
@@ -410,6 +465,7 @@ describe("OrgAuditPanel", () => {
       dlpAction: "block",
       dlpBlockPublicShare: true,
       retentionDays: 180,
+      requireMfa: true,
     });
 
     const dlpCheck = await enterpriseApi.checkDlp(

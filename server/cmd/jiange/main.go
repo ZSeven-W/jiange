@@ -183,6 +183,20 @@ func run(log *slog.Logger) error {
 			}
 		}
 	}()
+	// 企业目录主动拉取定时任务（LDAP / 企微 / 钉钉）：每 5 分钟检查一次到期连接器
+	go func() {
+		secret := api.AISecretFromEnv(os.Getenv("JIANGE_SECRET_KEY"))
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				api.SweepScheduledOrgSyncs(ctx, pg, secret, log)
+			}
+		}
+	}()
 	var blobs blob.Store
 	switch {
 	case cfg.BlobDir != "":

@@ -2,12 +2,13 @@ import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "@/lib/api";
 import { isMfaChallengeResponse, mfaApi, type LoginOrMfaResponse } from "@/lib/mfa-api";
+import { isWebAuthnSupported, loginWithPasskey } from "@/lib/passkey-api";
 import { buildSSOStartUrl, ssoApi } from "@/lib/sso-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand";
-import { AlertCircle, ArrowLeft, Check, FileText, ShieldCheck, Sparkles, Table2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, FileText, Fingerprint, ShieldCheck, Sparkles, Table2, X } from "lucide-react";
 import { finishLogin } from "@/lib/session-cache";
 import { useI18n, type TFunc } from "@/lib/i18n";
 import { LocaleToggle } from "@/components/locale-toggle";
@@ -57,11 +58,14 @@ export interface LoginMFAChallenge {
 export function LoginPage({
   initialSSOError,
   initialMFAChallenge = null,
+  initialPasskeySupported,
 }: {
   initialSSOError?: string;
   initialMFAChallenge?: LoginMFAChallenge | null;
+  initialPasskeySupported?: boolean;
 } = {}) {
   const { t } = useI18n();
+  const passkeySupported = initialPasskeySupported ?? isWebAuthnSupported();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
@@ -88,6 +92,12 @@ export function LoginPage({
       }
       return mfaApi.verifyLogin(mfaChallenge.mfaToken, mfaCode.trim());
     },
+    onSuccess: (me: Me) => {
+      void finishLogin(qc, me);
+    },
+  });
+  const passkeyLogin = useMutation({
+    mutationFn: () => loginWithPasskey(email.trim() || undefined),
     onSuccess: (me: Me) => {
       void finishLogin(qc, me);
     },
@@ -225,7 +235,30 @@ export function LoginPage({
             <Field id="password" label={t("密码")}><Input id="password" type="password" autoComplete={login ? "current-password" : "new-password"} placeholder={login ? t("输入密码") : t("至少 8 位")} value={password} onChange={(e) => setPassword(e.target.value)} className="h-11" /></Field>
           </div>
           {m.error && <p role="alert" className="mt-3 text-[13px] text-destructive">{(m.error as Error).message}</p>}
-          <Button type="submit" className="mt-7 h-11 w-full" disabled={m.isPending}>{m.isPending ? t("请稍候…") : login ? t("登录") : t("注册并进入")}</Button>
+          {passkeyLogin.error && (
+            <p role="alert" data-passkey-login-error className="mt-3 text-[13px] text-destructive">
+              {(passkeyLogin.error as Error).name === "NotAllowedError" ||
+              (passkeyLogin.error as Error).name === "AbortError"
+                ? t("通行密钥操作已取消或超时，请重试")
+                : (passkeyLogin.error as Error).message}
+            </p>
+          )}
+          <Button type="submit" className="mt-7 h-11 w-full" disabled={m.isPending || passkeyLogin.isPending}>{m.isPending ? t("请稍候…") : login ? t("登录") : t("注册并进入")}</Button>
+          {login && passkeySupported && (
+            <button
+              type="button"
+              data-passkey-login-btn
+              disabled={m.isPending || passkeyLogin.isPending}
+              onClick={() => {
+                m.reset();
+                passkeyLogin.mutate();
+              }}
+              className="mt-3 flex h-11 w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-[14px] font-medium text-foreground transition-colors hover:border-primary/50 hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <Fingerprint size={16} className="shrink-0 text-primary" />
+              <span>{passkeyLogin.isPending ? t("正在验证通行密钥…") : t("使用通行密钥（Passkey）登录")}</span>
+            </button>
+          )}
           {ssoProviders.length > 0 && (
             <div className="mt-6" data-sso-login-section>
               <div className="relative flex items-center justify-center">
@@ -248,7 +281,7 @@ export function LoginPage({
               </div>
             </div>
           )}
-          <p className="mt-7 text-center text-[13px] text-muted-foreground">{login ? t("还没有账号？") : t("已有账号？")}<button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => { setMode(login ? "register" : "login"); m.reset(); }}>{login ? t("免费注册") : t("去登录")}</button></p>
+          <p className="mt-7 text-center text-[13px] text-muted-foreground">{login ? t("还没有账号？") : t("已有账号？")}<button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => { setMode(login ? "register" : "login"); m.reset(); passkeyLogin.reset(); }}>{login ? t("免费注册") : t("去登录")}</button></p>
         </form>
         )}
       </main>

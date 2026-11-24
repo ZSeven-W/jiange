@@ -48,6 +48,7 @@ export interface WorkspaceSecurityPolicy {
   dlpAction?: DlpAction;
   dlpBlockPublicShare?: boolean;
   retentionDays?: number;
+  requireMfa?: boolean;
   updatedBy: number;
   updatedAt: string;
 }
@@ -64,6 +65,7 @@ export interface WorkspaceSecurityPolicyPatch {
   dlpAction?: DlpAction;
   dlpBlockPublicShare?: boolean;
   retentionDays?: number;
+  requireMfa?: boolean;
 }
 
 export interface DlpMatch {

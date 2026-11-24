@@ -99,7 +99,7 @@ func exerciseSSOStore(t *testing.T, st interface {
 		{"short slug", func(in *store.SSOProviderInput) { in.Slug = "a" }},
 		{"bad slug chars", func(in *store.SSOProviderInput) { in.Slug = "bad slug!" }},
 		{"slug starts with dash", func(in *store.SSOProviderInput) { in.Slug = "-corp" }},
-		{"bad provider type", func(in *store.SSOProviderInput) { in.ProviderType = "saml" }},
+		{"bad provider type", func(in *store.SSOProviderInput) { in.ProviderType = "kerberos" }},
 		{"missing auth url", func(in *store.SSOProviderInput) { in.AuthURL = "" }},
 		{"bad token url scheme", func(in *store.SSOProviderInput) { in.TokenURL = "ftp://idp.example.com/token" }},
 		{"owner default role", func(in *store.SSOProviderInput) { in.DefaultRole = store.WorkspaceRoleOwner }},
@@ -328,6 +328,107 @@ func exerciseSSOStore(t *testing.T, st interface {
 	}
 	if _, err := st.GetSSOProviderBySlug(ctx, p2.Slug); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("deleted p2 still found: %v", err)
+	}
+
+	// SAML 2.0 provider CRUD & validation (no TokenURL / AuthURL / ClientID required).
+	const testCertPEM = "-----BEGIN CERTIFICATE-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtest\n-----END CERTIFICATE-----"
+	validSAML := store.SSOProviderInput{
+		Slug:           "corp-saml",
+		Name:           "Corp Okta SAML",
+		ProviderType:   store.SSOProviderSAML,
+		Enabled:        true,
+		SAMLEntityID:   "https://idp.example.com/saml/metadata",
+		SAMLSsoURL:     "https://idp.example.com/saml/sso",
+		SAMLIdPCertPEM: testCertPEM,
+		SAMLSpEntityID: "https://jiange.example.com/saml/sp",
+		AutoCreateUser: true,
+		DefaultRole:    store.WorkspaceRoleMember,
+		AllowedDomains: "corp.example.com",
+	}
+	for _, tc := range []struct {
+		name string
+		mut  func(*store.SSOProviderInput)
+	}{
+		{"saml missing sso url", func(in *store.SSOProviderInput) { in.SAMLSsoURL = "" }},
+		{"saml bad sso url", func(in *store.SSOProviderInput) { in.SAMLSsoURL = "ftp://idp.example.com/sso" }},
+		{"saml missing idp cert", func(in *store.SSOProviderInput) { in.SAMLIdPCertPEM = "   " }},
+	} {
+		in := validSAML
+		tc.mut(&in)
+		if _, err := st.CreateSSOProviderGuarded(ctx, ownerGuard, ws.ID, in); !errors.Is(err, store.ErrConflict) {
+			t.Fatalf("case %s: got %v, want ErrConflict", tc.name, err)
+		}
+	}
+
+	samlProv, err := st.CreateSSOProviderGuarded(ctx, ownerGuard, ws.ID, validSAML)
+	if err != nil {
+		t.Fatalf("create saml provider: %v", err)
+	}
+	if samlProv.ProviderType != store.SSOProviderSAML ||
+		samlProv.SAMLEntityID != "https://idp.example.com/saml/metadata" ||
+		samlProv.SAMLSsoURL != "https://idp.example.com/saml/sso" ||
+		samlProv.SAMLIdPCertPEM != testCertPEM ||
+		samlProv.SAMLSpEntityID != "https://jiange.example.com/saml/sp" ||
+		samlProv.SAMLAttributeEmail != store.DefaultSAMLAttributeEmail ||
+		samlProv.SAMLAttributeName != store.DefaultSAMLAttributeName ||
+		samlProv.TokenURL != "" || samlProv.ClientID != "" {
+		t.Fatalf("unexpected created saml provider: %+v", samlProv)
+	}
+
+	byID, err := st.GetSSOProviderByID(ctx, samlProv.ID)
+	if err != nil || byID.Slug != "corp-saml" || byID.SAMLIdPCertPEM != testCertPEM {
+		t.Fatalf("GetSSOProviderByID = %+v err=%v", byID, err)
+	}
+	bySlugSAML, err := st.GetSSOProviderBySlug(ctx, "corp-saml")
+	if err != nil || bySlugSAML.ID != samlProv.ID || bySlugSAML.SAMLSsoURL != "https://idp.example.com/saml/sso" {
+		t.Fatalf("GetSSOProviderBySlug(saml) = %+v err=%v", bySlugSAML, err)
+	}
+
+	// Public list includes enabled SAML provider without exposing cert or endpoints.
+	pubWithSAML, err := st.ListPublicSSOProviders(ctx)
+	if err != nil {
+		t.Fatalf("ListPublicSSOProviders with saml: %v", err)
+	}
+	foundSAMLPublic := false
+	for _, pp := range pubWithSAML {
+		if pp.Slug == "corp-saml" && pp.ProviderType == store.SSOProviderSAML {
+			foundSAMLPublic = true
+		}
+	}
+	if !foundSAMLPublic {
+		t.Fatalf("expected corp-saml in public providers: %+v", pubWithSAML)
+	}
+	pubSAMLJSON, _ := json.Marshal(pubWithSAML)
+	if strings.Contains(string(pubSAMLJSON), "BEGIN CERTIFICATE") {
+		t.Fatalf("public providers leaked SAML cert: %s", pubSAMLJSON)
+	}
+
+	// Update SAML fields.
+	newEntityID := "https://idp.example.com/saml/v2"
+	newSsoURL := "https://idp.example.com/saml/v2/sso"
+	newEmailAttr := "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress"
+	newNameAttr := "cn"
+	samlUpdated, err := st.UpdateSSOProviderGuarded(ctx, ownerGuard, ws.ID, samlProv.ID, store.SSOProviderPatch{
+		SAMLEntityID:       &newEntityID,
+		SAMLSsoURL:         &newSsoURL,
+		SAMLAttributeEmail: &newEmailAttr,
+		SAMLAttributeName:  &newNameAttr,
+	})
+	if err != nil {
+		t.Fatalf("update saml provider: %v", err)
+	}
+	if samlUpdated.SAMLEntityID != newEntityID || samlUpdated.SAMLSsoURL != newSsoURL ||
+		samlUpdated.SAMLAttributeEmail != newEmailAttr || samlUpdated.SAMLAttributeName != newNameAttr ||
+		samlUpdated.SAMLIdPCertPEM != testCertPEM {
+		t.Fatalf("unexpected updated saml provider: %+v", samlUpdated)
+	}
+
+	// Delete SAML provider.
+	if err := st.DeleteSSOProviderGuarded(ctx, ownerGuard, ws.ID, samlProv.ID); err != nil {
+		t.Fatalf("delete saml provider: %v", err)
+	}
+	if _, err := st.GetSSOProviderByID(ctx, samlProv.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted saml provider still found by ID: %v", err)
 	}
 }
 

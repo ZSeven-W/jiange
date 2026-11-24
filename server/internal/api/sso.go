@@ -276,6 +276,17 @@ func (s *Server) startSSO(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "sso_disabled", "该 SSO 登录方式已停用")
 		return
 	}
+	redirectRaw := r.URL.Query().Get("redirect")
+	if redirectRaw == "" {
+		redirectRaw = r.URL.Query().Get("redirect_to")
+	}
+	redirectTo := sanitizeSSORedirect(redirectRaw)
+
+	if provider.ProviderType == store.SSOProviderSAML {
+		s.startSAML(w, r, provider, redirectTo)
+		return
+	}
+
 	authEndpoint, ok := s.validateSSOEndpointURL(provider.AuthURL, true)
 	if !ok {
 		httpx.Error(w, http.StatusBadRequest, "invalid_auth_url", "SSO 授权地址无效")
@@ -302,11 +313,6 @@ func (s *Server) startSSO(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	redirectRaw := r.URL.Query().Get("redirect")
-	if redirectRaw == "" {
-		redirectRaw = r.URL.Query().Get("redirect_to")
-	}
-	redirectTo := sanitizeSSORedirect(redirectRaw)
 
 	if err := st.CreateSSOAuthState(r.Context(), store.SSOAuthState{
 		State:        state,
@@ -684,20 +690,26 @@ func (s *Server) listWorkspaceSSOProviders(w http.ResponseWriter, r *http.Reques
 }
 
 type createSSOProviderRequest struct {
-	Slug           string `json:"slug"`
-	Name           string `json:"name"`
-	ProviderType   string `json:"providerType"`
-	Enabled        *bool  `json:"enabled"`
-	IssuerURL      string `json:"issuerUrl"`
-	AuthURL        string `json:"authUrl"`
-	TokenURL       string `json:"tokenUrl"`
-	UserinfoURL    string `json:"userinfoUrl"`
-	ClientID       string `json:"clientId"`
-	ClientSecret   string `json:"clientSecret"`
-	Scopes         string `json:"scopes"`
-	AutoCreateUser *bool  `json:"autoCreateUser"`
-	DefaultRole    string `json:"defaultRole"`
-	AllowedDomains string `json:"allowedDomains"`
+	Slug               string `json:"slug"`
+	Name               string `json:"name"`
+	ProviderType       string `json:"providerType"`
+	Enabled            *bool  `json:"enabled"`
+	IssuerURL          string `json:"issuerUrl"`
+	AuthURL            string `json:"authUrl"`
+	TokenURL           string `json:"tokenUrl"`
+	UserinfoURL        string `json:"userinfoUrl"`
+	ClientID           string `json:"clientId"`
+	ClientSecret       string `json:"clientSecret"`
+	Scopes             string `json:"scopes"`
+	AutoCreateUser     *bool  `json:"autoCreateUser"`
+	DefaultRole        string `json:"defaultRole"`
+	AllowedDomains     string `json:"allowedDomains"`
+	SAMLEntityID       string `json:"samlEntityId"`
+	SAMLSsoURL         string `json:"samlSsoUrl"`
+	SAMLIdPCertPEM     string `json:"samlIdpCertPem"`
+	SAMLSpEntityID     string `json:"samlSpEntityId"`
+	SAMLAttributeEmail string `json:"samlAttributeEmail"`
+	SAMLAttributeName  string `json:"samlAttributeName"`
 }
 
 // createWorkspaceSSOProvider handles POST /api/workspaces/{wsId}/sso/providers.
@@ -741,17 +753,56 @@ func (s *Server) createWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 		httpx.Error(w, http.StatusBadRequest, "invalid_provider_type", "不支持的 SSO 提供商类型")
 		return
 	}
+	isSAML := providerType == store.SSOProviderSAML
+
+	samlEntityID := strings.TrimSpace(in.SAMLEntityID)
+	if len(samlEntityID) > 1024 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_saml_entity_id", "IdP Entity ID 长度超出限制")
+		return
+	}
+	samlSpEntityID := strings.TrimSpace(in.SAMLSpEntityID)
+	if len(samlSpEntityID) > 1024 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_saml_sp_entity_id", "SP Entity ID 长度超出限制")
+		return
+	}
+	samlAttrEmail := strings.TrimSpace(in.SAMLAttributeEmail)
+	if len(samlAttrEmail) > 256 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_saml_attribute", "SAML 邮箱属性名长度超出限制")
+		return
+	}
+	samlAttrName := strings.TrimSpace(in.SAMLAttributeName)
+	if len(samlAttrName) > 256 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_saml_attribute", "SAML 姓名属性名长度超出限制")
+		return
+	}
+	samlSsoURL, ok := s.validateSSOEndpointURL(in.SAMLSsoURL, isSAML)
+	if !ok {
+		httpx.Error(w, http.StatusBadRequest, "invalid_saml_sso_url", "SAML IdP SSO 地址无效（需为 https 地址）")
+		return
+	}
+	samlCertPEM := strings.TrimSpace(in.SAMLIdPCertPEM)
+	if isSAML || samlCertPEM != "" {
+		if len(samlCertPEM) > 32768 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_cert", "X.509 证书长度超出限制")
+			return
+		}
+		if _, err := parseSAMLIdPCertificate(samlCertPEM); err != nil {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_cert", "请提供有效的 X.509 PEM 格式证书")
+			return
+		}
+	}
+
 	issuerURL, ok := s.validateSSOEndpointURL(in.IssuerURL, false)
 	if !ok {
 		httpx.Error(w, http.StatusBadRequest, "invalid_issuer_url", "Issuer 地址无效（需为 https 地址）")
 		return
 	}
-	authURL, ok := s.validateSSOEndpointURL(in.AuthURL, true)
+	authURL, ok := s.validateSSOEndpointURL(in.AuthURL, !isSAML)
 	if !ok {
 		httpx.Error(w, http.StatusBadRequest, "invalid_auth_url", "授权地址（Auth URL）无效（需为 https 地址）")
 		return
 	}
-	tokenURL, ok := s.validateSSOEndpointURL(in.TokenURL, true)
+	tokenURL, ok := s.validateSSOEndpointURL(in.TokenURL, !isSAML)
 	if !ok {
 		httpx.Error(w, http.StatusBadRequest, "invalid_token_url", "令牌地址（Token URL）无效（需为 https 地址）")
 		return
@@ -762,7 +813,7 @@ func (s *Server) createWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	clientID := strings.TrimSpace(in.ClientID)
-	if clientID == "" || len(clientID) > 256 {
+	if (!isSAML && clientID == "") || len(clientID) > 256 {
 		httpx.Error(w, http.StatusBadRequest, "invalid_client_id", "请填写有效的 Client ID")
 		return
 	}
@@ -802,21 +853,27 @@ func (s *Server) createWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 
 	created, err := st.CreateSSOProviderGuarded(r.Context(), guard, wsID, store.SSOProviderInput{
-		Slug:            slug,
-		Name:            name,
-		ProviderType:    providerType,
-		Enabled:         enabled,
-		IssuerURL:       strings.TrimRight(issuerURL, "/"),
-		AuthURL:         authURL,
-		TokenURL:        tokenURL,
-		UserinfoURL:     userinfoURL,
-		ClientID:        clientID,
-		ClientSecretEnc: secretEnc,
-		SecretHint:      secretHint,
-		Scopes:          in.Scopes,
-		AutoCreateUser:  autoCreate,
-		DefaultRole:     defaultRole,
-		AllowedDomains:  in.AllowedDomains,
+		Slug:               slug,
+		Name:               name,
+		ProviderType:       providerType,
+		Enabled:            enabled,
+		IssuerURL:          strings.TrimRight(issuerURL, "/"),
+		AuthURL:            authURL,
+		TokenURL:           tokenURL,
+		UserinfoURL:        userinfoURL,
+		ClientID:           clientID,
+		ClientSecretEnc:    secretEnc,
+		SecretHint:         secretHint,
+		Scopes:             in.Scopes,
+		AutoCreateUser:     autoCreate,
+		DefaultRole:        defaultRole,
+		AllowedDomains:     in.AllowedDomains,
+		SAMLEntityID:       samlEntityID,
+		SAMLSsoURL:         samlSsoURL,
+		SAMLIdPCertPEM:     samlCertPEM,
+		SAMLSpEntityID:     samlSpEntityID,
+		SAMLAttributeEmail: samlAttrEmail,
+		SAMLAttributeName:  samlAttrName,
 	})
 	if err != nil {
 		s.ssoError(w, r, err)
@@ -827,21 +884,27 @@ func (s *Server) createWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 }
 
 type updateSSOProviderRequest struct {
-	Slug              *string `json:"slug"`
-	Name              *string `json:"name"`
-	ProviderType      *string `json:"providerType"`
-	Enabled           *bool   `json:"enabled"`
-	IssuerURL         *string `json:"issuerUrl"`
-	AuthURL           *string `json:"authUrl"`
-	TokenURL          *string `json:"tokenUrl"`
-	UserinfoURL       *string `json:"userinfoUrl"`
-	ClientID          *string `json:"clientId"`
-	ClientSecret      *string `json:"clientSecret"`
-	ClearClientSecret bool    `json:"clearClientSecret"`
-	Scopes            *string `json:"scopes"`
-	AutoCreateUser    *bool   `json:"autoCreateUser"`
-	DefaultRole       *string `json:"defaultRole"`
-	AllowedDomains    *string `json:"allowedDomains"`
+	Slug               *string `json:"slug"`
+	Name               *string `json:"name"`
+	ProviderType       *string `json:"providerType"`
+	Enabled            *bool   `json:"enabled"`
+	IssuerURL          *string `json:"issuerUrl"`
+	AuthURL            *string `json:"authUrl"`
+	TokenURL           *string `json:"tokenUrl"`
+	UserinfoURL        *string `json:"userinfoUrl"`
+	ClientID           *string `json:"clientId"`
+	ClientSecret       *string `json:"clientSecret"`
+	ClearClientSecret  bool    `json:"clearClientSecret"`
+	Scopes             *string `json:"scopes"`
+	AutoCreateUser     *bool   `json:"autoCreateUser"`
+	DefaultRole        *string `json:"defaultRole"`
+	AllowedDomains     *string `json:"allowedDomains"`
+	SAMLEntityID       *string `json:"samlEntityId"`
+	SAMLSsoURL         *string `json:"samlSsoUrl"`
+	SAMLIdPCertPEM     *string `json:"samlIdpCertPem"`
+	SAMLSpEntityID     *string `json:"samlSpEntityId"`
+	SAMLAttributeEmail *string `json:"samlAttributeEmail"`
+	SAMLAttributeName  *string `json:"samlAttributeName"`
 }
 
 // updateWorkspaceSSOProvider handles PATCH /api/workspaces/{wsId}/sso/providers/{pid}.
@@ -894,13 +957,76 @@ func (s *Server) updateWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 		}
 		patch.Name = &name
 	}
+	explicitSAML := false
+	explicitOIDC := false
 	if in.ProviderType != nil {
 		pt := strings.ToLower(strings.TrimSpace(*in.ProviderType))
 		if !store.ValidSSOProviderType(pt) {
 			httpx.Error(w, http.StatusBadRequest, "invalid_provider_type", "不支持的 SSO 提供商类型")
 			return
 		}
+		explicitSAML = pt == store.SSOProviderSAML
+		explicitOIDC = pt != store.SSOProviderSAML
 		patch.ProviderType = &pt
+	}
+	if in.SAMLEntityID != nil {
+		v := strings.TrimSpace(*in.SAMLEntityID)
+		if len(v) > 1024 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_entity_id", "IdP Entity ID 长度超出限制")
+			return
+		}
+		patch.SAMLEntityID = &v
+	}
+	if in.SAMLSsoURL != nil {
+		v, ok := s.validateSSOEndpointURL(*in.SAMLSsoURL, explicitSAML)
+		if !ok {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_sso_url", "SAML IdP SSO 地址无效")
+			return
+		}
+		patch.SAMLSsoURL = &v
+	}
+	if in.SAMLIdPCertPEM != nil {
+		v := strings.TrimSpace(*in.SAMLIdPCertPEM)
+		if v == "" {
+			if explicitSAML {
+				httpx.Error(w, http.StatusBadRequest, "invalid_saml_cert", "请提供有效的 X.509 PEM 格式证书")
+				return
+			}
+		} else {
+			if len(v) > 32768 {
+				httpx.Error(w, http.StatusBadRequest, "invalid_saml_cert", "X.509 证书长度超出限制")
+				return
+			}
+			if _, err := parseSAMLIdPCertificate(v); err != nil {
+				httpx.Error(w, http.StatusBadRequest, "invalid_saml_cert", "请提供有效的 X.509 PEM 格式证书")
+				return
+			}
+		}
+		patch.SAMLIdPCertPEM = &v
+	}
+	if in.SAMLSpEntityID != nil {
+		v := strings.TrimSpace(*in.SAMLSpEntityID)
+		if len(v) > 1024 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_sp_entity_id", "SP Entity ID 长度超出限制")
+			return
+		}
+		patch.SAMLSpEntityID = &v
+	}
+	if in.SAMLAttributeEmail != nil {
+		v := strings.TrimSpace(*in.SAMLAttributeEmail)
+		if len(v) > 256 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_attribute", "SAML 邮箱属性名长度超出限制")
+			return
+		}
+		patch.SAMLAttributeEmail = &v
+	}
+	if in.SAMLAttributeName != nil {
+		v := strings.TrimSpace(*in.SAMLAttributeName)
+		if len(v) > 256 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_saml_attribute", "SAML 姓名属性名长度超出限制")
+			return
+		}
+		patch.SAMLAttributeName = &v
 	}
 	if in.IssuerURL != nil {
 		v, ok := s.validateSSOEndpointURL(*in.IssuerURL, false)
@@ -912,7 +1038,7 @@ func (s *Server) updateWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 		patch.IssuerURL = &v
 	}
 	if in.AuthURL != nil {
-		v, ok := s.validateSSOEndpointURL(*in.AuthURL, true)
+		v, ok := s.validateSSOEndpointURL(*in.AuthURL, explicitOIDC)
 		if !ok {
 			httpx.Error(w, http.StatusBadRequest, "invalid_auth_url", "授权地址（Auth URL）无效")
 			return
@@ -920,7 +1046,7 @@ func (s *Server) updateWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 		patch.AuthURL = &v
 	}
 	if in.TokenURL != nil {
-		v, ok := s.validateSSOEndpointURL(*in.TokenURL, true)
+		v, ok := s.validateSSOEndpointURL(*in.TokenURL, explicitOIDC)
 		if !ok {
 			httpx.Error(w, http.StatusBadRequest, "invalid_token_url", "令牌地址（Token URL）无效")
 			return
@@ -937,7 +1063,7 @@ func (s *Server) updateWorkspaceSSOProvider(w http.ResponseWriter, r *http.Reque
 	}
 	if in.ClientID != nil {
 		cid := strings.TrimSpace(*in.ClientID)
-		if cid == "" || len(cid) > 256 {
+		if (explicitOIDC && cid == "") || len(cid) > 256 {
 			httpx.Error(w, http.StatusBadRequest, "invalid_client_id", "Client ID 不能为空")
 			return
 		}

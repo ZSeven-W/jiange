@@ -313,6 +313,242 @@ func TestMemoryOrgDirectorySync(t *testing.T) {
 	exerciseOrgDirectorySync(t, store.NewMemory())
 }
 
+func exerciseOrgSyncConnectors(t *testing.T, st store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	exp := time.Now().Add(time.Hour)
+
+	owner, ws, err := st.CreateUser(ctx, "conn-owner@example.test", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alice, _, err := st.CreateUser(ctx, "conn-alice@example.test", "Alice", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	makeGuard := func(u store.User, tag string) store.RestoreGuard {
+		g := store.RestoreGuard{UserID: u.ID, SessionHash: []byte("conn-sess-" + tag)}
+		if e := st.CreateSession(ctx, g.SessionHash, u.ID, exp); e != nil {
+			t.Fatal(e)
+		}
+		return g
+	}
+	ownerGuard := makeGuard(owner, "owner")
+	aliceGuard := makeGuard(alice, "alice")
+
+	// Bring Alice into workspace as non-admin member.
+	ch, err := st.UpsertWorkspaceMemberGuarded(ctx, ownerGuard, ws.ID, alice.Email, store.WorkspaceRoleMember)
+	if err != nil || ch.Invitation == nil {
+		t.Fatalf("invite alice: %+v err=%v", ch, err)
+	}
+	if err := st.RespondInvitationGuarded(ctx, aliceGuard, ch.Invitation.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create LDAP, WeCom, DingTalk, and SCIM sources.
+	ldapSrc, err := st.CreateOrgSyncSourceGuarded(ctx, ownerGuard, ws.ID, "Corp LDAP", store.OrgSyncProviderLDAP, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wecomSrc, err := st.CreateOrgSyncSourceGuarded(ctx, ownerGuard, ws.ID, "企业微信", store.OrgSyncProviderWeCom, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dingSrc, err := st.CreateOrgSyncSourceGuarded(ctx, ownerGuard, ws.ID, "钉钉", store.OrgSyncProviderDingTalk, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scimSrc, err := st.CreateOrgSyncSourceGuarded(ctx, ownerGuard, ws.ID, "SCIM", store.OrgSyncProviderSCIM, true, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Non-admin member cannot update connector config.
+	if _, err := st.UpdateOrgSyncConnector(ctx, aliceGuard, ws.ID, ldapSrc.Source.ID, "ldap://ad.example:389", []byte("enc"), "hint", 60); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("member UpdateOrgSyncConnector = %v, want ErrForbidden", err)
+	}
+
+	// Invalid interval rejected with ErrConflict.
+	if _, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, "ldap://ad.example:389", []byte("enc"), "hint", -5); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("negative interval = %v, want ErrConflict", err)
+	}
+	if _, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, "ldap://ad.example:389", []byte("enc"), "hint", 99999); !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("oversized interval = %v, want ErrConflict", err)
+	}
+
+	// Persist encrypted config on LDAP source.
+	encLDAP := []byte("sealed-ldap-secret-v1")
+	updatedLDAP, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, "ldaps://ad.corp.internal:636", encLDAP, "bind=cn=svc base=dc=corp", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updatedLDAP.HasConnectorConfig || updatedLDAP.EndpointURL != "ldaps://ad.corp.internal:636" || updatedLDAP.ConnectorConfigHint != "bind=cn=svc base=dc=corp" || updatedLDAP.SyncIntervalMinutes != 60 {
+		t.Fatalf("unexpected updated LDAP source: %+v", updatedLDAP)
+	}
+
+	// Updating URL & interval with nil configEnc must preserve existing encrypted config & hint!
+	updatedLDAP2, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, "ldaps://ad2.corp.internal:636", nil, "ignored-hint", 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updatedLDAP2.HasConnectorConfig || updatedLDAP2.EndpointURL != "ldaps://ad2.corp.internal:636" || updatedLDAP2.ConnectorConfigHint != "bind=cn=svc base=dc=corp" || updatedLDAP2.SyncIntervalMinutes != 30 {
+		t.Fatalf("nil configEnc did not preserve secret/hint: %+v", updatedLDAP2)
+	}
+	sysLDAP, err := st.GetOrgSyncSourceSystem(ctx, ldapSrc.Source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(sysLDAP.ConnectorConfigEnc) != string(encLDAP) || !sysLDAP.HasConnectorConfig {
+		t.Fatalf("GetOrgSyncSourceSystem mismatch: enc=%q has=%v", string(sysLDAP.ConnectorConfigEnc), sysLDAP.HasConnectorConfig)
+	}
+
+	// Configure WeCom (interval 60), DingTalk (interval 0 -> not scheduled), SCIM (interval 30 -> non-pull provider, never due).
+	if _, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, wecomSrc.Source.ID, "https://qyapi.weixin.qq.com", []byte("sealed-wecom"), "corp=ww1", 60); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, dingSrc.Source.ID, "https://oapi.dingtalk.com", []byte("sealed-ding"), "appKey=dk1", 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpdateOrgSyncConnector(ctx, ownerGuard, ws.ID, scimSrc.Source.ID, "https://scim.example", []byte("sealed-scim"), "scim", 30); err != nil {
+		t.Fatal(err)
+	}
+
+	// EnrichOrgSyncSources populates connector fields for ListOrgSyncState results.
+	listed, _, err := st.ListOrgSyncState(ctx, ownerGuard, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enriched, err := st.EnrichOrgSyncSources(ctx, ws.ID, listed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var foundEnrichedLDAP bool
+	for _, s := range enriched {
+		if s.ID == ldapSrc.Source.ID {
+			foundEnrichedLDAP = s.HasConnectorConfig && s.EndpointURL == "ldaps://ad2.corp.internal:636" && s.SyncIntervalMinutes == 30
+		}
+	}
+	if !foundEnrichedLDAP {
+		t.Fatalf("EnrichOrgSyncSources missing LDAP metadata: %+v", enriched)
+	}
+
+	// Check ListDueScheduledOrgSyncSources at T0: LDAP & WeCom are due; DingTalk (interval 0) & SCIM are excluded.
+	t0 := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+	due, err := st.ListDueScheduledOrgSyncSources(ctx, t0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 2 || due[0].ID != ldapSrc.Source.ID || due[1].ID != wecomSrc.Source.ID {
+		t.Fatalf("due at t0 = %+v, want [ldap, wecom]", due)
+	}
+
+	// Mark LDAP synced at t0 and WeCom synced at t0.
+	if err := st.MarkOrgSyncAutoSyncAt(ctx, ldapSrc.Source.ID, t0); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkOrgSyncAutoSyncAt(ctx, wecomSrc.Source.ID, t0); err != nil {
+		t.Fatal(err)
+	}
+
+	// At t0 + 29m: neither is due.
+	due29, err := st.ListDueScheduledOrgSyncSources(ctx, t0.Add(29*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due29) != 0 {
+		t.Fatalf("due at t0+29m = %d, want 0", len(due29))
+	}
+
+	// At t0 + 30m: only LDAP (30m interval) is due; WeCom (60m interval) is not yet due.
+	due30, err := st.ListDueScheduledOrgSyncSources(ctx, t0.Add(30*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due30) != 1 || due30[0].ID != ldapSrc.Source.ID {
+		t.Fatalf("due at t0+30m = %+v, want [ldap]", due30)
+	}
+
+	// Disabling LDAP removes it from due list and blocks RunOrgDirectorySyncSystem.
+	disabled := false
+	if _, err := st.UpdateOrgSyncSourceGuarded(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, store.OrgSyncSourcePatch{Enabled: &disabled}); err != nil {
+		t.Fatal(err)
+	}
+	dueDisabled, err := st.ListDueScheduledOrgSyncSources(ctx, t0.Add(35*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dueDisabled) != 0 {
+		t.Fatalf("disabled source should not be due: %+v", dueDisabled)
+	}
+	if _, err := st.RunOrgDirectorySyncSystem(ctx, ldapSrc.Source.ID, store.OrgSyncTriggerScheduled, store.OrgDirectorySyncPayload{}); !errors.Is(err, store.ErrForbidden) {
+		t.Fatalf("disabled RunOrgDirectorySyncSystem = %v, want ErrForbidden", err)
+	}
+
+	// Re-enable LDAP and exercise "pull" & "scheduled" trigger modes!
+	enabled := true
+	if _, err := st.UpdateOrgSyncSourceGuarded(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, store.OrgSyncSourcePatch{Enabled: &enabled}); err != nil {
+		t.Fatal(err)
+	}
+	pullRun, err := st.RunOrgDirectorySyncWithModeGuarded(ctx, ownerGuard, ws.ID, ldapSrc.Source.ID, store.OrgSyncTriggerPull, store.OrgDirectorySyncPayload{
+		Departments: []store.OrgSyncDeptInput{{ExternalID: "ldap:ou=eng", Name: "工程部"}},
+		Members:     []store.OrgSyncMemberInput{{Email: alice.Email, Name: "Alice", DepartmentExternalIDs: []string{"ldap:ou=eng"}}},
+	})
+	if err != nil {
+		t.Fatalf("pull run err: %v", err)
+	}
+	if pullRun.TriggerMode != store.OrgSyncTriggerPull || pullRun.DepartmentsCreated != 1 || pullRun.MembersLinked != 1 {
+		t.Fatalf("unexpected pull run: %+v", pullRun)
+	}
+
+	schedRun, err := st.RunOrgDirectorySyncSystem(ctx, wecomSrc.Source.ID, store.OrgSyncTriggerScheduled, store.OrgDirectorySyncPayload{
+		Departments: []store.OrgSyncDeptInput{{ExternalID: "wecom-dept:10", Name: "研发中心"}},
+		Members:     []store.OrgSyncMemberInput{{Email: alice.Email, Name: "Alice", DepartmentExternalIDs: []string{"wecom-dept:10"}}},
+	})
+	if err != nil {
+		t.Fatalf("scheduled run err: %v", err)
+	}
+	if schedRun.TriggerMode != store.OrgSyncTriggerScheduled || schedRun.ActorUserID != nil || schedRun.DepartmentsCreated != 1 || schedRun.MembersLinked != 1 {
+		t.Fatalf("unexpected scheduled run: %+v", schedRun)
+	}
+
+	// Verify both runs are recorded in ListOrgSyncState with their exact trigger modes.
+	_, runs, err := st.ListOrgSyncState(ctx, ownerGuard, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	modes := map[string]bool{}
+	for _, r := range runs {
+		modes[r.TriggerMode] = true
+	}
+	if !modes[store.OrgSyncTriggerPull] || !modes[store.OrgSyncTriggerScheduled] {
+		t.Fatalf("expected pull and scheduled trigger modes in history, got: %+v", modes)
+	}
+}
+
+func TestOrgSyncConnectorsMemory(t *testing.T) {
+	exerciseOrgSyncConnectors(t, store.NewMemory())
+}
+
+func TestOrgSyncConnectorsPostgres(t *testing.T) {
+	url := os.Getenv("JIANGE_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("JIANGE_TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+	pg, err := store.NewPostgres(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pg.Close()
+	if _, err := pg.Pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrate.Up(ctx, pg.Pool); err != nil {
+		t.Fatal(err)
+	}
+	exerciseOrgSyncConnectors(t, pg)
+}
+
 func TestPostgresOrgDirectorySync(t *testing.T) {
 	url := os.Getenv("JIANGE_TEST_DATABASE_URL")
 	if url == "" {

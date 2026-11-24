@@ -149,8 +149,11 @@ func RequireJSON(next http.Handler) http.Handler {
 			mt, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
 			// uploads carry a custom header, which cross-site forms cannot set
 			upload := mt == "multipart/form-data" && r.Header.Get("X-Jiange-Upload") == "1"
+			// SAML 2.0 HTTP-POST ACS receives IdP form-encoded SAMLResponse payloads
+			samlACS := mt == "application/x-www-form-urlencoded" && r.Method == http.MethodPost &&
+				strings.HasPrefix(r.URL.Path, "/api/auth/sso/") && strings.HasSuffix(r.URL.Path, "/acs")
 			jsonLike := mt == "application/json" || mt == "application/scim+json"
-			if !jsonLike && r.ContentLength != 0 && !upload {
+			if !jsonLike && r.ContentLength != 0 && !upload && !samlACS {
 				Error(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "expected application/json")
 				return
 			}

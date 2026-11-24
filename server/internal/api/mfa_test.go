@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -85,6 +86,8 @@ func newMFATestServer(t *testing.T, st store.Store, configure func(*Server)) (*S
 	mux.Handle("POST /api/me/mfa/setup", s.requireUser(http.HandlerFunc(s.setupMyMFA)))
 	mux.Handle("POST /api/me/mfa/enable", s.requireUser(http.HandlerFunc(s.enableMyMFA)))
 	mux.Handle("POST /api/me/mfa/disable", s.requireUser(http.HandlerFunc(s.disableMyMFA)))
+	mux.Handle("GET /api/workspaces/{wsId}/security-policy", s.requireUser(http.HandlerFunc(s.getWorkspaceSecurityPolicy)))
+	mux.Handle("PUT /api/workspaces/{wsId}/security-policy", s.requireUser(http.HandlerFunc(s.putWorkspaceSecurityPolicy)))
 	mux.Handle("GET /api/workspaces/{wsId}/audit-logs", s.requireUser(http.HandlerFunc(s.listWorkspaceAuditLogs)))
 
 	handler := httpx.Chain(mux,
@@ -541,5 +544,126 @@ func TestMFADisableWithTOTPAndAttemptLimit(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("disable via TOTP status = %d, body = %s", resp.StatusCode, raw)
+	}
+}
+
+func TestMFAWorkspacePolicyEnforcement(t *testing.T) {
+	st := store.NewMemory()
+	_, ts, nowPtr, clockMu := newMFATestServer(t, st, nil)
+	getNow := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return *nowPtr
+	}
+
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar}
+
+	resp, raw := mfaJSONRequest(t, client, "POST", ts.URL+"/api/auth/register", map[string]any{
+		"email":    "policy-owner@example.com",
+		"name":     "Policy Owner",
+		"password": "owner-password-123",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("register = %d %s", resp.StatusCode, raw)
+	}
+	var regMe meResponse
+	if err := json.Unmarshal(raw, &regMe); err != nil {
+		t.Fatal(err)
+	}
+
+	// Initially: not required by policy, setup not required.
+	resp, raw = mfaJSONRequest(t, client, "GET", ts.URL+"/api/me/mfa", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("getMyMFA initial = %d", resp.StatusCode)
+	}
+	var stResp mfaStatusResponse
+	if err := json.Unmarshal(raw, &stResp); err != nil {
+		t.Fatal(err)
+	}
+	if stResp.MFARequiredByPolicy || stResp.MFASetupRequired || len(stResp.MFARequiredWorkspaces) != 0 {
+		t.Fatalf("unexpected initial policy status: %+v", stResp)
+	}
+
+	// Admin enables requireMfa on workspace 1 -> audit log records requireMfa=true.
+	resp, raw = mfaJSONRequest(t, client, "PUT", ts.URL+"/api/workspaces/1/security-policy", map[string]any{
+		"requireMfa": true,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("put policy = %d %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), `"requireMfa":true`) {
+		t.Fatalf("expected requireMfa:true in response, got %s", raw)
+	}
+
+	// Verify audit log contains requireMfa=true.
+	resp, raw = mfaJSONRequest(t, client, "GET", ts.URL+"/api/workspaces/1/audit-logs?limit=10", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("audit-logs = %d %s", resp.StatusCode, raw)
+	}
+	if !strings.Contains(string(raw), `"requireMfa":true`) {
+		t.Fatalf("expected requireMfa:true in audit log detail, got %s", raw)
+	}
+
+	// GET /api/me/mfa now reports mfaRequiredByPolicy=true, mfaSetupRequired=true, and workspace name.
+	resp, raw = mfaJSONRequest(t, client, "GET", ts.URL+"/api/me/mfa", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("getMyMFA under policy = %d", resp.StatusCode)
+	}
+	if err := json.Unmarshal(raw, &stResp); err != nil {
+		t.Fatal(err)
+	}
+	if !stResp.MFARequiredByPolicy || !stResp.MFASetupRequired || len(stResp.MFARequiredWorkspaces) != 1 || stResp.MFARequiredWorkspaces[0] != regMe.Workspaces[0].Name {
+		t.Fatalf("unexpected MFA status under policy: %+v", stResp)
+	}
+
+	// Enable TOTP MFA -> mfaSetupRequired becomes false.
+	_, raw = mfaJSONRequest(t, client, "POST", ts.URL+"/api/me/mfa/setup", map[string]any{})
+	var setupResp mfaSetupResponse
+	_ = json.Unmarshal(raw, &setupResp)
+	code, err := auth.TOTPCode(setupResp.Secret, getNow())
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, raw = mfaJSONRequest(t, client, "POST", ts.URL+"/api/me/mfa/enable", map[string]any{"code": code})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("enable MFA = %d %s", resp.StatusCode, raw)
+	}
+
+	resp, raw = mfaJSONRequest(t, client, "GET", ts.URL+"/api/me/mfa", nil)
+	_ = json.Unmarshal(raw, &stResp)
+	if !stResp.Enabled || !stResp.MFARequiredByPolicy || stResp.MFASetupRequired {
+		t.Fatalf("expected enabled=true, requiredByPolicy=true, setupRequired=false, got %+v", stResp)
+	}
+
+	// Disabling TOTP MFA while policy requires MFA and user has 0 passkeys -> 409 mfa_required_by_policy!
+	resp, raw = mfaJSONRequest(t, client, "POST", ts.URL+"/api/me/mfa/disable", map[string]any{
+		"password": "owner-password-123",
+	})
+	if resp.StatusCode != http.StatusConflict || !strings.Contains(string(raw), "mfa_required_by_policy") {
+		t.Fatalf("disable MFA under policy (0 passkeys) = %d %s, want 409 mfa_required_by_policy", resp.StatusCode, raw)
+	}
+
+	// Once user has a registered passkey, disabling TOTP MFA is permitted!
+	if _, err := st.CreateUserPasskey(context.Background(), store.UserPasskey{
+		UserID:        regMe.User.ID,
+		CredentialID:  []byte("fallback-passkey-cred"),
+		PublicKeyCOSE: []byte{0xa1, 0x01, 0x02},
+		Name:          "Touch ID",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	resp, raw = mfaJSONRequest(t, client, "POST", ts.URL+"/api/me/mfa/disable", map[string]any{
+		"password": "owner-password-123",
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("disable MFA with passkey present = %d %s, want 200", resp.StatusCode, raw)
+	}
+
+	// After disabling TOTP while passkey exists, mfaSetupRequired remains false!
+	resp, raw = mfaJSONRequest(t, client, "GET", ts.URL+"/api/me/mfa", nil)
+	_ = json.Unmarshal(raw, &stResp)
+	if stResp.Enabled || !stResp.MFARequiredByPolicy || stResp.MFASetupRequired {
+		t.Fatalf("expected enabled=false, requiredByPolicy=true, setupRequired=false (passkey covers policy), got %+v", stResp)
 	}
 }

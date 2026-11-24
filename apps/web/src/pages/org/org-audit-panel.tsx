@@ -62,6 +62,12 @@ export const auditLogsQueryKey = (
 export const KNOWN_AUDIT_ACTIONS = [
   "auth.login",
   "auth.sso_login",
+  "auth.mfa_login",
+  "auth.mfa_enable",
+  "auth.mfa_disable",
+  "auth.passkey_registered",
+  "auth.passkey_deleted",
+  "auth.passkey_login",
   "auth.logout",
   "doc.create",
   "doc.update",
@@ -105,6 +111,18 @@ export function formatAuditActionLabel(action: string): string {
       return t("账号登录");
     case "auth.sso_login":
       return t("SSO 单点登录");
+    case "auth.mfa_login":
+      return t("二步验证登录");
+    case "auth.mfa_enable":
+      return t("开启二步验证");
+    case "auth.mfa_disable":
+      return t("关闭二步验证");
+    case "auth.passkey_registered":
+      return t("绑定通行密钥");
+    case "auth.passkey_deleted":
+      return t("移除通行密钥");
+    case "auth.passkey_login":
+      return t("通行密钥登录");
     case "auth.logout":
       return t("退出登录");
     case "doc.create":
@@ -296,6 +314,7 @@ export function OrgAuditPanel({
     dlpAction: "warn",
     dlpBlockPublicShare: true,
     retentionDays: 0,
+    requireMfa: false,
     updatedBy: 0,
     updatedAt: "",
     ...(policyQuery.data ?? {}),
@@ -313,6 +332,7 @@ export function OrgAuditPanel({
     typeof draft.retentionDays === "number" && Number.isFinite(draft.retentionDays)
       ? Math.max(0, Math.min(3650, Math.trunc(draft.retentionDays)))
       : 0;
+  const requireMfa = Boolean(draft.requireMfa);
 
   const updateDraft = (patch: Partial<WorkspaceSecurityPolicy>) => {
     setDraftOverride((prev) => ({ ...(prev ?? {}), ...patch }));
@@ -422,6 +442,7 @@ export function OrgAuditPanel({
           dlpAction,
           dlpBlockPublicShare,
           retentionDays,
+          requireMfa,
         },
         userId,
       );
@@ -820,6 +841,38 @@ export function OrgAuditPanel({
         </div>
 
         <div className="mt-4 space-y-4">
+          {/* Workspace-Enforced MFA Policy Toggle */}
+          <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3.5 py-2.5">
+            <div>
+              <p className="text-[13px] font-medium">
+                {t("强制工作空间全员开启二步验证（MFA / Passkey）")}
+              </p>
+              <p className="text-[12px] text-subtle">
+                {t("开启后，工作空间成员必须配置 TOTP 二步验证或绑定通行密钥（Passkey），且不可移除最后一项验证方式")}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={requireMfa}
+              aria-label={t("强制工作空间全员开启二步验证（MFA / Passkey）")}
+              disabled={!canAdmin || savingPolicy}
+              data-require-mfa-toggle=""
+              onClick={() => updateDraft({ requireMfa: !requireMfa })}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                requireMfa ? "bg-primary" : "bg-[#c9cdd4] dark:bg-[#4e5259]",
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                  requireMfa ? "translate-x-6" : "translate-x-1",
+                )}
+              />
+            </button>
+          </div>
+
           {/* DLP Enable Toggle */}
           <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3.5 py-2.5">
             <div>

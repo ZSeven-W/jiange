@@ -480,8 +480,48 @@ func exerciseWorkspaceSecurityPolicy(t *testing.T, st auditTestStore) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !readBack2.DLPEnabled || readBack2.DLPAction != store.DLPActionBlock || !readBack2.DLPBlockPublicShare || readBack2.DLPKeywords == nil || len(readBack2.DLPKeywords) != 0 || readBack2.RetentionDays != 0 {
+	if !readBack2.DLPEnabled || readBack2.DLPAction != store.DLPActionBlock || !readBack2.DLPBlockPublicShare || readBack2.DLPKeywords == nil || len(readBack2.DLPKeywords) != 0 || readBack2.RetentionDays != 0 || readBack2.RequireMFA {
 		t.Fatalf("readBack2 DLP mismatch: %+v", readBack2)
+	}
+
+	// Workspace-Enforced MFA Policy toggle + UserHasMFARequiredWorkspace helper.
+	reqBefore, wsBefore, err := st.UserHasMFARequiredWorkspace(ctx, member.ID)
+	if err != nil || reqBefore || len(wsBefore) != 0 {
+		t.Fatalf("before RequireMFA: (%v, %v, %v), want (false, [], nil)", reqBefore, wsBefore, err)
+	}
+	reqMFATrue := true
+	mfaPol, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		RequireMFA: &reqMFATrue,
+	})
+	if err != nil {
+		t.Fatalf("enable RequireMFA: %v", err)
+	}
+	if !mfaPol.RequireMFA || !mfaPol.DLPEnabled {
+		t.Fatalf("expected RequireMFA=true and preserved DLPEnabled=true, got %+v", mfaPol)
+	}
+	// Owner, admin, and member belong to ws -> UserHasMFARequiredWorkspace returns true + ws.Name.
+	for _, u := range []store.User{owner, admin, member} {
+		req, names, err := st.UserHasMFARequiredWorkspace(ctx, u.ID)
+		if err != nil || !req || len(names) != 1 || names[0] != ws.Name {
+			t.Fatalf("UserHasMFARequiredWorkspace(%s) = (%v, %v, %v), want (true, [%q], nil)", u.Email, req, names, err, ws.Name)
+		}
+	}
+	// Outsider is NOT in ws -> false.
+	reqOut, namesOut, err := st.UserHasMFARequiredWorkspace(ctx, outsider.ID)
+	if err != nil || reqOut || len(namesOut) != 0 {
+		t.Fatalf("outsider UserHasMFARequiredWorkspace = (%v, %v, %v), want (false, [], nil)", reqOut, namesOut, err)
+	}
+	// Turning RequireMFA back off clears enforcement.
+	reqMFAFalse := false
+	mfaPolOff, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, adminGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		RequireMFA: &reqMFAFalse,
+	})
+	if err != nil || mfaPolOff.RequireMFA {
+		t.Fatalf("disable RequireMFA = (%+v, %v)", mfaPolOff, err)
+	}
+	reqAfter, namesAfter, err := st.UserHasMFARequiredWorkspace(ctx, member.ID)
+	if err != nil || reqAfter || len(namesAfter) != 0 {
+		t.Fatalf("after disabling RequireMFA = (%v, %v, %v), want (false, [], nil)", reqAfter, namesAfter, err)
 	}
 
 	_ = fmt.Sprint(readBack2)

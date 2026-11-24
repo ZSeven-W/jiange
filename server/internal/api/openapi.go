@@ -695,6 +695,36 @@ func oaOpsAuthAndPAT() []oaRoute {
 			Public: true,
 		},
 		{
+			Method: "GET", Path: "/api/auth/sso/{slug}/metadata.xml", Tag: "Auth & MFA", OpID: "getSAMLMetadata",
+			Summary: "Download SAML 2.0 Service Provider metadata XML",
+			Desc:    "Returns standard SAML 2.0 EntityDescriptor / SPSSODescriptor XML containing the SP Entity ID and HTTP-POST ACS URL.",
+			Resps:   map[string]oaResp{"200": oaPlainResp("SAML 2.0 SP metadata XML"), "404": oaErrResp("SAML provider not found")},
+			Public:  true,
+		},
+		{
+			Method: "POST", Path: "/api/auth/sso/{slug}/acs", Tag: "Auth & MFA", OpID: "acsSAML",
+			Summary: "SAML 2.0 Assertion Consumer Service (HTTP-POST)",
+			Desc:    "Receives and cryptographically verifies an IdP-signed SAMLResponse XML-DSig assertion, provisions or matches the user, and starts a session.",
+			Resps:   map[string]oaResp{"302": oaPlainResp("Redirect to application"), "401": oaErrResp("Invalid SAML assertion or signature")},
+			Public:  true,
+		},
+		{
+			Method: "POST", Path: "/api/auth/passkey/login/begin", Tag: "Auth & MFA", OpID: "beginPasskeyLogin",
+			Summary: "Begin WebAuthn Passkey passwordless login",
+			Desc:    "Generates a WebAuthn PublicKeyCredentialRequestOptions challenge for passwordless sign-in.",
+			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"email": {Type: "string", Description: "Optional user email to scope allowCredentials"}}), "Passkey login init"),
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("WebAuthn assertion options", map[string]any{"type": "object"})},
+			Public:  true,
+		},
+		{
+			Method: "POST", Path: "/api/auth/passkey/login/finish", Tag: "Auth & MFA", OpID: "finishPasskeyLogin",
+			Summary: "Finish WebAuthn Passkey passwordless login",
+			Desc:    "Verifies the authenticator assertion signature (ES256/RS256) and signCount, issuing an authenticated session cookie.",
+			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"challenge": {Type: "string"}, "credentialId": {Type: "string"}, "clientDataJSON": {Type: "string"}, "authenticatorData": {Type: "string"}, "signature": {Type: "string"}}, "challenge", "credentialId", "clientDataJSON", "authenticatorData", "signature"), "WebAuthn assertion"),
+			Resps:   map[string]oaResp{"200": oaJSONResp("Authenticated user", "User"), "401": oaErrResp("Invalid passkey assertion")},
+			Public:  true,
+		},
+		{
 			Method: "GET", Path: "/api/me", Tag: "Auth & MFA", OpID: "getMe",
 			Summary: "Get current authenticated user and workspaces",
 			Desc:    "Returns the caller's profile and all workspaces they belong to. Accepts Bearer PAT or session cookie.",
@@ -728,7 +758,32 @@ func oaOpsAuthAndPAT() []oaRoute {
 			Body: oaJSONBody(oaObjSchema(map[string]oaProp{
 				"code": {Type: "string", Description: "Current TOTP or backup code"},
 			}, "code"), "MFA disable confirmation"),
-			Resps: map[string]oaResp{"204": oaPlainResp("MFA disabled"), "400": oaErrResp("Invalid code")},
+			Resps: map[string]oaResp{"204": oaPlainResp("MFA disabled"), "400": oaErrResp("Invalid code"), "409": oaErrResp("Workspace policy requires MFA")},
+		},
+		{
+			Method: "GET", Path: "/api/me/passkeys", Tag: "Auth & MFA", OpID: "listMyPasskeys",
+			Summary: "List personal WebAuthn Passkeys",
+			Desc:    "Returns all WebAuthn/FIDO2 passkeys registered to the authenticated user.",
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("Registered passkeys", map[string]any{"type": "object"}), "401": oaErrResp("Unauthorized")},
+		},
+		{
+			Method: "DELETE", Path: "/api/me/passkeys/{pid}", Tag: "Auth & MFA", OpID: "deleteMyPasskey",
+			Summary: "Delete a personal WebAuthn Passkey",
+			Desc:    "Removes a registered passkey unless blocked by workspace-enforced MFA policy.",
+			Resps:   map[string]oaResp{"204": oaPlainResp("Passkey deleted"), "404": oaErrResp("Passkey not found"), "409": oaErrResp("Workspace policy requires MFA")},
+		},
+		{
+			Method: "POST", Path: "/api/me/passkeys/register/begin", Tag: "Auth & MFA", OpID: "beginPasskeyRegister",
+			Summary: "Begin registering a WebAuthn Passkey",
+			Desc:    "Creates a short-lived WebAuthn attestation challenge and PublicKeyCredentialCreationOptions.",
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("WebAuthn registration options", map[string]any{"type": "object"}), "401": oaErrResp("Unauthorized")},
+		},
+		{
+			Method: "POST", Path: "/api/me/passkeys/register/finish", Tag: "Auth & MFA", OpID: "finishPasskeyRegister",
+			Summary: "Finish registering a WebAuthn Passkey",
+			Desc:    "Verifies the CBOR attestationObject and COSE public key (ES256/RS256) and saves the passkey.",
+			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"name": {Type: "string"}, "challenge": {Type: "string"}, "clientDataJSON": {Type: "string"}, "attestationObject": {Type: "string"}}, "challenge", "clientDataJSON", "attestationObject"), "WebAuthn attestation"),
+			Resps:   map[string]oaResp{"201": oaJSONInlineResp("Registered passkey", map[string]any{"type": "object"}), "400": oaErrResp("Invalid attestation")},
 		},
 		{
 			Method: "GET", Path: "/api/me/tokens", Tag: "Personal Access Tokens", OpID: "listMyPATs",
@@ -2511,13 +2566,23 @@ func oaOpsAI() []oaRoute {
 		{
 			Method: "POST", Path: "/api/ai/ask-workspace", Tag: "AI Suite", OpID: "aiAskWorkspace",
 			Summary: "Ask Workspace Knowledge Base (RAG Q&A)",
-			Desc:    "Retrieves permission-filtered documents from the workspace and synthesizes a cited answer via the configured LLM.",
+			Desc:    "Retrieves permission-filtered documents and indexed attachments via hybrid semantic+lexical RAG and synthesizes a cited answer.",
 			Body: oaJSONBody(oaObjSchema(map[string]oaProp{
 				"workspaceId": {Type: "integer", Example: 1},
 				"question":    {Type: "string", Example: "What is our Q4 release schedule?"},
 				"maxSources":  {Type: "integer", Example: 5},
 			}, "workspaceId", "question"), "Workspace RAG query"),
 			Resps: map[string]oaResp{"200": oaJSONInlineResp("Answer with cited source documents", map[string]any{"type": "object"}), "400": oaErrResp("Invalid query or AI unconfigured"), "429": oaErrResp("Rate limit exceeded")},
+		},
+		{
+			Method: "POST", Path: "/api/ai/workspace-ask/stream", Tag: "AI Suite", OpID: "aiWorkspaceAskStream",
+			Summary: "Stream Workspace Knowledge Base RAG Q&A (SSE)",
+			Desc:    "Runs hybrid vector+lexical retrieval across workspace documents and attachment text, streaming `citations`, `delta`, and `done` Server-Sent Events.",
+			Body: oaJSONBody(oaObjSchema(map[string]oaProp{
+				"workspaceId": {Type: "integer", Example: 1},
+				"question":    {Type: "string", Example: "Summarize our Q4 security checklist"},
+			}, "question"), "Workspace RAG streaming query"),
+			Resps: map[string]oaResp{"200": oaPlainResp("text/event-stream SSE token stream"), "400": oaErrResp("Invalid query"), "429": oaErrResp("Rate limit exceeded")},
 		},
 		{
 			Method: "POST", Path: "/api/ai/sheet-assist", Tag: "AI Suite", OpID: "aiSheetAssist",
@@ -2713,6 +2778,13 @@ func oaOpsOrgAndWorkspaces() []oaRoute {
 			Desc:    "Applies or dry-runs a department, group, and membership snapshot sync.",
 			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"departments": {Type: "array", ItemsType: "object"}, "groups": {Type: "array", ItemsType: "object"}, "members": {Type: "array", ItemsType: "object"}, "dryRun": {Type: "boolean"}}), "Directory snapshot payload"),
 			Resps:   oaStdResp("200", "Sync run summary", "", false),
+		},
+		{
+			Method: "POST", Path: "/api/workspaces/{wsId}/org/sync-sources/{sourceId}/pull", Tag: "Organization", OpID: "pullOrgDirectorySync",
+			Summary: "Actively pull directory from LDAP / WeCom / DingTalk",
+			Desc:    "Connects to the configured external LDAP v3, WeCom, or DingTalk directory using encrypted connector credentials and applies or dry-runs the sync.",
+			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"dryRun": {Type: "boolean", Description: "Preview changes without mutating workspace"}}), "Active pull options"),
+			Resps:   oaStdResp("200", "Pull sync result with fetched counts", "", false),
 		},
 		{
 			Method: "POST", Path: "/api/org/sync/push", Tag: "Organization", OpID: "pushOrgDirectorySync",

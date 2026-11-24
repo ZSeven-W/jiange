@@ -21,40 +21,49 @@ import (
 const (
 	SSOProviderOIDC     = "oidc"
 	SSOProviderOAuth2   = "oauth2"
+	SSOProviderSAML     = "saml"
 	SSOProviderFeishu   = "feishu"
 	SSOProviderWeCom    = "wecom"
 	SSOProviderDingTalk = "dingtalk"
 	SSOProviderGitHub   = "github"
 	SSOProviderGoogle   = "google"
 
-	DefaultSSOScopes = "openid email profile"
+	DefaultSSOScopes          = "openid email profile"
+	DefaultSAMLAttributeEmail = "email"
+	DefaultSAMLAttributeName  = "displayName"
 )
 
 var reSSOSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{1,39}$`)
 
-// SSOProvider configures an enterprise OIDC/OAuth2 identity provider bound to a workspace.
+// SSOProvider configures an enterprise OIDC/OAuth2/SAML 2.0 identity provider bound to a workspace.
 type SSOProvider struct {
-	ID              int64     `json:"id"`
-	WorkspaceID     int64     `json:"workspaceId"`
-	Slug            string    `json:"slug"`
-	Name            string    `json:"name"`
-	ProviderType    string    `json:"providerType"`
-	Enabled         bool      `json:"enabled"`
-	IssuerURL       string    `json:"issuerUrl"`
-	AuthURL         string    `json:"authUrl"`
-	TokenURL        string    `json:"tokenUrl"`
-	UserinfoURL     string    `json:"userinfoUrl"`
-	ClientID        string    `json:"clientId"`
-	ClientSecretEnc []byte    `json:"-"`
-	HasClientSecret bool      `json:"hasClientSecret"`
-	SecretHint      string    `json:"secretHint"`
-	Scopes          string    `json:"scopes"`
-	AutoCreateUser  bool      `json:"autoCreateUser"`
-	DefaultRole     string    `json:"defaultRole"`
-	AllowedDomains  string    `json:"allowedDomains"`
-	CreatedBy       *int64    `json:"createdBy,omitempty"`
-	CreatedAt       time.Time `json:"createdAt"`
-	UpdatedAt       time.Time `json:"updatedAt"`
+	ID                 int64     `json:"id"`
+	WorkspaceID        int64     `json:"workspaceId"`
+	Slug               string    `json:"slug"`
+	Name               string    `json:"name"`
+	ProviderType       string    `json:"providerType"`
+	Enabled            bool      `json:"enabled"`
+	IssuerURL          string    `json:"issuerUrl"`
+	AuthURL            string    `json:"authUrl"`
+	TokenURL           string    `json:"tokenUrl"`
+	UserinfoURL        string    `json:"userinfoUrl"`
+	ClientID           string    `json:"clientId"`
+	ClientSecretEnc    []byte    `json:"-"`
+	HasClientSecret    bool      `json:"hasClientSecret"`
+	SecretHint         string    `json:"secretHint"`
+	Scopes             string    `json:"scopes"`
+	AutoCreateUser     bool      `json:"autoCreateUser"`
+	DefaultRole        string    `json:"defaultRole"`
+	AllowedDomains     string    `json:"allowedDomains"`
+	SAMLEntityID       string    `json:"samlEntityId"`
+	SAMLSsoURL         string    `json:"samlSsoUrl"`
+	SAMLIdPCertPEM     string    `json:"samlIdpCertPem"`
+	SAMLSpEntityID     string    `json:"samlSpEntityId"`
+	SAMLAttributeEmail string    `json:"samlAttributeEmail"`
+	SAMLAttributeName  string    `json:"samlAttributeName"`
+	CreatedBy          *int64    `json:"createdBy,omitempty"`
+	CreatedAt          time.Time `json:"createdAt"`
+	UpdatedAt          time.Time `json:"updatedAt"`
 }
 
 // PublicSSOProvider is the unauthenticated login-page projection of an enabled SSO provider.
@@ -68,41 +77,53 @@ type PublicSSOProvider struct {
 
 // SSOProviderInput creates a new workspace SSO provider.
 type SSOProviderInput struct {
-	Slug            string
-	Name            string
-	ProviderType    string
-	Enabled         bool
-	IssuerURL       string
-	AuthURL         string
-	TokenURL        string
-	UserinfoURL     string
-	ClientID        string
-	ClientSecretEnc []byte
-	SecretHint      string
-	Scopes          string
-	AutoCreateUser  bool
-	DefaultRole     string
-	AllowedDomains  string
+	Slug               string
+	Name               string
+	ProviderType       string
+	Enabled            bool
+	IssuerURL          string
+	AuthURL            string
+	TokenURL           string
+	UserinfoURL        string
+	ClientID           string
+	ClientSecretEnc    []byte
+	SecretHint         string
+	Scopes             string
+	AutoCreateUser     bool
+	DefaultRole        string
+	AllowedDomains     string
+	SAMLEntityID       string
+	SAMLSsoURL         string
+	SAMLIdPCertPEM     string
+	SAMLSpEntityID     string
+	SAMLAttributeEmail string
+	SAMLAttributeName  string
 }
 
 // SSOProviderPatch partially updates a workspace SSO provider.
 type SSOProviderPatch struct {
-	Slug            *string
-	Name            *string
-	ProviderType    *string
-	Enabled         *bool
-	IssuerURL       *string
-	AuthURL         *string
-	TokenURL        *string
-	UserinfoURL     *string
-	ClientID        *string
-	ClientSecretEnc []byte
-	SecretHint      string
-	UpdateSecret    bool
-	Scopes          *string
-	AutoCreateUser  *bool
-	DefaultRole     *string
-	AllowedDomains  *string
+	Slug               *string
+	Name               *string
+	ProviderType       *string
+	Enabled            *bool
+	IssuerURL          *string
+	AuthURL            *string
+	TokenURL           *string
+	UserinfoURL        *string
+	ClientID           *string
+	ClientSecretEnc    []byte
+	SecretHint         string
+	UpdateSecret       bool
+	Scopes             *string
+	AutoCreateUser     *bool
+	DefaultRole        *string
+	AllowedDomains     *string
+	SAMLEntityID       *string
+	SAMLSsoURL         *string
+	SAMLIdPCertPEM     *string
+	SAMLSpEntityID     *string
+	SAMLAttributeEmail *string
+	SAMLAttributeName  *string
 }
 
 // SSOAuthState stores a short-lived, single-use PKCE + CSRF + nonce state.
@@ -125,11 +146,12 @@ type SSOIdentity struct {
 	LastLoginAt time.Time `json:"lastLoginAt"`
 }
 
-// SSOStore manages enterprise OIDC/OAuth2 SSO providers, ephemeral PKCE auth states,
+// SSOStore manages enterprise OIDC/OAuth2/SAML 2.0 SSO providers, ephemeral PKCE/SAML auth states,
 // and identity linking / JIT user provisioning.
 type SSOStore interface {
 	ListPublicSSOProviders(ctx context.Context) ([]PublicSSOProvider, error)
 	GetSSOProviderBySlug(ctx context.Context, slug string) (SSOProvider, error)
+	GetSSOProviderByID(ctx context.Context, id int64) (SSOProvider, error)
 	ListWorkspaceSSOProviders(ctx context.Context, guard RestoreGuard, wsID int64) ([]SSOProvider, error)
 	CreateSSOProviderGuarded(ctx context.Context, guard RestoreGuard, wsID int64, in SSOProviderInput) (SSOProvider, error)
 	UpdateSSOProviderGuarded(ctx context.Context, guard RestoreGuard, wsID, providerID int64, patch SSOProviderPatch) (SSOProvider, error)
@@ -152,7 +174,7 @@ func ValidSSOSlug(slug string) bool {
 // ValidSSOProviderType reports whether t is a supported SSO provider type.
 func ValidSSOProviderType(t string) bool {
 	switch t {
-	case SSOProviderOIDC, SSOProviderOAuth2, SSOProviderFeishu, SSOProviderWeCom,
+	case SSOProviderOIDC, SSOProviderOAuth2, SSOProviderSAML, SSOProviderFeishu, SSOProviderWeCom,
 		SSOProviderDingTalk, SSOProviderGitHub, SSOProviderGoogle:
 		return true
 	default:
@@ -219,17 +241,55 @@ func validateSSOProviderFields(p *SSOProvider) error {
 	if !ValidSSOProviderType(p.ProviderType) {
 		return ErrConflict
 	}
+
+	p.SAMLEntityID = strings.TrimSpace(p.SAMLEntityID)
+	if len(p.SAMLEntityID) > 1024 {
+		return ErrConflict
+	}
+	p.SAMLSpEntityID = strings.TrimSpace(p.SAMLSpEntityID)
+	if len(p.SAMLSpEntityID) > 1024 {
+		return ErrConflict
+	}
+	p.SAMLIdPCertPEM = strings.TrimSpace(p.SAMLIdPCertPEM)
+	if len(p.SAMLIdPCertPEM) > 32768 {
+		return ErrConflict
+	}
+	p.SAMLAttributeEmail = strings.TrimSpace(p.SAMLAttributeEmail)
+	if p.SAMLAttributeEmail == "" {
+		p.SAMLAttributeEmail = DefaultSAMLAttributeEmail
+	}
+	if len(p.SAMLAttributeEmail) > 256 {
+		return ErrConflict
+	}
+	p.SAMLAttributeName = strings.TrimSpace(p.SAMLAttributeName)
+	if p.SAMLAttributeName == "" {
+		p.SAMLAttributeName = DefaultSAMLAttributeName
+	}
+	if len(p.SAMLAttributeName) > 256 {
+		return ErrConflict
+	}
+
+	isSAML := p.ProviderType == SSOProviderSAML
+	samlSsoURL, ok := ValidSSOURL(p.SAMLSsoURL, isSAML)
+	if !ok {
+		return ErrConflict
+	}
+	p.SAMLSsoURL = samlSsoURL
+	if isSAML && p.SAMLIdPCertPEM == "" {
+		return ErrConflict
+	}
+
 	issuer, ok := ValidSSOURL(p.IssuerURL, false)
 	if !ok {
 		return ErrConflict
 	}
 	p.IssuerURL = strings.TrimRight(issuer, "/")
-	authURL, ok := ValidSSOURL(p.AuthURL, true)
+	authURL, ok := ValidSSOURL(p.AuthURL, !isSAML)
 	if !ok {
 		return ErrConflict
 	}
 	p.AuthURL = authURL
-	tokenURL, ok := ValidSSOURL(p.TokenURL, true)
+	tokenURL, ok := ValidSSOURL(p.TokenURL, !isSAML)
 	if !ok {
 		return ErrConflict
 	}
@@ -240,11 +300,11 @@ func validateSSOProviderFields(p *SSOProvider) error {
 	}
 	p.UserinfoURL = userinfoURL
 	p.ClientID = strings.TrimSpace(p.ClientID)
-	if p.ClientID == "" || len(p.ClientID) > 256 {
+	if (!isSAML && p.ClientID == "") || len(p.ClientID) > 256 {
 		return ErrConflict
 	}
 	p.Scopes = strings.TrimSpace(p.Scopes)
-	if p.Scopes == "" {
+	if !isSAML && p.Scopes == "" {
 		p.Scopes = DefaultSSOScopes
 	}
 	if len(p.Scopes) > 512 {
@@ -376,6 +436,16 @@ func (m *Memory) GetSSOProviderBySlug(_ context.Context, slug string) (SSOProvid
 	return SSOProvider{}, ErrNotFound
 }
 
+func (m *Memory) GetSSOProviderByID(_ context.Context, id int64) (SSOProvider, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.sso.providers[id]
+	if !ok {
+		return SSOProvider{}, ErrNotFound
+	}
+	return cloneSSOProvider(p, true), nil
+}
+
 func (m *Memory) ListWorkspaceSSOProviders(ctx context.Context, guard RestoreGuard, wsID int64) ([]SSOProvider, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -408,25 +478,31 @@ func (m *Memory) CreateSSOProviderGuarded(ctx context.Context, guard RestoreGuar
 	now := guard.currentTime()
 	createdBy := guard.UserID
 	p := SSOProvider{
-		WorkspaceID:     wsID,
-		Slug:            in.Slug,
-		Name:            in.Name,
-		ProviderType:    in.ProviderType,
-		Enabled:         in.Enabled,
-		IssuerURL:       in.IssuerURL,
-		AuthURL:         in.AuthURL,
-		TokenURL:        in.TokenURL,
-		UserinfoURL:     in.UserinfoURL,
-		ClientID:        in.ClientID,
-		ClientSecretEnc: append([]byte(nil), in.ClientSecretEnc...),
-		SecretHint:      in.SecretHint,
-		Scopes:          in.Scopes,
-		AutoCreateUser:  in.AutoCreateUser,
-		DefaultRole:     in.DefaultRole,
-		AllowedDomains:  in.AllowedDomains,
-		CreatedBy:       &createdBy,
-		CreatedAt:       now,
-		UpdatedAt:       now,
+		WorkspaceID:        wsID,
+		Slug:               in.Slug,
+		Name:               in.Name,
+		ProviderType:       in.ProviderType,
+		Enabled:            in.Enabled,
+		IssuerURL:          in.IssuerURL,
+		AuthURL:            in.AuthURL,
+		TokenURL:           in.TokenURL,
+		UserinfoURL:        in.UserinfoURL,
+		ClientID:           in.ClientID,
+		ClientSecretEnc:    append([]byte(nil), in.ClientSecretEnc...),
+		SecretHint:         in.SecretHint,
+		Scopes:             in.Scopes,
+		AutoCreateUser:     in.AutoCreateUser,
+		DefaultRole:        in.DefaultRole,
+		AllowedDomains:     in.AllowedDomains,
+		SAMLEntityID:       in.SAMLEntityID,
+		SAMLSsoURL:         in.SAMLSsoURL,
+		SAMLIdPCertPEM:     in.SAMLIdPCertPEM,
+		SAMLSpEntityID:     in.SAMLSpEntityID,
+		SAMLAttributeEmail: in.SAMLAttributeEmail,
+		SAMLAttributeName:  in.SAMLAttributeName,
+		CreatedBy:          &createdBy,
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
 	if err := validateSSOProviderFields(&p); err != nil {
 		return SSOProvider{}, err
@@ -499,6 +575,24 @@ func (m *Memory) UpdateSSOProviderGuarded(ctx context.Context, guard RestoreGuar
 	}
 	if patch.AllowedDomains != nil {
 		next.AllowedDomains = *patch.AllowedDomains
+	}
+	if patch.SAMLEntityID != nil {
+		next.SAMLEntityID = *patch.SAMLEntityID
+	}
+	if patch.SAMLSsoURL != nil {
+		next.SAMLSsoURL = *patch.SAMLSsoURL
+	}
+	if patch.SAMLIdPCertPEM != nil {
+		next.SAMLIdPCertPEM = *patch.SAMLIdPCertPEM
+	}
+	if patch.SAMLSpEntityID != nil {
+		next.SAMLSpEntityID = *patch.SAMLSpEntityID
+	}
+	if patch.SAMLAttributeEmail != nil {
+		next.SAMLAttributeEmail = *patch.SAMLAttributeEmail
+	}
+	if patch.SAMLAttributeName != nil {
+		next.SAMLAttributeName = *patch.SAMLAttributeName
 	}
 	next.UpdatedAt = guard.currentTime()
 	if err := validateSSOProviderFields(&next); err != nil {
@@ -705,7 +799,10 @@ func scanSSOProvider(r pgx.Row, includeSecret bool) (SSOProvider, error) {
 		&p.ID, &p.WorkspaceID, &p.Slug, &p.Name, &p.ProviderType, &p.Enabled,
 		&p.IssuerURL, &p.AuthURL, &p.TokenURL, &p.UserinfoURL, &p.ClientID,
 		&secretEnc, &p.SecretHint, &p.Scopes, &p.AutoCreateUser, &p.DefaultRole,
-		&p.AllowedDomains, &p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
+		&p.AllowedDomains,
+		&p.SAMLEntityID, &p.SAMLSsoURL, &p.SAMLIdPCertPEM, &p.SAMLSpEntityID,
+		&p.SAMLAttributeEmail, &p.SAMLAttributeName,
+		&p.CreatedBy, &p.CreatedAt, &p.UpdatedAt,
 	)
 	if err != nil {
 		return SSOProvider{}, err
@@ -720,7 +817,10 @@ func scanSSOProvider(r pgx.Row, includeSecret bool) (SSOProvider, error) {
 const ssoProviderSelectCols = `id, workspace_id, slug, name, provider_type, enabled,
 	issuer_url, auth_url, token_url, userinfo_url, client_id,
 	client_secret_enc, secret_hint, scopes, auto_create_user, default_role,
-	allowed_domains, created_by, created_at, updated_at`
+	allowed_domains,
+	saml_entity_id, saml_sso_url, saml_idp_cert_pem, saml_sp_entity_id,
+	saml_attribute_email, saml_attribute_name,
+	created_by, created_at, updated_at`
 
 func (p *Postgres) ListPublicSSOProviders(ctx context.Context) ([]PublicSSOProvider, error) {
 	rows, err := p.Pool.Query(ctx,
@@ -754,6 +854,16 @@ func (p *Postgres) GetSSOProviderBySlug(ctx context.Context, slug string) (SSOPr
 	return prov, err
 }
 
+func (p *Postgres) GetSSOProviderByID(ctx context.Context, id int64) (SSOProvider, error) {
+	row := p.Pool.QueryRow(ctx,
+		`SELECT `+ssoProviderSelectCols+` FROM sso_providers WHERE id = $1`, id)
+	prov, err := scanSSOProvider(row, true)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SSOProvider{}, ErrNotFound
+	}
+	return prov, err
+}
+
 func (p *Postgres) ListWorkspaceSSOProviders(ctx context.Context, guard RestoreGuard, wsID int64) (out []SSOProvider, err error) {
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		expires, e := orgPGRequireAdmin(ctx, tx, guard, wsID)
@@ -771,17 +881,10 @@ func (p *Postgres) ListWorkspaceSSOProviders(ctx context.Context, guard RestoreG
 		defer rows.Close()
 		out = make([]SSOProvider, 0)
 		for rows.Next() {
-			var item SSOProvider
-			var secretEnc []byte
-			if e = rows.Scan(
-				&item.ID, &item.WorkspaceID, &item.Slug, &item.Name, &item.ProviderType, &item.Enabled,
-				&item.IssuerURL, &item.AuthURL, &item.TokenURL, &item.UserinfoURL, &item.ClientID,
-				&secretEnc, &item.SecretHint, &item.Scopes, &item.AutoCreateUser, &item.DefaultRole,
-				&item.AllowedDomains, &item.CreatedBy, &item.CreatedAt, &item.UpdatedAt,
-			); e != nil {
-				return e
+			item, scanErr := scanSSOProvider(rows, false)
+			if scanErr != nil {
+				return scanErr
 			}
-			item.HasClientSecret = len(secretEnc) > 0
 			out = append(out, item)
 		}
 		if e = rows.Err(); e != nil {
@@ -794,22 +897,28 @@ func (p *Postgres) ListWorkspaceSSOProviders(ctx context.Context, guard RestoreG
 
 func (p *Postgres) CreateSSOProviderGuarded(ctx context.Context, guard RestoreGuard, wsID int64, in SSOProviderInput) (out SSOProvider, err error) {
 	cand := SSOProvider{
-		WorkspaceID:     wsID,
-		Slug:            in.Slug,
-		Name:            in.Name,
-		ProviderType:    in.ProviderType,
-		Enabled:         in.Enabled,
-		IssuerURL:       in.IssuerURL,
-		AuthURL:         in.AuthURL,
-		TokenURL:        in.TokenURL,
-		UserinfoURL:     in.UserinfoURL,
-		ClientID:        in.ClientID,
-		ClientSecretEnc: in.ClientSecretEnc,
-		SecretHint:      in.SecretHint,
-		Scopes:          in.Scopes,
-		AutoCreateUser:  in.AutoCreateUser,
-		DefaultRole:     in.DefaultRole,
-		AllowedDomains:  in.AllowedDomains,
+		WorkspaceID:        wsID,
+		Slug:               in.Slug,
+		Name:               in.Name,
+		ProviderType:       in.ProviderType,
+		Enabled:            in.Enabled,
+		IssuerURL:          in.IssuerURL,
+		AuthURL:            in.AuthURL,
+		TokenURL:           in.TokenURL,
+		UserinfoURL:        in.UserinfoURL,
+		ClientID:           in.ClientID,
+		ClientSecretEnc:    in.ClientSecretEnc,
+		SecretHint:         in.SecretHint,
+		Scopes:             in.Scopes,
+		AutoCreateUser:     in.AutoCreateUser,
+		DefaultRole:        in.DefaultRole,
+		AllowedDomains:     in.AllowedDomains,
+		SAMLEntityID:       in.SAMLEntityID,
+		SAMLSsoURL:         in.SAMLSsoURL,
+		SAMLIdPCertPEM:     in.SAMLIdPCertPEM,
+		SAMLSpEntityID:     in.SAMLSpEntityID,
+		SAMLAttributeEmail: in.SAMLAttributeEmail,
+		SAMLAttributeName:  in.SAMLAttributeName,
 	}
 	if err := validateSSOProviderFields(&cand); err != nil {
 		return SSOProvider{}, err
@@ -824,17 +933,26 @@ func (p *Postgres) CreateSSOProviderGuarded(ctx context.Context, guard RestoreGu
 				workspace_id, slug, name, provider_type, enabled,
 				issuer_url, auth_url, token_url, userinfo_url, client_id,
 				client_secret_enc, secret_hint, scopes, auto_create_user, default_role,
-				allowed_domains, created_by
+				allowed_domains,
+				saml_entity_id, saml_sso_url, saml_idp_cert_pem, saml_sp_entity_id,
+				saml_attribute_email, saml_attribute_name,
+				created_by
 			) VALUES (
 				$1, $2, $3, $4, $5,
 				$6, $7, $8, $9, $10,
 				$11, $12, $13, $14, $15,
-				$16, $17
+				$16,
+				$17, $18, $19, $20,
+				$21, $22,
+				$23
 			) RETURNING `+ssoProviderSelectCols,
 			wsID, cand.Slug, cand.Name, cand.ProviderType, cand.Enabled,
 			cand.IssuerURL, cand.AuthURL, cand.TokenURL, cand.UserinfoURL, cand.ClientID,
 			cand.ClientSecretEnc, cand.SecretHint, cand.Scopes, cand.AutoCreateUser, cand.DefaultRole,
-			cand.AllowedDomains, guard.UserID,
+			cand.AllowedDomains,
+			cand.SAMLEntityID, cand.SAMLSsoURL, cand.SAMLIdPCertPEM, cand.SAMLSpEntityID,
+			cand.SAMLAttributeEmail, cand.SAMLAttributeName,
+			guard.UserID,
 		)
 		out, e = scanSSOProvider(row, false)
 		if e != nil {
@@ -903,6 +1021,24 @@ func (p *Postgres) UpdateSSOProviderGuarded(ctx context.Context, guard RestoreGu
 		if patch.AllowedDomains != nil {
 			cur.AllowedDomains = *patch.AllowedDomains
 		}
+		if patch.SAMLEntityID != nil {
+			cur.SAMLEntityID = *patch.SAMLEntityID
+		}
+		if patch.SAMLSsoURL != nil {
+			cur.SAMLSsoURL = *patch.SAMLSsoURL
+		}
+		if patch.SAMLIdPCertPEM != nil {
+			cur.SAMLIdPCertPEM = *patch.SAMLIdPCertPEM
+		}
+		if patch.SAMLSpEntityID != nil {
+			cur.SAMLSpEntityID = *patch.SAMLSpEntityID
+		}
+		if patch.SAMLAttributeEmail != nil {
+			cur.SAMLAttributeEmail = *patch.SAMLAttributeEmail
+		}
+		if patch.SAMLAttributeName != nil {
+			cur.SAMLAttributeName = *patch.SAMLAttributeName
+		}
 		if e = validateSSOProviderFields(&cur); e != nil {
 			return e
 		}
@@ -912,7 +1048,10 @@ func (p *Postgres) UpdateSSOProviderGuarded(ctx context.Context, guard RestoreGu
 			        issuer_url = $7, auth_url = $8, token_url = $9, userinfo_url = $10,
 			        client_id = $11, client_secret_enc = $12, secret_hint = $13,
 			        scopes = $14, auto_create_user = $15, default_role = $16,
-			        allowed_domains = $17, updated_at = now()
+			        allowed_domains = $17,
+			        saml_entity_id = $18, saml_sso_url = $19, saml_idp_cert_pem = $20,
+			        saml_sp_entity_id = $21, saml_attribute_email = $22, saml_attribute_name = $23,
+			        updated_at = now()
 			  WHERE id = $1 AND workspace_id = $2
 			  RETURNING `+ssoProviderSelectCols,
 			providerID, wsID,
@@ -921,6 +1060,8 @@ func (p *Postgres) UpdateSSOProviderGuarded(ctx context.Context, guard RestoreGu
 			cur.ClientID, cur.ClientSecretEnc, cur.SecretHint,
 			cur.Scopes, cur.AutoCreateUser, cur.DefaultRole,
 			cur.AllowedDomains,
+			cur.SAMLEntityID, cur.SAMLSsoURL, cur.SAMLIdPCertPEM,
+			cur.SAMLSpEntityID, cur.SAMLAttributeEmail, cur.SAMLAttributeName,
 		), false)
 		if e != nil {
 			return e

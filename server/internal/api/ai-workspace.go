@@ -1,12 +1,19 @@
 package api
 
 import (
+	"bufio"
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
+	"io"
 	"math"
 	"net/http"
+	"os"
 	"regexp"
 	"slices"
 	"sort"
@@ -23,14 +30,19 @@ import (
 )
 
 const (
-	aiWorkspaceMaxCandidates = 400
-	aiWorkspaceMaxCitations  = 6
-	aiWorkspaceMaxQuestion   = 2000
-	aiWorkspaceMaxHistory    = 8
-	aiSheetMaxHeaders        = 64
-	aiSheetMaxSampleRows     = 50
-	aiBaseFillMaxRows        = 50
-	aiBaseFillBatchSize      = 25
+	aiWorkspaceMaxCandidates    = 400
+	aiWorkspaceMaxCitations     = 6
+	aiWorkspaceMaxQuestion      = 2000
+	aiWorkspaceMaxHistory       = 8
+	aiSheetMaxHeaders           = 64
+	aiSheetMaxSampleRows        = 50
+	aiBaseFillMaxRows           = 50
+	aiBaseFillBatchSize         = 25
+	localEmbeddingDims          = 128
+	localEmbeddingModel         = "local-ngram-v1"
+	aiDefaultEmbeddingModel     = "text-embedding-3-small"
+	aiRemoteEmbeddingBatchLimit = 32
+	aiSemanticOnlyThreshold     = 0.28
 )
 
 type aiWorkspaceCitation struct {
@@ -54,6 +66,7 @@ type aiAskWorkspaceResp struct {
 	Citations []aiWorkspaceCitation `json:"citations"`
 	Mode      string                `json:"mode"`
 	Model     string                `json:"model"`
+	Retrieval string                `json:"retrieval,omitempty"`
 }
 
 type aiSheetAssistReq struct {
@@ -140,22 +153,22 @@ func isLikelyEnglish(s string) bool {
 	return latin > 0 && cjk == 0
 }
 
-// --- 1. Workspace AI Knowledge Base Q&A (RAG with Citations) ---
+// --- 1. Workspace AI Knowledge Base Q&A (Hybrid Vector RAG + SSE Streaming) ---
 
-func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
+func (s *Server) parseWorkspaceAskRequest(w http.ResponseWriter, r *http.Request) (store.User, string, []aiMessage, aiAskWorkspaceReq, bool) {
 	u, ok := UserFrom(r.Context())
 	if !ok {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "login required")
-		return
+		return store.User{}, "", nil, aiAskWorkspaceReq{}, false
 	}
 	var in aiAskWorkspaceReq
 	if !httpx.Decode(w, r, &in) {
-		return
+		return store.User{}, "", nil, aiAskWorkspaceReq{}, false
 	}
 	question := strings.TrimSpace(in.Question)
 	if question == "" || utf8.RuneCountInString(question) > aiWorkspaceMaxQuestion {
 		httpx.Error(w, http.StatusBadRequest, "invalid_question", "请输入 1-2000 字的问题")
-		return
+		return store.User{}, "", nil, aiAskWorkspaceReq{}, false
 	}
 	history := make([]aiMessage, 0, min(len(in.History), aiWorkspaceMaxHistory))
 	startHist := 0
@@ -165,7 +178,7 @@ func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
 	for _, m := range in.History[startHist:] {
 		if m.Role != "user" && m.Role != "assistant" {
 			httpx.Error(w, http.StatusBadRequest, "invalid_messages", "历史消息角色无效")
-			return
+			return store.User{}, "", nil, aiAskWorkspaceReq{}, false
 		}
 		c := strings.TrimSpace(truncateRunes(m.Content, 1500))
 		if c != "" {
@@ -174,6 +187,14 @@ func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if !s.aiRate.allow(u.ID, s.now()) {
 		httpx.Error(w, http.StatusTooManyRequests, "ai_rate_limited", "请求过于频繁，请稍后再试")
+		return store.User{}, "", nil, aiAskWorkspaceReq{}, false
+	}
+	return u, question, history, in, true
+}
+
+func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
+	u, question, history, in, ok := s.parseWorkspaceAskRequest(w, r)
+	if !ok {
 		return
 	}
 
@@ -183,6 +204,9 @@ func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.fail(w, r, err)
 		return
+	}
+	if citations == nil {
+		citations = []aiWorkspaceCitation{}
 	}
 
 	w.Header().Set("Cache-Control", "no-store")
@@ -195,6 +219,7 @@ func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
 				Citations: citations,
 				Mode:      "llm",
 				Model:     model,
+				Retrieval: "hybrid",
 			})
 			return
 		}
@@ -210,7 +235,643 @@ func (s *Server) aiAskWorkspace(w http.ResponseWriter, r *http.Request) {
 		Citations: citations,
 		Mode:      "local",
 		Model:     "built-in-rag",
+		Retrieval: "hybrid",
 	})
+}
+
+func writeSSEEvent(w http.ResponseWriter, rc *http.ResponseController, event string, payload any) error {
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b); err != nil {
+		return err
+	}
+	_ = rc.Flush()
+	return nil
+}
+
+func streamTextChunks(ctx context.Context, text string, chunkRunes int, onDelta func(string) error) error {
+	if text == "" {
+		return nil
+	}
+	if chunkRunes <= 0 {
+		chunkRunes = 24
+	}
+	runes := []rune(text)
+	for start := 0; start < len(runes); {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		end := min(start+chunkRunes, len(runes))
+		// Prefer splitting right after a newline or space when close to boundary.
+		if end < len(runes) {
+			for look := end; look > start+chunkRunes/2; look-- {
+				if runes[look-1] == '\n' || runes[look-1] == ' ' || runes[look-1] == '。' || runes[look-1] == '，' {
+					end = look
+					break
+				}
+			}
+		}
+		if err := onDelta(string(runes[start:end])); err != nil {
+			return err
+		}
+		start = end
+	}
+	return nil
+}
+
+// aiWorkspaceAskStream streams citations immediately followed by live token deltas
+// over Server-Sent Events (POST /api/ai/workspace-ask/stream).
+func (s *Server) aiWorkspaceAskStream(w http.ResponseWriter, r *http.Request) {
+	u, question, history, in, ok := s.parseWorkspaceAskRequest(w, r)
+	if !ok {
+		return
+	}
+
+	retrieveCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	citations, err := s.retrieveWorkspaceCitations(retrieveCtx, r, u.ID, question, in.WorkspaceID, in.WikiSpaceID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	if citations == nil {
+		citations = []aiWorkspaceCitation{}
+	}
+
+	model, ready := s.configuredAIModel(r.Context(), u.ID)
+	mode := "local"
+	modelName := "built-in-rag"
+	if ready {
+		mode = "llm"
+		modelName = model
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	rc := http.NewResponseController(w)
+	if err := writeSSEEvent(w, rc, "citations", map[string]any{
+		"citations": citations,
+		"mode":      mode,
+		"model":     modelName,
+		"retrieval": "hybrid",
+	}); err != nil {
+		return
+	}
+
+	var answerBuf strings.Builder
+	emitDelta := func(chunk string) error {
+		if chunk == "" {
+			return nil
+		}
+		answerBuf.WriteString(chunk)
+		return writeSSEEvent(w, rc, "delta", map[string]string{"text": chunk})
+	}
+
+	if ready {
+		messages := buildWorkspaceRAGMessages(question, history, citations)
+		streamed, aiErr := s.streamAI(r.Context(), u.ID, messages, emitDelta)
+		if aiErr != nil {
+			if isBlockedAIError(aiErr) {
+				var pe aiProviderError
+				msg := aiErr.Error()
+				code := "ai_blocked_address"
+				if errors.As(aiErr, &pe) {
+					code = pe.code
+					msg = pe.message
+				}
+				_ = writeSSEEvent(w, rc, "error", map[string]string{"error": code, "message": msg})
+				return
+			}
+			// If upstream rejected streaming before emitting tokens, try non-streaming LLM fallback.
+			if !streamed {
+				text, callErr := s.callAI(r.Context(), u.ID, messages)
+				if callErr == nil && strings.TrimSpace(text) != "" {
+					if err := streamTextChunks(r.Context(), strings.TrimSpace(text), 24, emitDelta); err != nil {
+						return
+					}
+					streamed = true
+				} else if isBlockedAIError(callErr) {
+					var pe aiProviderError
+					code, msg := "ai_blocked_address", callErr.Error()
+					if errors.As(callErr, &pe) {
+						code, msg = pe.code, pe.message
+					}
+					_ = writeSSEEvent(w, rc, "error", map[string]string{"error": code, "message": msg})
+					return
+				}
+			}
+		}
+		if !streamed {
+			mode = "local"
+			modelName = "built-in-rag"
+			fallback := synthesizeLocalRAGAnswer(question, citations)
+			if err := streamTextChunks(r.Context(), fallback, 24, emitDelta); err != nil {
+				return
+			}
+		}
+	} else {
+		answer := synthesizeLocalRAGAnswer(question, citations)
+		if err := streamTextChunks(r.Context(), answer, 24, emitDelta); err != nil {
+			return
+		}
+	}
+
+	_ = writeSSEEvent(w, rc, "done", aiAskWorkspaceResp{
+		Answer:    strings.TrimSpace(answerBuf.String()),
+		Citations: citations,
+		Mode:      mode,
+		Model:     modelName,
+		Retrieval: "hybrid",
+	})
+}
+
+// streamAI invokes the user's configured OpenAI-compatible or Anthropic provider
+// with stream=true and forwards incremental text tokens via onDelta.
+// It returns emitted=true if at least one text delta was forwarded.
+func (s *Server) streamAI(ctx context.Context, userID int64, messages []aiMessage, onDelta func(string) error) (bool, error) {
+	cur, err := s.Store.AISettings(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, errAINotConfigured
+	}
+	if err != nil {
+		return false, err
+	}
+	if len(s.AISecret) != 32 {
+		return false, aiProviderError{http.StatusServiceUnavailable, "ai_secret_missing", "服务器未配置 JIANGE_SECRET_KEY，无法读取已保存的 API Key"}
+	}
+	key, err := openAIKey(s.AISecret, userID, cur.APIKeyCipher)
+	if err != nil {
+		return false, aiProviderError{http.StatusConflict, "ai_key_unreadable", "已保存的 API Key 无法解密，请在 AI 设置中重新填写"}
+	}
+	provider, _ := normalizeProvider(cur.Provider)
+	base, ok := s.normalizeAIBase(cur.BaseURL, provider)
+	if !ok {
+		return false, aiProviderError{http.StatusBadRequest, "invalid_base_url", "接口地址无效，请在 AI 设置中修改"}
+	}
+
+	var req *http.Request
+	if provider == "anthropic" {
+		req, err = anthropicStreamRequest(ctx, base, key, cur.Model, messages)
+	} else {
+		body, _ := json.Marshal(map[string]any{
+			"model":       cur.Model,
+			"messages":    messages,
+			"max_tokens":  2048,
+			"temperature": 0.3,
+			"stream":      true,
+		})
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "text/event-stream")
+			req.Header.Set("Authorization", "Bearer "+key)
+		}
+	}
+	if err != nil {
+		return false, err
+	}
+
+	res, err := s.aiClient().Do(req)
+	if err != nil {
+		if errors.Is(err, errBlockedAddress) || strings.Contains(err.Error(), errBlockedAddress.Error()) {
+			return false, aiProviderError{http.StatusBadRequest, "ai_blocked_address", "接口地址指向内网或保留地址，已拒绝"}
+		}
+		return false, aiProviderError{http.StatusBadGateway, "ai_unreachable", "无法连接 AI 服务，请检查接口地址或稍后重试"}
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode >= 300 {
+		return false, aiProviderError{http.StatusBadGateway, "ai_failed", fmt.Sprintf("AI 服务返回错误（HTTP %d）", res.StatusCode)}
+	}
+
+	// Some OpenAI-compatible proxies ignore stream=true and return a plain JSON response.
+	ct := strings.ToLower(res.Header.Get("Content-Type"))
+	if strings.Contains(ct, "application/json") {
+		raw, readErr := io.ReadAll(io.LimitReader(res.Body, aiMaxResponse+1))
+		if readErr != nil || len(raw) > aiMaxResponse {
+			return false, aiProviderError{http.StatusBadGateway, "ai_bad_response", "AI 服务响应过大或中断"}
+		}
+		var text string
+		if provider == "anthropic" {
+			text, err = parseAnthropic(raw)
+		} else {
+			var out struct {
+				Choices []struct {
+					Message struct {
+						Content string `json:"content"`
+					} `json:"message"`
+				} `json:"choices"`
+			}
+			if json.Unmarshal(raw, &out) == nil && len(out.Choices) > 0 {
+				text = strings.TrimSpace(out.Choices[0].Message.Content)
+			} else {
+				err = aiProviderError{http.StatusBadGateway, "ai_bad_response", "AI 服务返回了无法识别的结果"}
+			}
+		}
+		if err != nil || text == "" {
+			return false, err
+		}
+		if err := streamTextChunks(ctx, text, 24, onDelta); err != nil {
+			return true, err
+		}
+		return true, nil
+	}
+
+	scanner := bufio.NewScanner(res.Body)
+	scanner.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	emitted := false
+
+	for scanner.Scan() {
+		if err := ctx.Err(); err != nil {
+			return emitted, err
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") || !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if payload == "" || payload == "[DONE]" {
+			if payload == "[DONE]" {
+				break
+			}
+			continue
+		}
+
+		if provider == "anthropic" {
+			var ev struct {
+				Type  string `json:"type"`
+				Delta struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				} `json:"delta"`
+			}
+			if json.Unmarshal([]byte(payload), &ev) != nil {
+				continue
+			}
+			if ev.Type == "message_stop" {
+				break
+			}
+			if ev.Type == "content_block_delta" && ev.Delta.Type == "text_delta" && ev.Delta.Text != "" {
+				emitted = true
+				if err := onDelta(ev.Delta.Text); err != nil {
+					return emitted, err
+				}
+			}
+			continue
+		}
+
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				Message struct {
+					Content string `json:"content"`
+				} `json:"message"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal([]byte(payload), &chunk) != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+		tok := chunk.Choices[0].Delta.Content
+		if tok == "" {
+			tok = chunk.Choices[0].Message.Content
+		}
+		if tok != "" {
+			emitted = true
+			if err := onDelta(tok); err != nil {
+				return emitted, err
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return emitted, err
+	}
+	if !emitted {
+		return false, aiProviderError{http.StatusBadGateway, "ai_bad_response", "AI 流式响应未返回文本内容"}
+	}
+	return true, nil
+}
+
+func anthropicStreamRequest(ctx context.Context, base, key, model string, messages []aiMessage) (*http.Request, error) {
+	var system []string
+	turns := []aiMessage{}
+	for _, m := range messages {
+		if m.Role == "system" {
+			system = append(system, m.Content)
+			continue
+		}
+		if n := len(turns); n > 0 && turns[n-1].Role == m.Role {
+			turns[n-1].Content += "\n\n" + m.Content
+			continue
+		}
+		turns = append(turns, m)
+	}
+	if len(turns) == 0 || turns[0].Role != "user" {
+		turns = append([]aiMessage{{Role: "user", Content: "（开始）"}}, turns...)
+	}
+	payload := map[string]any{
+		"model":       model,
+		"max_tokens":  2048,
+		"temperature": 0.3,
+		"messages":    turns,
+		"stream":      true,
+	}
+	if len(system) > 0 {
+		payload["system"] = strings.Join(system, "\n\n")
+	}
+	body, _ := json.Marshal(payload)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/messages", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("x-api-key", key)
+	req.Header.Set("anthropic-version", aiAnthropicVersion)
+	return req, nil
+}
+
+// --- Hybrid Dense Semantic Embeddings (128-dim Local Feature Hashing + Optional OpenAI /embeddings) ---
+
+func stemSimpleEnglish(word string) string {
+	for _, suf := range []string{"ations", "ation", "ments", "ment", "ities", "ingly", "edly", "ness", "ings", "ing", "ies", "ied", "ers", "ed", "es", "ly", "s"} {
+		if strings.HasSuffix(word, suf) && len(word)-len(suf) >= 3 {
+			stem := word[:len(word)-len(suf)]
+			if suf == "ies" || suf == "ied" {
+				stem += "y"
+			}
+			return stem
+		}
+	}
+	return word
+}
+
+// ComputeLocalEmbedding encodes text into a deterministic 128-dimension
+// L2-normalized dense semantic vector using signed feature hashing over CJK
+// unigrams/bigrams/trigrams and Unicode word stems/character trigrams.
+func ComputeLocalEmbedding(text string) []float32 {
+	vec := make([]float32, localEmbeddingDims)
+	folded := cases.Fold().String(strings.TrimSpace(text))
+	if folded == "" {
+		return vec
+	}
+
+	type featWeight struct {
+		base  float64
+		count int
+	}
+	feats := make(map[string]*featWeight, 64)
+	addFeat := func(key string, weight float64) {
+		if fw, ok := feats[key]; ok {
+			fw.count++
+			if weight > fw.base {
+				fw.base = weight
+			}
+			return
+		}
+		feats[key] = &featWeight{base: weight, count: 1}
+	}
+
+	var wordBuf strings.Builder
+	var cjkBuf []rune
+
+	flushWord := func() {
+		if wordBuf.Len() == 0 {
+			return
+		}
+		w := wordBuf.String()
+		wordBuf.Reset()
+		if len(w) < 2 || aiEnStopWords[w] {
+			return
+		}
+		addFeat("w:"+w, 2.2)
+		if stem := stemSimpleEnglish(w); stem != w && len(stem) >= 3 {
+			addFeat("s:"+stem, 1.6)
+		}
+		padded := "^" + w + "$"
+		pr := []rune(padded)
+		for i := 0; i+3 <= len(pr); i++ {
+			addFeat("g:"+string(pr[i:i+3]), 0.85)
+		}
+	}
+
+	flushCJK := func() {
+		if len(cjkBuf) == 0 {
+			return
+		}
+		// Keep non-stop CJK runes for semantic hashing.
+		filtered := cjkBuf[:0]
+		for _, r := range cjkBuf {
+			if !aiZhStopRunes[r] {
+				filtered = append(filtered, r)
+			}
+		}
+		for i, r := range filtered {
+			addFeat("cu:"+string(r), 0.75)
+			if i+1 < len(filtered) {
+				addFeat("cb:"+string(filtered[i:i+2]), 1.8)
+			}
+			if i+2 < len(filtered) {
+				addFeat("ct:"+string(filtered[i:i+3]), 1.2)
+			}
+		}
+		cjkBuf = cjkBuf[:0]
+	}
+
+	for _, r := range folded {
+		switch {
+		case unicode.Is(unicode.Han, r):
+			flushWord()
+			cjkBuf = append(cjkBuf, r)
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			flushCJK()
+			wordBuf.WriteRune(r)
+		default:
+			flushWord()
+			flushCJK()
+		}
+	}
+	flushWord()
+	flushCJK()
+
+	if len(feats) == 0 {
+		return vec
+	}
+
+	var acc [localEmbeddingDims]float64
+	for feat, fw := range feats {
+		h := fnv.New64a()
+		_, _ = h.Write([]byte(feat))
+		sum := h.Sum64()
+		bucket := int(sum % localEmbeddingDims)
+		sign := 1.0
+		if (sum >> 63) == 1 {
+			sign = -1.0
+		}
+		w := fw.base * (1.0 + math.Log(float64(fw.count)))
+		acc[bucket] += sign * w
+	}
+
+	var normSq float64
+	for _, v := range acc {
+		normSq += v * v
+	}
+	if normSq == 0 {
+		return vec
+	}
+	invNorm := 1.0 / math.Sqrt(normSq)
+	for i, v := range acc {
+		vec[i] = float32(v * invNorm)
+	}
+	return vec
+}
+
+func normalizeVector(in []float32) []float32 {
+	var normSq float64
+	for _, v := range in {
+		normSq += float64(v) * float64(v)
+	}
+	if normSq == 0 {
+		return slices.Clone(in)
+	}
+	inv := 1.0 / math.Sqrt(normSq)
+	out := make([]float32, len(in))
+	for i, v := range in {
+		out[i] = float32(float64(v) * inv)
+	}
+	return out
+}
+
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) == 0 || len(a) != len(b) {
+		return 0
+	}
+	var dot, na, nb float64
+	for i := range a {
+		fa := float64(a[i])
+		fb := float64(b[i])
+		dot += fa * fb
+		na += fa * fa
+		nb += fb * fb
+	}
+	if na == 0 || nb == 0 {
+		return 0
+	}
+	cos := dot / (math.Sqrt(na) * math.Sqrt(nb))
+	if cos > 1 {
+		return 1
+	}
+	if cos < -1 {
+		return -1
+	}
+	return cos
+}
+
+func embeddingContentHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+func configuredEmbeddingModel() string {
+	if env := strings.TrimSpace(os.Getenv("JIANGE_AI_EMBEDDING_MODEL")); env != "" && reAIModel.MatchString(env) {
+		return env
+	}
+	return aiDefaultEmbeddingModel
+}
+
+// tryRemoteEmbeddings fetches OpenAI-compatible /embeddings in a single batch
+// with a short timeout and returns ok=false on any error so callers silently
+// fall back to ComputeLocalEmbedding.
+func (s *Server) tryRemoteEmbeddings(ctx context.Context, userID int64, inputs []string) ([][]float32, string, bool) {
+	if len(inputs) == 0 || len(inputs) > aiRemoteEmbeddingBatchLimit || len(s.AISecret) != 32 {
+		return nil, "", false
+	}
+	cur, err := s.Store.AISettings(ctx, userID)
+	if err != nil {
+		return nil, "", false
+	}
+	provider, ok := normalizeProvider(cur.Provider)
+	if !ok || provider != "openai" {
+		return nil, "", false
+	}
+	key, err := openAIKey(s.AISecret, userID, cur.APIKeyCipher)
+	if err != nil {
+		return nil, "", false
+	}
+	base, ok := s.normalizeAIBase(cur.BaseURL, provider)
+	if !ok {
+		return nil, "", false
+	}
+	model := configuredEmbeddingModel()
+
+	trimmed := make([]string, len(inputs))
+	for i, s := range inputs {
+		trimmed[i] = truncateRunes(strings.TrimSpace(s), 4000)
+	}
+	body, err := json.Marshal(map[string]any{
+		"model": model,
+		"input": trimmed,
+	})
+	if err != nil {
+		return nil, "", false
+	}
+
+	embCtx, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(embCtx, http.MethodPost, base+"/embeddings", bytes.NewReader(body))
+	if err != nil {
+		return nil, "", false
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	res, err := s.aiClient().Do(req)
+	if err != nil {
+		return nil, "", false
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, "", false
+	}
+	raw, err := io.ReadAll(io.LimitReader(res.Body, aiMaxResponse*4))
+	if err != nil {
+		return nil, "", false
+	}
+	var out struct {
+		Data []struct {
+			Index     int       `json:"index"`
+			Embedding []float32 `json:"embedding"`
+		} `json:"data"`
+	}
+	if json.Unmarshal(raw, &out) != nil || len(out.Data) != len(inputs) {
+		return nil, "", false
+	}
+	vecs := make([][]float32, len(inputs))
+	dims := 0
+	for _, item := range out.Data {
+		if item.Index < 0 || item.Index >= len(inputs) || len(item.Embedding) == 0 {
+			return nil, "", false
+		}
+		if dims == 0 {
+			dims = len(item.Embedding)
+		} else if len(item.Embedding) != dims {
+			return nil, "", false
+		}
+		vecs[item.Index] = normalizeVector(item.Embedding)
+	}
+	for _, v := range vecs {
+		if len(v) == 0 {
+			return nil, "", false
+		}
+	}
+	return vecs, model, true
 }
 
 type aiSearchTerm struct {
@@ -585,15 +1246,28 @@ func buildRAGSnippet(segs []string, bestIdx int, title string) string {
 func (s *Server) retrieveWorkspaceCitations(ctx context.Context, r *http.Request, uid int64, question string, workspaceID, wikiSpaceID int64) ([]aiWorkspaceCitation, error) {
 	const pageSize = 100
 	idxStore, hasIndex := s.Store.(store.SearchIndexStore)
+	attStore, hasAttStore := s.Store.(store.AttachmentTextStore)
+	embStore, hasEmbStore := s.Store.(store.EmbeddingStore)
+
 	foldedQ := cases.Fold().String(strings.TrimSpace(question))
 	terms := extractQueryTerms(question)
 
-	type scoredDoc struct {
-		meta    store.DocMeta
-		score   float64
-		snippet string
+	type ragCandidate struct {
+		meta              store.DocMeta
+		bodyText          string
+		restricted        bool
+		canUseAttachments bool
+		canonicalText     string
+		contentHash       string
+		lexScore          float64
+		snippet           string
+		vector            []float32
+		score             float64
 	}
-	var accessible []scoredDoc
+	candidates := make([]ragCandidate, 0, 32)
+	attDocIDs := make([]int64, 0, 32)
+	cacheableDocIDs := make([]int64, 0, 32)
+
 	var after int64
 	scanned := 0
 
@@ -608,7 +1282,7 @@ func (s *Server) retrieveWorkspaceCitations(ctx context.Context, r *http.Request
 		for _, cand := range page {
 			after = cand.ID
 			scanned++
-			if cand.Kind == "folder" || cand.Kind == "file" {
+			if cand.Kind == "folder" {
 				continue
 			}
 			fresh, err := s.Store.GetDoc(ctx, uid, cand.ID)
@@ -628,20 +1302,31 @@ func (s *Server) retrieveWorkspaceCitations(ctx context.Context, r *http.Request
 			if store.RoleRank(fresh.Role) < store.RoleRank(store.RoleView) || !store.DocumentCopyAllowed(fresh, fresh.Role) {
 				continue
 			}
+			restricted := false
+			if fresh.Kind == "base" {
+				rFlag, rErr := s.baseRestricted(ctx, fresh)
+				if rErr != nil {
+					continue
+				}
+				restricted = rFlag
+			}
 			bodyText, ok := s.extractAccessibleDocText(ctx, r, uid, fresh, idxStore, hasIndex)
 			if !ok {
 				continue
 			}
-			// Handle sheet search without session cookie via store.SearchSheetContent.
-			score, snippet := scoreDocumentForRAG(fresh.Title, bodyText, foldedQ, terms)
-			if fresh.Kind == "sheet" && bodyText == "" && score == 0 {
-				for _, term := range terms {
-					if matched, sErr := s.Store.SearchSheetContent(ctx, uid, fresh.ID, term.text); sErr == nil && matched {
-						score += 1.5 * term.weight
-					}
-				}
+			canUseAtt := !restricted && store.DocumentDownloadAllowed(fresh, fresh.Role)
+			if canUseAtt {
+				attDocIDs = append(attDocIDs, fresh.ID)
 			}
-			accessible = append(accessible, scoredDoc{meta: fresh, score: score, snippet: snippet})
+			if !restricted {
+				cacheableDocIDs = append(cacheableDocIDs, fresh.ID)
+			}
+			candidates = append(candidates, ragCandidate{
+				meta:              fresh,
+				bodyText:          bodyText,
+				restricted:        restricted,
+				canUseAttachments: canUseAtt,
+			})
 			if scanned >= aiWorkspaceMaxCandidates {
 				break
 			}
@@ -651,24 +1336,184 @@ func (s *Server) retrieveWorkspaceCitations(ctx context.Context, r *http.Request
 		}
 	}
 
-	matched := make([]scoredDoc, 0, len(accessible))
-	for _, item := range accessible {
-		if item.score > 0 {
-			matched = append(matched, item)
+	// Merge extracted attachment full text into accessible candidates.
+	var attMap map[int64][]store.AttachmentTextEntry
+	if hasAttStore && len(attDocIDs) > 0 {
+		if loaded, err := attStore.ListAttachmentTextsByDocs(ctx, attDocIDs); err == nil {
+			attMap = loaded
 		}
 	}
-	// Broad overview queries (e.g. "总结本周核心进展") fall back to recent accessible docs
-	// only when no direct term matched, while still strictly obeying ACL + copy policies.
-	if len(matched) == 0 && len(accessible) > 0 && isBroadOverviewQuery(question) {
-		sort.Slice(accessible, func(i, j int) bool {
-			if accessible[i].meta.UpdatedAt.Equal(accessible[j].meta.UpdatedAt) {
-				return accessible[i].meta.ID > accessible[j].meta.ID
+
+	filtered := candidates[:0]
+	for i := range candidates {
+		c := &candidates[i]
+		if c.canUseAttachments && len(attMap[c.meta.ID]) > 0 {
+			var b strings.Builder
+			if c.bodyText != "" {
+				b.WriteString(c.bodyText)
 			}
-			return accessible[i].meta.UpdatedAt.After(accessible[j].meta.UpdatedAt)
+			for _, att := range attMap[c.meta.ID] {
+				for _, line := range strings.Split(att.ExtractedText, "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+					if c.meta.Kind == "file" {
+						appendSearchSegment(&b, line)
+					} else {
+						appendSearchSegment(&b, fmt.Sprintf("[附件 %s] %s", att.Filename, line))
+					}
+				}
+			}
+			c.bodyText = b.String()
+		}
+		// Skip opaque binary Drive files with no extracted text unless their title can match.
+		if c.meta.Kind == "file" && c.bodyText == "" && strings.TrimSpace(c.meta.Title) == "" {
+			continue
+		}
+
+		// Lexical BM25-style score + best matching snippet.
+		lexScore, snippet := scoreDocumentForRAG(c.meta.Title, c.bodyText, foldedQ, terms)
+		if c.meta.Kind == "sheet" && c.bodyText == "" && lexScore == 0 {
+			for _, term := range terms {
+				if matched, sErr := s.Store.SearchSheetContent(ctx, uid, c.meta.ID, term.text); sErr == nil && matched {
+					lexScore += 1.5 * term.weight
+				}
+			}
+		}
+		c.lexScore = lexScore
+		c.snippet = snippet
+
+		plainBody := strings.ReplaceAll(c.bodyText, searchSegmentSep, "\n")
+		c.canonicalText = truncateRunes(strings.TrimSpace(c.meta.Title+"\n"+plainBody), 12000)
+		c.contentHash = embeddingContentHash(c.canonicalText)
+		filtered = append(filtered, *c)
+	}
+	candidates = filtered
+
+	// Load cached document embeddings from doc_embeddings.
+	var cachedEmbeddings map[int64]store.DocEmbedding
+	if hasEmbStore && len(cacheableDocIDs) > 0 {
+		if loaded, err := embStore.GetDocEmbeddings(ctx, cacheableDocIDs); err == nil {
+			cachedEmbeddings = loaded
+		}
+	}
+
+	// Attempt optional remote OpenAI-compatible /embeddings with automatic silent fallback.
+	var qVec []float32
+	activeModel := localEmbeddingModel
+	if len(candidates) > 0 {
+		remoteModel := configuredEmbeddingModel()
+		batchInputs := []string{question}
+		batchIdx := []int{}
+		for i := range candidates {
+			c := &candidates[i]
+			if !c.restricted {
+				if cached, ok := cachedEmbeddings[c.meta.ID]; ok &&
+					cached.Model == remoteModel &&
+					cached.ContentHash == c.contentHash &&
+					len(cached.Vector) > 0 {
+					continue
+				}
+			}
+			if len(batchInputs) < aiRemoteEmbeddingBatchLimit {
+				batchInputs = append(batchInputs, c.canonicalText)
+				batchIdx = append(batchIdx, i)
+			}
+		}
+		if vecs, usedModel, ok := s.tryRemoteEmbeddings(ctx, uid, batchInputs); ok {
+			activeModel = usedModel
+			qVec = vecs[0]
+			for j, candIdx := range batchIdx {
+				c := &candidates[candIdx]
+				c.vector = vecs[j+1]
+				if hasEmbStore && !c.restricted {
+					_ = embStore.UpsertDocEmbedding(ctx, store.DocEmbedding{
+						DocID:       c.meta.ID,
+						WorkspaceID: c.meta.WorkspaceID,
+						Model:       activeModel,
+						ContentHash: c.contentHash,
+						Dimensions:  len(c.vector),
+						Vector:      c.vector,
+						Excerpt:     c.snippet,
+					})
+				}
+			}
+			for i := range candidates {
+				c := &candidates[i]
+				if len(c.vector) > 0 || c.restricted {
+					continue
+				}
+				if cached, ok := cachedEmbeddings[c.meta.ID]; ok &&
+					cached.Model == activeModel &&
+					cached.ContentHash == c.contentHash &&
+					len(cached.Vector) == len(qVec) {
+					c.vector = cached.Vector
+				}
+			}
+		}
+	}
+
+	// Local 128-dim deterministic semantic vector encoder (default / silent fallback).
+	if len(qVec) == 0 {
+		activeModel = localEmbeddingModel
+		qVec = ComputeLocalEmbedding(question)
+		for i := range candidates {
+			c := &candidates[i]
+			if !c.restricted {
+				if cached, ok := cachedEmbeddings[c.meta.ID]; ok &&
+					cached.Model == localEmbeddingModel &&
+					cached.ContentHash == c.contentHash &&
+					len(cached.Vector) == localEmbeddingDims {
+					c.vector = cached.Vector
+					continue
+				}
+			}
+			c.vector = ComputeLocalEmbedding(c.canonicalText)
+			if hasEmbStore && !c.restricted {
+				_ = embStore.UpsertDocEmbedding(ctx, store.DocEmbedding{
+					DocID:       c.meta.ID,
+					WorkspaceID: c.meta.WorkspaceID,
+					Model:       localEmbeddingModel,
+					ContentHash: c.contentHash,
+					Dimensions:  len(c.vector),
+					Vector:      c.vector,
+					Excerpt:     c.snippet,
+				})
+			}
+		}
+	}
+
+	// Hybrid Retrieval Scoring: 0.55 * cosineSimilarity + 0.45 * normalizedLexicalBM25.
+	matched := make([]ragCandidate, 0, len(candidates))
+	for i := range candidates {
+		c := &candidates[i]
+		cosSim := math.Max(0, cosineSimilarity(qVec, c.vector))
+		normLex := 0.0
+		if c.lexScore > 0 {
+			normLex = c.lexScore / (c.lexScore + 6.0)
+		}
+		if c.lexScore > 0 || cosSim >= aiSemanticOnlyThreshold {
+			hybrid := 0.55*cosSim + 0.45*normLex
+			c.score = math.Round(hybrid*10000) / 10000
+			if c.score > 0 {
+				matched = append(matched, *c)
+			}
+		}
+	}
+
+	// Broad overview queries (e.g. "总结本周核心进展") fall back to recent accessible docs
+	// only when no direct lexical or semantic hit matched, while strictly obeying ACL + copy policies.
+	if len(matched) == 0 && len(candidates) > 0 && isBroadOverviewQuery(question) {
+		sort.Slice(candidates, func(i, j int) bool {
+			if candidates[i].meta.UpdatedAt.Equal(candidates[j].meta.UpdatedAt) {
+				return candidates[i].meta.ID > candidates[j].meta.ID
+			}
+			return candidates[i].meta.UpdatedAt.After(candidates[j].meta.UpdatedAt)
 		})
-		limit := min(3, len(accessible))
+		limit := min(3, len(candidates))
 		for i := 0; i < limit; i++ {
-			item := accessible[i]
+			item := candidates[i]
 			item.score = 0.5
 			matched = append(matched, item)
 		}
