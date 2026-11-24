@@ -237,6 +237,7 @@ func expandBaseWith(ctx context.Context, reader store.BaseSnapshotReader, uid in
 			if err != nil {
 				return nil, nil, err
 			}
+			targetRecords = filterOwnRecords(targetRecords, target.policy, uid)
 			target.records = stripBaseRecords(targetRecords, target.allFields, target.policy)
 			reads = append(reads, target)
 			allowed := map[int64]bool{}
@@ -403,6 +404,7 @@ func expandBaseWith(ctx context.Context, reader store.BaseSnapshotReader, uid in
 		if err != nil {
 			return nil, nil, err
 		}
+		otherRecords = filterOwnRecords(otherRecords, other.policy, uid)
 		other.records = stripBaseRecords(otherRecords, other.allFields, other.policy)
 		reads = append(reads, other)
 		allowed := map[int64]bool{}

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -31,9 +32,21 @@ func publicFlowProps(props map[string]string) map[string]string {
 	case "feishu", "classic", "minimal", "colorful", "sketch", "dark", "business":
 		out["fc.theme"] = props["fc.theme"]
 	}
+	switch props["fc.ml"] {
+	case "logic", "org", "fishbone", "timeline":
+		out["fc.ml"] = props["fc.ml"]
+	}
 	nodes := map[string]bool{}
+	frameKeys := []string{}
 	for key, raw := range props {
-		if !strings.HasPrefix(key, "fc.n.") || raw == "" {
+		if raw == "" {
+			continue
+		}
+		if strings.HasPrefix(key, "fc.fr.") {
+			frameKeys = append(frameKeys, key)
+			continue
+		}
+		if !strings.HasPrefix(key, "fc.n.") {
 			continue
 		}
 		id := strings.TrimPrefix(key, "fc.n.")
@@ -43,6 +56,21 @@ func publicFlowProps(props map[string]string) map[string]string {
 		if node := publicFlowNode(raw); node != nil {
 			out[key] = publicJSON(node)
 			nodes[id] = true
+		}
+	}
+	sort.Strings(frameKeys)
+	frameCount := 0
+	for _, key := range frameKeys {
+		if frameCount >= 100 {
+			break
+		}
+		id := strings.TrimPrefix(key, "fc.fr.")
+		if !publicFlowID.MatchString(id) {
+			continue
+		}
+		if frame := publicBoardFrame(id, props[key]); frame != nil {
+			out[key] = publicJSON(frame)
+			frameCount++
 		}
 	}
 	for key, raw := range props {
@@ -72,6 +100,7 @@ func publicFlowProps(props map[string]string) map[string]string {
 		}
 	}
 	publicMindProps(out, props)
+	publicMindRelationProps(out, props)
 	return out
 }
 
@@ -250,4 +279,121 @@ func publicFlowStroke(raw string) map[string]any {
 		out = append(out, map[string]any{"x": publicJSRound(x), "y": publicJSRound(y)})
 	}
 	return map[string]any{"color": color, "width": width, "points": out}
+}
+
+func publicBoardFrame(id, raw string) map[string]any {
+	if len(raw) > 4096 {
+		return nil
+	}
+	m := publicJSONObject(raw)
+	if m == nil {
+		return nil
+	}
+	if rawID, exists := m["id"]; exists {
+		s, ok := rawID.(string)
+		if !ok || s != id {
+			return nil
+		}
+	}
+	x, xok := publicNumber(m["x"])
+	y, yok := publicNumber(m["y"])
+	w, wok := publicNumber(m["w"])
+	h, hok := publicNumber(m["h"])
+	if !xok || !yok || !wok || !hok {
+		return nil
+	}
+	if math.Abs(x) > 20000 || math.Abs(y) > 20000 || w < 160 || w > 8000 || h < 120 || h > 8000 {
+		return nil
+	}
+	title := "Frame"
+	if rawTitle, exists := m["title"]; exists && rawTitle != nil {
+		t, ok := rawTitle.(string)
+		if !ok || strings.ContainsRune(t, 0) || len(utf16.Encode([]rune(t))) > 120 {
+			return nil
+		}
+		if trimmed := strings.TrimSpace(t); trimmed != "" {
+			title = trimmed
+		}
+	}
+	out := map[string]any{
+		"id":    id,
+		"title": title,
+		"x":     publicJSRound(x),
+		"y":     publicJSRound(y),
+		"w":     publicJSRound(w),
+		"h":     publicJSRound(h),
+	}
+	if bg, ok := m["bg"].(string); ok && publicFlowColor.MatchString(bg) {
+		out["bg"] = bg
+	}
+	return out
+}
+
+func publicMindRelationProps(out, props map[string]string) {
+	liveTopics := map[string]bool{}
+	for key, val := range out {
+		if strings.HasPrefix(key, "fc.m.") && val != "" {
+			liveTopics[strings.TrimPrefix(key, "fc.m.")] = true
+		}
+	}
+	if len(liveTopics) == 0 {
+		return
+	}
+	relKeys := []string{}
+	for key, raw := range props {
+		if strings.HasPrefix(key, "fc.mr.") && raw != "" {
+			relKeys = append(relKeys, key)
+		}
+	}
+	sort.Strings(relKeys)
+	count := 0
+	for _, key := range relKeys {
+		if count >= 200 {
+			break
+		}
+		id := strings.TrimPrefix(key, "fc.mr.")
+		if !publicFlowID.MatchString(id) {
+			continue
+		}
+		if rel := publicMindRelation(id, props[key], liveTopics); rel != nil {
+			out[key] = publicJSON(rel)
+			count++
+		}
+	}
+}
+
+func publicMindRelation(id, raw string, liveTopics map[string]bool) map[string]any {
+	if len(raw) > 2048 {
+		return nil
+	}
+	m := publicJSONObject(raw)
+	if m == nil {
+		return nil
+	}
+	if rawID, exists := m["id"]; exists {
+		s, ok := rawID.(string)
+		if !ok || s != id {
+			return nil
+		}
+	}
+	fromID, ok1 := m["fromId"].(string)
+	toID, ok2 := m["toId"].(string)
+	if !ok1 || !ok2 || fromID == toID || !publicMindID.MatchString(fromID) || !publicMindID.MatchString(toID) || !liveTopics[fromID] || !liveTopics[toID] {
+		return nil
+	}
+	out := map[string]any{
+		"id":     id,
+		"fromId": fromID,
+		"toId":   toID,
+	}
+	if rawLabel, exists := m["label"]; exists && rawLabel != nil {
+		label, ok := rawLabel.(string)
+		if !ok || strings.ContainsRune(label, 0) || len(utf16.Encode([]rune(label))) > 80 {
+			return nil
+		}
+		if trimmed := strings.TrimSpace(label); trimmed != "" {
+			out["label"] = trimmed
+		}
+	}
+	return out
 }

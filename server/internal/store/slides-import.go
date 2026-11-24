@@ -153,9 +153,11 @@ func (m *Memory) RestoreSlidesPageGuarded(ctx context.Context, g RestoreGuard, s
 	out := make([]SlidesPage, len(ordered))
 	for i, p := range ordered {
 		p.Shapes = slices.Clone(p.Shapes)
+		p.Meta = cloneSlideMeta(p.Meta)
 		out[i] = p
 	}
 	restored.Shapes = slices.Clone(restored.Shapes)
+	restored.Meta = cloneSlideMeta(restored.Meta)
 	return out, restored, nil
 }
 
@@ -269,17 +271,18 @@ func (p *Postgres) RestoreSlidesPageGuarded(ctx context.Context, g RestoreGuard,
 			return e
 		}
 		restored.Pos = float64(idx + 1)
-		allRows, e := tx.Query(ctx, `SELECT id, slides_id, pos, title, body, background, notes, shapes, hidden, layout, revision, updated_at FROM slides_pages WHERE slides_id=$1 ORDER BY pos, id`, slidesID)
+		allRows, e := tx.Query(ctx, `SELECT id, slides_id, pos, title, body, background, notes, shapes, hidden, layout, meta, revision, updated_at FROM slides_pages WHERE slides_id=$1 ORDER BY pos, id`, slidesID)
 		if e != nil {
 			return e
 		}
 		all = make([]SlidesPage, 0, len(orderedIDs))
 		for allRows.Next() {
 			var sp SlidesPage
-			if e = allRows.Scan(&sp.ID, &sp.SlidesID, &sp.Pos, &sp.Title, &sp.Body, &sp.Background, &sp.Notes, &sp.Shapes, &sp.Hidden, &sp.Layout, &sp.Revision, &sp.UpdatedAt); e != nil {
+			if e = allRows.Scan(&sp.ID, &sp.SlidesID, &sp.Pos, &sp.Title, &sp.Body, &sp.Background, &sp.Notes, &sp.Shapes, &sp.Hidden, &sp.Layout, &sp.Meta, &sp.Revision, &sp.UpdatedAt); e != nil {
 				allRows.Close()
 				return e
 			}
+			sp.Meta = normalizeDBSlideMeta(sp.Meta)
 			all = append(all, sp)
 		}
 		if e = allRows.Err(); e != nil {

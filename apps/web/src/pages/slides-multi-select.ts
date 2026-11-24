@@ -1,4 +1,4 @@
-import type { SlideShape } from "@/lib/api";
+import type { SlideShape, SlidesPage } from "@/lib/api";
 import type { ShapeAlignment } from "./slides-shape-order";
 import { computeSlideShapeSnap, type SlideSnapGuide } from "./slides-snap";
 
@@ -22,6 +22,50 @@ const round1 = (value: number) => Math.round(value * 10) / 10;
 const clampPct = (value: number, max: number) => round1(Math.min(max, Math.max(0, value)));
 const shapeWidth = (shape: SlideShape) => shape.width ?? DEFAULT_WIDTH;
 const shapeHeight = (shape: SlideShape) => shape.height ?? DEFAULT_HEIGHT;
+
+export function normalizeSlideShapeGroups(
+  raw: Record<string, unknown> | undefined,
+): SlideShapeGroups | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const clean: SlideShapeGroups = {};
+  for (const [groupId, members] of Object.entries(raw)) {
+    if (!groupId || !Array.isArray(members)) continue;
+    const unique = [...new Set(members.filter((item): item is string => typeof item === "string" && item.length > 0))];
+    if (unique.length >= 2) clean[groupId] = unique;
+  }
+  return Object.keys(clean).length > 0 ? clean : undefined;
+}
+
+/** Hydrate per-page shape groups directly from cloud-persisted page.meta. */
+export function hydrateSlideShapeGroups(
+  pages: readonly Pick<SlidesPage, "id" | "meta">[] | undefined,
+): SlideDeckShapeGroups {
+  if (!pages?.length) return {};
+  const result: SlideDeckShapeGroups = {};
+  for (const page of pages) {
+    const clean = normalizeSlideShapeGroups(page.meta?.shapeGroups);
+    if (clean) result[page.id] = clean;
+  }
+  return result;
+}
+
+export function sameSlideShapeGroups(
+  a: SlideShapeGroups | undefined,
+  b: SlideShapeGroups | undefined,
+): boolean {
+  const keysA = a ? Object.keys(a) : [];
+  const keysB = b ? Object.keys(b) : [];
+  if (keysA.length !== keysB.length) return false;
+  for (const key of keysA) {
+    const listA = a![key];
+    const listB = b?.[key];
+    if (!listB || listA.length !== listB.length) return false;
+    for (let i = 0; i < listA.length; i++) {
+      if (listA[i] !== listB[i]) return false;
+    }
+  }
+  return true;
+}
 
 export function slideShapeGroupsStorageKey(deckId: number): string {
   return `jiange:slides:shape-groups:${deckId}`;

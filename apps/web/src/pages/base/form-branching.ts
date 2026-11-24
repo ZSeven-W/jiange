@@ -16,11 +16,6 @@ export const FORM_BRANCH_OPERATORS: readonly { value: FormBranchOperator; label:
 ];
 
 const VALID_OPS = new Set<string>(FORM_BRANCH_OPERATORS.map((o) => o.value));
-const STORAGE_PREFIX = "jiange:base:form-branching:";
-
-export function formBranchingStorageKey(baseId: number, viewId: number): string {
-  return `${STORAGE_PREFIX}${baseId}:${viewId}`;
-}
 
 export function isValidFormBranchRule(value: unknown): value is FormBranchRule {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -34,62 +29,26 @@ export function isValidFormBranchRule(value: unknown): value is FormBranchRule {
   return true;
 }
 
-/** Load persisted branching rules for a specific form view. */
-export function loadFormBranchRules(baseId: number, viewId: number): FormBranchRule[] {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || !Number.isSafeInteger(viewId) || viewId <= 0) return [];
-  if (typeof localStorage === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(formBranchingStorageKey(baseId, viewId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter(isValidFormBranchRule);
-  } catch {
-    return [];
-  }
-}
-
-/** Persist branching rules for a specific form view. */
-export function saveFormBranchRules(baseId: number, viewId: number, rules: readonly FormBranchRule[]): void {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || !Number.isSafeInteger(viewId) || viewId <= 0) return;
-  if (typeof localStorage === "undefined") return;
-  try {
-    const valid = rules.filter(isValidFormBranchRule);
-    if (valid.length === 0) {
-      localStorage.removeItem(formBranchingStorageKey(baseId, viewId));
-    } else {
-      localStorage.setItem(formBranchingStorageKey(baseId, viewId), JSON.stringify(valid));
+/** Sanitize cloud-persisted branching rules, filtering invalid, orphaned, or cyclic entries. */
+export function sanitizeFormBranchRules(
+  raw: unknown,
+  allowedFieldIds?: ReadonlySet<number>,
+): FormBranchRule[] {
+  if (!Array.isArray(raw)) return [];
+  const out: FormBranchRule[] = [];
+  const seenIds = new Set<string>();
+  for (const item of raw) {
+    if (!isValidFormBranchRule(item)) continue;
+    if (seenIds.has(item.id)) continue;
+    if (allowedFieldIds && (!allowedFieldIds.has(item.sourceFieldId) || !allowedFieldIds.has(item.targetFieldId))) {
+      continue;
     }
-  } catch {
-    // Ignore storage quota / privacy mode failures.
+    if (wouldCreateBranchCycle(out, item.sourceFieldId, item.targetFieldId)) continue;
+    seenIds.add(item.id);
+    out.push(item);
+    if (out.length >= 200) break;
   }
-}
-
-/**
- * Look up persisted branching rules matching a public form's field IDs when the
- * server definition doesn't inline `branchRules` yet. Never touches bearer tokens.
- */
-export function loadBranchRulesForFields(fieldIds: readonly number[]): FormBranchRule[] {
-  if (fieldIds.length === 0 || typeof localStorage === "undefined") return [];
-  const allowed = new Set(fieldIds);
-  try {
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || !key.startsWith(STORAGE_PREFIX)) continue;
-      const raw = localStorage.getItem(key);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) continue;
-      const matching = parsed.filter(
-        (item): item is FormBranchRule =>
-          isValidFormBranchRule(item) && allowed.has(item.sourceFieldId) && allowed.has(item.targetFieldId),
-      );
-      if (matching.length > 0) return matching;
-    }
-  } catch {
-    return [];
-  }
-  return [];
+  return out;
 }
 
 function isNonEmptyValue(rawValue: unknown): boolean {

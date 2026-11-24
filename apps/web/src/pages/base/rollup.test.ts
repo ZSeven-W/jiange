@@ -1,24 +1,18 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BaseRecord, Field } from "@/lib/api";
 import {
   aggregateRollupValues,
-  clearLookupRollup,
+  buildLookupOptions,
   getLookupRollup,
   lookupFieldConfig,
-  rollupStorageKey,
-  setLookupRollup,
 } from "./rollup";
 import { displayValue, evalFormulas, REGISTRY } from "./registry";
 import { CellView } from "./cells";
 import { MemberRuleValue } from "./member-rule-value";
 
 describe("lookup & rollup aggregation (rollup.ts)", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
   it("aggregates values across all rollup modes cleanly", () => {
     expect(aggregateRollupValues([10, 20, 30], "raw")).toEqual([10, 20, 30]);
     expect(aggregateRollupValues([10, 20, 30], "sum")).toBe(60);
@@ -40,60 +34,54 @@ describe("lookup & rollup aggregation (rollup.ts)", () => {
     expect(aggregateRollupValues(["非数字"], "avg")).toBeNull();
   });
 
-  it("parses lookup field link/target config from options", () => {
-    expect(lookupFieldConfig({ options: ["12", "34"] })).toEqual({ linkFieldId: 12, lookupFieldId: 34 });
-    expect(lookupFieldConfig({ options: ["bad", "-1"] })).toEqual({ linkFieldId: 0, lookupFieldId: 0 });
-    expect(lookupFieldConfig(undefined)).toEqual({ linkFieldId: 0, lookupFieldId: 0 });
+  it("parses lookup field link/target/rollupAgg config from cloud-persisted field.options", () => {
+    expect(lookupFieldConfig({ options: ["12", "34"] })).toEqual({ linkFieldId: 12, lookupFieldId: 34, rollupAgg: "raw" });
+    expect(lookupFieldConfig({ options: ["12", "34", "sum"] })).toEqual({ linkFieldId: 12, lookupFieldId: 34, rollupAgg: "sum" });
+    expect(lookupFieldConfig({ options: ["12", "34", "invalid"] })).toEqual({ linkFieldId: 12, lookupFieldId: 34, rollupAgg: "raw" });
+    expect(lookupFieldConfig({ options: ["bad", "-1"] })).toEqual({ linkFieldId: 0, lookupFieldId: 0, rollupAgg: "raw" });
+    expect(lookupFieldConfig(undefined)).toEqual({ linkFieldId: 0, lookupFieldId: 0, rollupAgg: "raw" });
   });
 
-  it("persists rollup metadata per field and supports newly created lookup name fallback", () => {
-    const fieldA: Field = { id: 101, name: "总金额", type: "lookup", options: ["10", "20"], position: 1 };
-    const fieldB: Field = { id: 102, name: "平均金额", type: "lookup", options: ["10", "20"], position: 2 };
+  it("builds and reads cloud-persisted options[2] rollup metadata without localStorage", () => {
+    expect(buildLookupOptions(10, 20, "raw")).toEqual(["10", "20"]);
+    expect(buildLookupOptions(10, 20, "sum")).toEqual(["10", "20", "sum"]);
+    expect(buildLookupOptions(10, 20, "avg")).toEqual(["10", "20", "avg"]);
 
-    // Simulate creating two lookup fields referencing the same (link, target) before ids exist.
-    setLookupRollup(5, { linkFieldId: 10, lookupFieldId: 20, fieldName: "总金额", agg: "sum" });
-    setLookupRollup(5, { linkFieldId: 10, lookupFieldId: 20, fieldName: "平均金额", agg: "avg" });
+    const fieldRaw: Field = { id: 100, name: "原值", type: "lookup", options: buildLookupOptions(10, 20, "raw"), position: 0 };
+    const fieldSum: Field = { id: 101, name: "总金额", type: "lookup", options: buildLookupOptions(10, 20, "sum"), position: 1 };
+    const fieldAvg: Field = { id: 102, name: "平均金额", type: "lookup", options: buildLookupOptions(10, 20, "avg"), position: 2 };
 
-    expect(localStorage.getItem(rollupStorageKey(5))).toBeTruthy();
-    expect(getLookupRollup(fieldA, 5)).toBe("sum");
-    expect(getLookupRollup(fieldB, 5)).toBe("avg");
-
-    // Explicit fieldId edit overrides and clears cleanly.
-    setLookupRollup(5, { fieldId: 101, linkFieldId: 10, lookupFieldId: 20, fieldName: "总金额", agg: "max" });
-    expect(getLookupRollup(fieldA, 5)).toBe("max");
-    setLookupRollup(5, { fieldId: 101, linkFieldId: 10, lookupFieldId: 20, fieldName: "总金额", agg: "raw" });
-    expect(getLookupRollup(fieldA, 5)).toBe("raw");
-
-    setLookupRollup(5, { fieldId: 102, agg: "min" });
-    expect(getLookupRollup(fieldB, 5)).toBe("min");
-    clearLookupRollup(5, 102);
-    expect(getLookupRollup(fieldB, 5)).toBe("avg");
+    expect(getLookupRollup(fieldRaw)).toBe("raw");
+    expect(getLookupRollup(fieldSum)).toBe("sum");
+    expect(getLookupRollup(fieldAvg)).toBe("avg");
+    expect(getLookupRollup({ options: ["10", "20", "bogus"] })).toBe("raw");
+    expect(getLookupRollup(undefined)).toBe("raw");
   });
 
-  it("applies rollup aggregation inside registry.displayValue, CellView, compare, and formulas", () => {
-    const lookup: Field = { id: 50, name: "订单合计", type: "lookup", options: ["10", "20"], position: 1 };
+  it("applies cloud-persisted rollup aggregation inside registry.displayValue, CellView, compare, and formulas", () => {
+    const lookupRaw: Field = { id: 50, name: "订单合计", type: "lookup", options: ["10", "20"], position: 1 };
+    const lookupSum: Field = { id: 50, name: "订单合计", type: "lookup", options: ["10", "20", "sum"], position: 1 };
     const taxFormula: Field = { id: 51, name: "含税", type: "formula", formula: "[订单合计] * 1.1", position: 2 };
     const rec: BaseRecord = { id: 1, baseId: 9, position: 1, cells: { 50: [100, 200, 300] as unknown as string[] } };
 
     // Raw mode preserves original lookup array.
-    expect(displayValue(rec, lookup, [])).toEqual([100, 200, 300]);
+    expect(displayValue(rec, lookupRaw, [])).toEqual([100, 200, 300]);
 
     // Sum rollup transforms displayValue into a CellView-compatible single-element string array.
-    setLookupRollup(9, { fieldId: 50, agg: "sum" });
-    const summed = displayValue(rec, lookup, []);
+    const summed = displayValue(rec, lookupSum, []);
     expect(summed).toEqual(["600"]);
-    expect(REGISTRY.lookup.format(summed, lookup)).toBe("600");
+    expect(REGISTRY.lookup.format(summed, lookupSum)).toBe("600");
 
     // CellView renders the rolled-up value instead of blank.
-    const html = renderToStaticMarkup(createElement(CellView, { field: lookup, record: rec, members: [], canEdit: false }));
+    const html = renderToStaticMarkup(createElement(CellView, { field: lookupSum, record: rec, members: [], canEdit: false }));
     expect(html).toContain("600");
 
     // Formulas can consume rolled-up numeric lookup values.
-    const evaluated = evalFormulas([lookup, taxFormula], rec, []);
+    const evaluated = evalFormulas([lookupSum, taxFormula], rec, []);
     expect(evaluated.get(51)).toBeCloseTo(660, 5);
 
     // Numeric compare orders 100 after 20.
-    expect(REGISTRY.lookup.compare(["100"], ["20"], lookup)).toBeGreaterThan(0);
+    expect(REGISTRY.lookup.compare(["100"], ["20"], lookupSum)).toBeGreaterThan(0);
   });
 
   it("renders MemberRuleValue single-select using FeishuSelect without native select", () => {

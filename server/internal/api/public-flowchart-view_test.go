@@ -234,3 +234,196 @@ func TestPublicFlowProjectionCorpus(t *testing.T) {
 		t.Fatal("flow projection corpus drifted")
 	}
 }
+
+func TestPublicFlowProjectionFramesMindLayoutAndRelations(t *testing.T) {
+	input := map[string]string{
+		"fc.theme": "feishu",
+		"fc.ml":    "fishbone",
+		// Valid frames
+		"fc.fr.fr_1": `{"id":"fr_1","title":"  登录流程  ","x":100.4,"y":200.6,"w":520,"h":340,"bg":"#F8FAFF","private":"HIDDEN-FRAME-EXTRA"}`,
+		"fc.fr.fr_2": `{"id":"fr_2","title":"","x":-400,"y":0,"w":240,"h":160,"bg":"rgba(0,0,0,0.5)"}`,
+		// Invalid / malformed / oversized frames
+		"fc.fr.deleted":   "",
+		"fc.fr.bad key!":  `{"id":"bad key!","title":"HIDDEN-BAD-KEY","x":0,"y":0,"w":300,"h":200}`,
+		"fc.fr.corrupt":   `{bad`,
+		"fc.fr.array":     `[]`,
+		"fc.fr.mismatch":  `{"id":"other","title":"HIDDEN-MISMATCH","x":0,"y":0,"w":300,"h":200}`,
+		"fc.fr.oob_x":     `{"id":"oob_x","title":"HIDDEN-OOB","x":25000,"y":0,"w":300,"h":200}`,
+		"fc.fr.small_w":   `{"id":"small_w","title":"HIDDEN-SMALL","x":0,"y":0,"w":80,"h":200}`,
+		"fc.fr.huge_h":    `{"id":"huge_h","title":"HIDDEN-HUGE","x":0,"y":0,"w":300,"h":9000}`,
+		"fc.fr.longtitle": `{"id":"longtitle","title":"` + strings.Repeat("A", 121) + `","x":0,"y":0,"w":300,"h":200}`,
+		"fc.fr.nul":       `{"id":"nul","title":"bad\u0000title","x":0,"y":0,"w":300,"h":200}`,
+		"fc.fr.oversized": `{"id":"oversized","title":"ok","x":0,"y":0,"w":300,"h":200,"pad":"` + strings.Repeat("x", 4100) + `"}`,
+		// Live mind topics + orphan/cyclic mind topics
+		"fc.m.root":   `{"parent":null,"order":0,"text":"核心目标","x":100,"y":100}`,
+		"fc.m.b1":     `{"parent":"root","order":0,"text":"需求分析"}`,
+		"fc.m.b2":     `{"parent":"root","order":1,"text":"技术方案"}`,
+		"fc.m.orphan": `{"parent":"missing","order":0,"text":"HIDDEN-ORPHAN-TOPIC"}`,
+		"fc.m.c1":     `{"parent":"c2","order":0,"text":"HIDDEN-CYCLE-1"}`,
+		"fc.m.c2":     `{"parent":"c1","order":0,"text":"HIDDEN-CYCLE-2"}`,
+		// Valid relations
+		"fc.mr.mr_1": `{"id":"mr_1","fromId":"b1","toId":"b2","label":"  强依赖  ","private":"HIDDEN-REL-EXTRA"}`,
+		"fc.mr.mr_2": `{"id":"mr_2","fromId":"root","toId":"b2"}`,
+		// Invalid / orphan / oversized relations
+		"fc.mr.deleted":    "",
+		"fc.mr.bad!id":     `{"id":"bad!id","fromId":"b1","toId":"b2","label":"HIDDEN-BAD-REL-ID"}`,
+		"fc.mr.mismatch":   `{"id":"other","fromId":"b1","toId":"b2","label":"HIDDEN-REL-MISMATCH"}`,
+		"fc.mr.self":       `{"id":"self","fromId":"b1","toId":"b1","label":"HIDDEN-SELF"}`,
+		"fc.mr.missing":    `{"id":"missing","fromId":"b1","toId":"nope","label":"HIDDEN-MISSING"}`,
+		"fc.mr.to_orphan":  `{"id":"to_orphan","fromId":"b1","toId":"orphan","label":"HIDDEN-TO-ORPHAN"}`,
+		"fc.mr.to_cycle":   `{"id":"to_cycle","fromId":"b1","toId":"c1","label":"HIDDEN-TO-CYCLE"}`,
+		"fc.mr.longlabel":  `{"id":"longlabel","fromId":"b1","toId":"b2","label":"` + strings.Repeat("Z", 81) + `"}`,
+		"fc.mr.nul":        `{"id":"nul","fromId":"b1","toId":"b2","label":"a\u0000b"}`,
+		"fc.mr.oversized":  `{"id":"oversized","fromId":"b1","toId":"b2","pad":"` + strings.Repeat("y", 2100) + `"}`,
+	}
+
+	before, _ := json.Marshal(input)
+	out := publicFlowProps(input)
+	after, _ := json.Marshal(input)
+	if string(before) != string(after) {
+		t.Fatal("publicFlowProps mutated input")
+	}
+
+	encoded, _ := json.Marshal(out)
+	if strings.Contains(string(encoded), "HIDDEN-") {
+		t.Fatalf("hidden data leaked: %s", encoded)
+	}
+
+	if out["fc.ml"] != "fishbone" {
+		t.Fatalf("expected fc.ml=fishbone, got %q", out["fc.ml"])
+	}
+
+	var fr1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.fr.fr_1"]), &fr1); err != nil {
+		t.Fatalf("expected valid fc.fr.fr_1, got %q (%v)", out["fc.fr.fr_1"], err)
+	}
+	wantFr1 := map[string]any{"id": "fr_1", "title": "登录流程", "x": float64(100), "y": float64(201), "w": float64(520), "h": float64(340), "bg": "#F8FAFF"}
+	if !reflect.DeepEqual(fr1, wantFr1) {
+		t.Fatalf("fc.fr.fr_1 mismatch:\n got %#v\nwant %#v", fr1, wantFr1)
+	}
+
+	var fr2 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.fr.fr_2"]), &fr2); err != nil {
+		t.Fatalf("expected valid fc.fr.fr_2, got %q (%v)", out["fc.fr.fr_2"], err)
+	}
+	if _, hasBg := fr2["bg"]; hasBg {
+		t.Fatalf("expected non-hex bg to be omitted, got %#v", fr2)
+	}
+	if fr2["title"] != "Frame" {
+		t.Fatalf("expected empty title to default to Frame, got %#v", fr2["title"])
+	}
+
+	var mr1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.mr.mr_1"]), &mr1); err != nil {
+		t.Fatalf("expected valid fc.mr.mr_1, got %q (%v)", out["fc.mr.mr_1"], err)
+	}
+	wantMr1 := map[string]any{"id": "mr_1", "fromId": "b1", "toId": "b2", "label": "强依赖"}
+	if !reflect.DeepEqual(mr1, wantMr1) {
+		t.Fatalf("fc.mr.mr_1 mismatch:\n got %#v\nwant %#v", mr1, wantMr1)
+	}
+
+	var mr2 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.mr.mr_2"]), &mr2); err != nil {
+		t.Fatalf("expected valid fc.mr.mr_2, got %q (%v)", out["fc.mr.mr_2"], err)
+	}
+	if _, hasLabel := mr2["label"]; hasLabel {
+		t.Fatalf("expected omitted label to stay omitted, got %#v", mr2)
+	}
+
+	for _, key := range []string{
+		"fc.fr.deleted", "fc.fr.bad key!", "fc.fr.corrupt", "fc.fr.array",
+		"fc.fr.mismatch", "fc.fr.oob_x", "fc.fr.small_w", "fc.fr.huge_h",
+		"fc.fr.longtitle", "fc.fr.nul", "fc.fr.oversized",
+		"fc.mr.deleted", "fc.mr.bad!id", "fc.mr.mismatch", "fc.mr.self",
+		"fc.mr.missing", "fc.mr.to_orphan", "fc.mr.to_cycle",
+		"fc.mr.longlabel", "fc.mr.nul", "fc.mr.oversized",
+	} {
+		if out[key] != "" {
+			t.Errorf("expected invalid/orphan/oversized prop %s to be stripped, got %q", key, out[key])
+		}
+	}
+
+	// Verify fc.ml accepts all four valid layouts and strips unknown values.
+	for _, valid := range []string{"logic", "org", "fishbone", "timeline"} {
+		if got := publicFlowProps(map[string]string{"fc.ml": valid})["fc.ml"]; got != valid {
+			t.Errorf("fc.ml=%q was not forwarded, got %q", valid, got)
+		}
+	}
+	for _, invalid := range []string{"", "radial", "HIDDEN-LAYOUT", "LOGIC"} {
+		if got := publicFlowProps(map[string]string{"fc.ml": invalid})["fc.ml"]; got != "" {
+			t.Errorf("invalid fc.ml=%q should be stripped, got %q", invalid, got)
+		}
+	}
+}
+
+func TestPublicFlowProjectionFramesAndRelationsOnPublicLink(t *testing.T) {
+	ctx := context.Background()
+	e := newCopyTestEnv(t)
+	e.share(t)
+	doc, _, err := StateAtHead(ctx, e.store, e.source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := doc.CreateBlock(29, collab.Root, "Z", "flowchart")
+	ops := []collab.Op{create}
+	props := map[string]string{
+		"fc.v":          "1",
+		"fc.theme":      "feishu",
+		"fc.ml":         "timeline",
+		"fc.fr.fr_1":    `{"id":"fr_1","title":"规划分区","x":40,"y":60,"w":480,"h":300,"bg":"#F8FAFF","secret":"HIDDEN-FRAME-SECRET"}`,
+		"fc.fr.bad!":    `{"id":"bad!","title":"HIDDEN-BAD-FRAME","x":0,"y":0,"w":300,"h":200}`,
+		"fc.m.root":     `{"parent":null,"order":0,"text":"里程碑","x":80,"y":80}`,
+		"fc.m.m1":       `{"parent":"root","order":0,"text":"阶段一"}`,
+		"fc.m.m2":       `{"parent":"root","order":1,"text":"阶段二"}`,
+		"fc.mr.mr_live": `{"id":"mr_live","fromId":"m1","toId":"m2","label":"前置依赖","secret":"HIDDEN-REL-SECRET"}`,
+		"fc.mr.mr_dead": `{"id":"mr_dead","fromId":"m1","toId":"ghost","label":"HIDDEN-ORPHAN-REL"}`,
+	}
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		val := props[k]
+		op := collab.Op{T: collab.TBlockSet, ID: collab.OpID{Client: 29, Clock: doc.Clock() + 1}, Block: create.ID, Key: k, Value: &val}
+		if !doc.Apply(op) {
+			t.Fatalf("apply %s", k)
+		}
+		ops = append(ops, op)
+	}
+	rows := make([]store.RawOp, 0, len(ops))
+	for _, op := range ops {
+		data, err := collab.EncodeOps([]collab.Op{op})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: data})
+	}
+	if _, err = e.store.AppendOps(ctx, e.source.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	r := send(t, e.owner, "PUT", e.url()+"/link", map[string]string{"role": "anon"})
+	var link store.Link
+	if err = json.NewDecoder(r.Body).Decode(&link); err != nil || r.StatusCode != 200 {
+		t.Fatalf("link: %d %v", r.StatusCode, err)
+	}
+	r.Body.Close()
+
+	resp, err := (&http.Client{}).Get(e.server.URL + "/api/public/" + link.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("public view failed: %d %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{"规划分区", "timeline", "前置依赖"} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Fatalf("public view missing %q: %s", want, body)
+		}
+	}
+	if bytes.Contains(body, []byte("HIDDEN-")) {
+		t.Fatalf("public view leaked hidden metadata: %s", body)
+	}
+}

@@ -1,5 +1,35 @@
-import type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage, ImportedSlidePage } from "@jiange/slides-sdk";
-export type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage, ImportedSlidePage } from "@jiange/slides-sdk";
+import type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage as SdkSlidesPage, ImportedSlidePage } from "@jiange/slides-sdk";
+export type { SlideShape, SlideLayout, SlideCreationLayout, ImportedSlidePage } from "@jiange/slides-sdk";
+
+export interface SlideFieldTextStyleMeta {
+  fontSize?: number;
+  bold?: boolean;
+  italic?: boolean;
+  color?: string;
+  align?: "left" | "center" | "right";
+}
+
+export interface SlidePageMeta {
+  titleStyle?: SlideFieldTextStyleMeta;
+  bodyStyle?: SlideFieldTextStyleMeta;
+  transition?: "none" | "fade" | "push" | "wipe";
+  shapeGroups?: Record<string, string[]>;
+}
+
+export type SlidesPage = SdkSlidesPage & {
+  meta?: SlidePageMeta;
+};
+
+export interface DocReactionItem {
+  emoji: string;
+  count: number;
+  reacted: boolean;
+}
+
+export interface DocReactionsResponse {
+  reactions: DocReactionItem[];
+  viewerCount: number;
+}
 
 export interface User {
   id: number;
@@ -254,6 +284,21 @@ export interface ViewConfig {
   frozen?: number;
   /** Kanban/gallery card presentation (Feishu 卡片配置). */
   card?: { fields?: number[]; cover?: number | null };
+  /** Gantt task dependency edges persisted per view. */
+  ganttDeps?: { id: string; fromId: number; toId: number }[];
+  /** Fine-grained field/row view permissions enforced server-side. */
+  permissions?: {
+    onlyOwnRecords?: boolean;
+    fieldModes?: Record<string, "edit" | "readonly" | "hidden">;
+  };
+  /** Form conditional visibility branching rules persisted and enforced on public submit. */
+  branchRules?: {
+    id: string;
+    targetFieldId: number;
+    sourceFieldId: number;
+    operator: "eq" | "neq" | "not_empty" | "checked";
+    value?: string;
+  }[];
 }
 export type RowHeight = "low" | "medium" | "high" | "xhigh";
 export interface FillRule extends FilterRule {
@@ -1079,6 +1124,10 @@ export const slidesApi = {
   restorePage: (deckId: number, userId: number, page: ImportedSlidePage, targetIndex: number) => request<{ page: SlidesPage; pages: SlidesPage[] }>("POST", `/api/slides/${deckId}/pages/restore`, { page, targetIndex }, undefined, { "X-Jiange-User-Id": String(userId), "X-Jiange-Slides-Version": "5" }),
   importPptx: (deckId: number, userId: number, pages: ImportedSlidePage[]) => request<{ pages: SlidesPage[] }>("POST", `/api/slides/${deckId}/import-pptx`, { pages }, undefined, { "X-Jiange-User-Id": String(userId), "X-Jiange-Slides-Version": "5" }),
   reorder: (deckId: number, userId: number, expected: { id: number; pos: number }[], pageId: number, to: number) => request<{ positions: unknown }>("POST", `/api/slides/${deckId}/pages/reorder`, { expected, pageId, to }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  patchPageMeta: (deckId: number, pageId: number, userId: number, meta: SlidePageMeta) =>
+    request<SlidesPage>("PATCH", `/api/slides/${deckId}/pages/${pageId}/meta`, { meta }, undefined, { "X-Jiange-User-Id": String(userId) }),
+  batchPagesMeta: (deckId: number, userId: number, meta: Partial<Pick<SlidePageMeta, "titleStyle" | "bodyStyle" | "transition">>) =>
+    request<{ pages: SlidesPage[] }>("POST", `/api/slides/${deckId}/pages-meta`, { meta }, undefined, { "X-Jiange-User-Id": String(userId) }),
   uploadImage: async (deckId: number, file: File, userId: number, signal: AbortSignal): Promise<FileMeta & { docId: number }> => {
     const data = new FormData(); data.append("file", file);
     const res = await fetch(`/api/slides/${deckId}/images`, { method: "POST", body: data, signal, headers: { "X-Jiange-Upload": "1", "X-Jiange-User-Id": String(userId) } });
@@ -1578,6 +1627,9 @@ export const docsApi = {
   duplicateForAccount: (id: number, userId: number, options?: { parentId?: number | null; personal?: boolean; workspaceId?: number; title?: string }) =>
     request<DocMeta>("POST", `/api/docs/${id}/account-duplicate`, options, undefined, { "X-Jiange-User-Id": String(userId) }),
   getForAccount: (id: number, userId: number) => request<DocMeta>("GET", `/api/docs/${id}/account-metadata`, undefined, undefined, { "X-Jiange-User-Id": String(userId) }),
+  reactions: (id: number) => request<DocReactionsResponse>("GET", `/api/docs/${id}/reactions`),
+  toggleReaction: (id: number, emoji: string, on?: boolean) =>
+    request<DocReactionsResponse>("POST", `/api/docs/${id}/reactions`, on === undefined ? { emoji } : { emoji, on }),
 };
 
 /** 带进度的上传（fetch 无上传进度事件）。错误格式与 request 一致。 */

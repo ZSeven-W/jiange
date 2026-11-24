@@ -5,6 +5,7 @@ import type { SlidesPage } from "@/lib/api";
 import {
   applyTransitionToAllPages,
   getSlideTransition,
+  hydrateSlideTransitions,
   isSlideTransitionKind,
   loadSlideTransitions,
   saveSlideTransitions,
@@ -133,6 +134,18 @@ describe("slides transitions persistence and animation helpers", () => {
 
     const reset = applyTransitionToAllPages(applied, [1, 2, 3], "none");
     expect(reset).toEqual({});
+  });
+
+  it("hydrates per-page transitions directly from cloud page.meta", () => {
+    expect(hydrateSlideTransitions(undefined)).toEqual({});
+    expect(
+      hydrateSlideTransitions([
+        { id: 1, meta: undefined },
+        { id: 2, meta: { transition: "fade" } },
+        { id: 3, meta: { transition: "none" } },
+        { id: 4, meta: { transition: "wipe" } },
+      ]),
+    ).toEqual({ 2: "fade", 4: "wipe" });
   });
 
   it("produces matching 380ms animation styles and renders them in FormatPanel & PresenterView", () => {

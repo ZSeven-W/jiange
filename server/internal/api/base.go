@@ -326,6 +326,54 @@ func (in fieldInput) apply(w http.ResponseWriter, f *store.Field) bool {
 	return true
 }
 
+var lookupRollupAggs = map[string]bool{
+	"raw": true, "sum": true, "avg": true, "count": true, "min": true, "max": true,
+}
+
+func validateLookupOptions(w http.ResponseWriter, f store.Field) bool {
+	if f.Type != "lookup" || len(f.Options) == 0 {
+		return true
+	}
+	if len(f.Options) < 2 || len(f.Options) > 3 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_lookup", "查找引用配置无效")
+		return false
+	}
+	if id, err := strconv.ParseInt(f.Options[0], 10, 64); err != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_lookup", "关联字段无效")
+		return false
+	}
+	if id, err := strconv.ParseInt(f.Options[1], 10, 64); err != nil || id <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "invalid_lookup", "引用字段无效")
+		return false
+	}
+	if len(f.Options) == 3 && !lookupRollupAggs[f.Options[2]] {
+		httpx.Error(w, http.StatusBadRequest, "invalid_lookup", "汇总方式无效，支持 raw/sum/avg/count/min/max")
+		return false
+	}
+	return true
+}
+
+func (s *Server) fieldRestrictedForNonManager(w http.ResponseWriter, r *http.Request, b store.DocMeta, fields []store.Field, fieldID, tableID int64) bool {
+	if b.Role == store.RoleManage {
+		return false
+	}
+	allViews, err := s.Store.Views(r.Context(), b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return true
+	}
+	p, err := parseBasePolicy(b, fields, filterViewsByTable(allViews, tableID))
+	if err != nil {
+		s.fail(w, r, err)
+		return true
+	}
+	if p.hidden[fieldID] || p.readonly[fieldID] {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "该字段受权限保护，只有管理员可以修改或删除")
+		return true
+	}
+	return false
+}
+
 // validateFormula checks a formula expression's syntax and field references.
 func validateFormula(w http.ResponseWriter, fields []store.Field, excludeField int64, formula string) bool {
 	if utf8.RuneCountInString(formula) > 2000 {
@@ -414,6 +462,9 @@ func (s *Server) addField(w http.ResponseWriter, r *http.Request) {
 	if f.Type == "link" && !s.allowLinkTarget(w, r, b.ID, f, nil) {
 		return
 	}
+	if !validateLookupOptions(w, f) {
+		return
+	}
 	guard, ok := s.viewGuard(w, r)
 	if !ok {
 		return
@@ -455,6 +506,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 	}
 	old := allFields[i]
 	fields := filterFieldsByTable(allFields, old.TableID)
+	if s.fieldRestrictedForNonManager(w, r, b, fields, old.ID, old.TableID) {
+		return
+	}
 	f := old
 	if !in.apply(w, &f) {
 		return
@@ -466,6 +520,9 @@ func (s *Server) patchField(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if f.Type == "link" && !s.allowLinkTarget(w, r, b.ID, f, nil) {
+		return
+	}
+	if !validateLookupOptions(w, f) {
 		return
 	}
 	guard, ok := s.viewGuard(w, r)
@@ -686,6 +743,9 @@ func (s *Server) deleteField(w http.ResponseWriter, r *http.Request) {
 	}
 	old := allFields[idx]
 	fields := filterFieldsByTable(allFields, old.TableID)
+	if s.fieldRestrictedForNonManager(w, r, b, fields, old.ID, old.TableID) {
+		return
+	}
 	result, err := s.Store.MutateFieldGuarded(r.Context(), guard, store.FieldMutation{BaseID: b.ID, Before: &old, Fields: fields})
 	if err != nil {
 		s.fieldMutationError(w, r, err)

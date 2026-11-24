@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Eye, GitBranch, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { t, useI18n } from "@/lib/i18n";
 import type { Field, ViewConfig } from "@/lib/api";
 import { FeishuSelect } from "@/components/feishu-select";
 import { PublicFormField, supportsPublicFormField, type FormFieldDef, type FormValue } from "@/pages/public-form";
 import {
-  loadFormBranchRules,
-  saveFormBranchRules,
+  isValidFormBranchRule,
   visibleFormFields,
   wouldCreateBranchCycle,
   type FormBranchOperator,
@@ -20,13 +19,43 @@ export function validFormSelection(config: ViewConfig, fields: Field[]): boolean
   const allowed = new Set(fields.filter((f) => supportsPublicFormField(f.type)).map((f) => f.id));
   const picked = new Set(config.fields);
   const required = config.required ?? [];
-  return picked.size === config.fields.length && config.fields.every((id) => allowed.has(id))
-    && new Set(required).size === required.length && required.every((id) => picked.has(id));
+  if (
+    picked.size !== config.fields.length ||
+    !config.fields.every((id) => allowed.has(id)) ||
+    new Set(required).size !== required.length ||
+    !required.every((id) => picked.has(id))
+  ) {
+    return false;
+  }
+  if (config.branchRules !== undefined) {
+    if (!Array.isArray(config.branchRules) || config.branchRules.length > 200) return false;
+    const seen = new Set<string>();
+    for (let i = 0; i < config.branchRules.length; i++) {
+      const rule = config.branchRules[i];
+      if (!isValidFormBranchRule(rule) || seen.has(rule.id)) return false;
+      if (!picked.has(rule.sourceFieldId) || !picked.has(rule.targetFieldId)) return false;
+      if (wouldCreateBranchCycle(config.branchRules.slice(0, i), rule.sourceFieldId, rule.targetFieldId)) return false;
+      seen.add(rule.id);
+    }
+  }
+  return true;
 }
 export function setFormField(config: ViewConfig, fieldId: number, selected: boolean): ViewConfig {
   const current = Array.isArray(config.fields) ? config.fields : [];
   const required = Array.isArray(config.required) ? config.required : [];
-  return { ...config, fields: selected ? [...current.filter((id) => id !== fieldId), fieldId] : current.filter((id) => id !== fieldId), required: required.filter((id) => id !== fieldId) };
+  const nextFields = selected ? [...current.filter((id) => id !== fieldId), fieldId] : current.filter((id) => id !== fieldId);
+  const nextSet = new Set(nextFields);
+  const nextConfig: ViewConfig = {
+    ...config,
+    fields: nextFields,
+    required: required.filter((id) => id !== fieldId),
+  };
+  if (Array.isArray(config.branchRules)) {
+    const kept = config.branchRules.filter((r) => nextSet.has(r.sourceFieldId) && nextSet.has(r.targetFieldId));
+    if (kept.length > 0) nextConfig.branchRules = kept;
+    else delete nextConfig.branchRules;
+  }
+  return nextConfig;
 }
 export function setFormRequired(config: ViewConfig, fieldId: number, required: boolean): ViewConfig {
   if (!Array.isArray(config.fields) || !config.fields.includes(fieldId)) return config;
@@ -36,8 +65,6 @@ export function setFormRequired(config: ViewConfig, fieldId: number, required: b
 
 /** Editable selection is explicit: the manager sees exactly what will be shared. */
 export function FormSetup({
-  baseId,
-  viewId,
   config,
   fields,
   canEdit,
@@ -72,23 +99,20 @@ export function FormSetup({
   const [confirmedSignature, setConfirmedSignature] = useState<string | null>(null);
   const confirmed = confirmedSignature === signature;
 
-  const [branchRules, setBranchRules] = useState<FormBranchRule[]>(() =>
-    initialBranchRules ?? (baseId && viewId ? loadFormBranchRules(baseId, viewId) : []),
-  );
+  const branchRules = useMemo<FormBranchRule[]>(() => {
+    if (Array.isArray(config.branchRules)) return config.branchRules;
+    return initialBranchRules ?? [];
+  }, [config.branchRules, initialBranchRules]);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [previewOpen, setPreviewOpen] = useState(defaultPreviewOpen);
   const [previewValues, setPreviewValues] = useState<Record<number, FormValue>>({});
 
-  useEffect(() => {
-    if (initialBranchRules !== undefined) return;
-    setBranchRules(baseId && viewId ? loadFormBranchRules(baseId, viewId) : []);
-    setBranchError(null);
-  }, [baseId, viewId, initialBranchRules]);
-
   const updateBranchRules = (next: FormBranchRule[]) => {
-    setBranchRules(next);
     setBranchError(null);
-    if (baseId && viewId) saveFormBranchRules(baseId, viewId, next);
+    const nextConfig: ViewConfig = { ...config };
+    if (next.length > 0) nextConfig.branchRules = next;
+    else delete nextConfig.branchRules;
+    onChange(nextConfig);
   };
 
   const selectedFields = useMemo(
@@ -172,7 +196,7 @@ export function FormSetup({
           {supported && <label className="flex shrink-0 items-center gap-1 text-[12px] text-muted-foreground"><input type="checkbox" checked={required.has(field.id)} disabled={!canEdit || saving || !checked} onChange={(event) => onChange(setFormRequired(config, field.id, event.currentTarget.checked))} />{t("必填")}</label>}
         </div>;
       })}</div>
-      {missing.length > 0 && <p role="alert" className="mt-2 text-[12px] text-destructive">{t("有已删除的字段仍在配置中。")} {canEdit && <button type="button" disabled={saving} className="underline" onClick={() => { const remaining = (Array.isArray(config.fields) ? config.fields : []).filter((id) => !missing.includes(id)); onChange({ ...config, fields: remaining, required: (Array.isArray(config.required) ? config.required : []).filter((id) => remaining.includes(id)) }); }}>{t("移除失效字段")}</button>}</p>}
+      {missing.length > 0 && <p role="alert" className="mt-2 text-[12px] text-destructive">{t("有已删除的字段仍在配置中。")} {canEdit && <button type="button" disabled={saving} className="underline" onClick={() => { const remaining = (Array.isArray(config.fields) ? config.fields : []).filter((id) => !missing.includes(id)); const nextCfg: ViewConfig = { ...config, fields: remaining, required: (Array.isArray(config.required) ? config.required : []).filter((id) => remaining.includes(id)) }; if (Array.isArray(config.branchRules)) { const kept = config.branchRules.filter((r) => remaining.includes(r.sourceFieldId) && remaining.includes(r.targetFieldId)); if (kept.length > 0) nextCfg.branchRules = kept; else delete nextCfg.branchRules; } onChange(nextCfg); }}>{t("移除失效字段")}</button>}</p>}
 
       <div className="mt-6 rounded-lg border border-[#e5e6eb] bg-[#f7f8fa]/50 p-3.5 dark:bg-sidebar/30" data-form-branching>
         <div className="flex flex-wrap items-center justify-between gap-2">

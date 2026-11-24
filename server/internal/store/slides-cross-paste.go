@@ -96,6 +96,7 @@ func (m *Memory) PasteSlidesPageFrom(ctx context.Context, g RestoreGuard, target
 	}
 	page := *src
 	page.Shapes = append([]byte(nil), shapes...)
+	page.Meta = cloneSlideMeta(src.Meta)
 	m.slidesSequence++
 	page.ID = m.slidesSequence
 	page.SlidesID = targetDeck
@@ -105,6 +106,7 @@ func (m *Memory) PasteSlidesPageFrom(ctx context.Context, g RestoreGuard, target
 	m.sh.files = append(m.sh.files, files...)
 	m.slides = append(m.slides, page)
 	page.Shapes = append([]byte(nil), page.Shapes...)
+	page.Meta = cloneSlideMeta(page.Meta)
 	return page, mapping, nil
 }
 
@@ -114,14 +116,14 @@ func (p *Postgres) PasteSlidesPageFrom(ctx context.Context, g RestoreGuard, targ
 	}
 	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
 		// Match existing slide mutations: page locks in id order, then node locks.
-		rows, e := tx.Query(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,hidden,layout,revision,updated_at FROM slides_pages WHERE (id=$1 AND slides_id=$2) OR (id=$3 AND slides_id=$4) ORDER BY id FOR UPDATE`, sourceID, sourceDeck, anchorID, targetDeck)
+		rows, e := tx.Query(ctx, `SELECT id,slides_id,pos,title,body,background,notes,shapes,hidden,layout,meta,revision,updated_at FROM slides_pages WHERE (id=$1 AND slides_id=$2) OR (id=$3 AND slides_id=$4) ORDER BY id FOR UPDATE`, sourceID, sourceDeck, anchorID, targetDeck)
 		if e != nil {
 			return e
 		}
 		var src, anchor SlidesPage
 		for rows.Next() {
 			var page SlidesPage
-			if e = rows.Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Layout, &page.Revision, &page.UpdatedAt); e != nil {
+			if e = rows.Scan(&page.ID, &page.SlidesID, &page.Pos, &page.Title, &page.Body, &page.Background, &page.Notes, &page.Shapes, &page.Hidden, &page.Layout, &page.Meta, &page.Revision, &page.UpdatedAt); e != nil {
 				rows.Close()
 				return e
 			}
@@ -247,10 +249,11 @@ func (p *Postgres) PasteSlidesPageFrom(ctx context.Context, g RestoreGuard, targ
 		if e = drivePGEnd(ctx, g, expires); e != nil {
 			return e
 		}
-		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes,hidden,layout) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9) RETURNING id,slides_id,pos,title,body,background,notes,shapes,hidden,layout,revision,updated_at`, targetDeck, pos, src.Title, src.Body, src.Background, src.Notes, shapes, src.Hidden, src.Layout).Scan(&out.ID, &out.SlidesID, &out.Pos, &out.Title, &out.Body, &out.Background, &out.Notes, &out.Shapes, &out.Hidden, &out.Layout, &out.Revision, &out.UpdatedAt)
+		e = tx.QueryRow(ctx, `INSERT INTO slides_pages (slides_id,pos,title,body,background,notes,shapes,hidden,layout,meta) VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10::jsonb) RETURNING id,slides_id,pos,title,body,background,notes,shapes,hidden,layout,meta,revision,updated_at`, targetDeck, pos, src.Title, src.Body, src.Background, src.Notes, shapes, src.Hidden, src.Layout, slideMetaForPG(src.Meta)).Scan(&out.ID, &out.SlidesID, &out.Pos, &out.Title, &out.Body, &out.Background, &out.Notes, &out.Shapes, &out.Hidden, &out.Layout, &out.Meta, &out.Revision, &out.UpdatedAt)
 		if e != nil {
 			return e
 		}
+		out.Meta = normalizeDBSlideMeta(out.Meta)
 		return drivePGEnd(ctx, g, expires)
 	})
 	if err != nil {

@@ -17,144 +17,39 @@ export function isRollupAgg(value: unknown): value is RollupAgg {
   return typeof value === "string" && VALID_AGGS.has(value);
 }
 
-export function rollupStorageKey(baseId: number): string {
-  return `jiange:base:rollup:${baseId}`;
-}
-
-interface RollupStore {
-  byField: Record<string, RollupAgg>;
-  bySource: Record<string, RollupAgg>;
-}
-
-const EMPTY_STORE: RollupStore = { byField: {}, bySource: {} };
-
-function readStore(baseId: number): RollupStore {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || typeof localStorage === "undefined") {
-    return { byField: {}, bySource: {} };
-  }
-  try {
-    const raw = localStorage.getItem(rollupStorageKey(baseId));
-    if (!raw) return { byField: {}, bySource: {} };
-    const parsed = JSON.parse(raw) as Partial<RollupStore>;
-    const byField: Record<string, RollupAgg> = {};
-    const bySource: Record<string, RollupAgg> = {};
-    if (parsed && typeof parsed === "object") {
-      if (parsed.byField && typeof parsed.byField === "object") {
-        for (const [k, v] of Object.entries(parsed.byField)) {
-          if (isRollupAgg(v)) byField[k] = v;
-        }
-      }
-      if (parsed.bySource && typeof parsed.bySource === "object") {
-        for (const [k, v] of Object.entries(parsed.bySource)) {
-          if (isRollupAgg(v)) bySource[k] = v;
-        }
-      }
-    }
-    return { byField, bySource };
-  } catch {
-    return { ...EMPTY_STORE, byField: {}, bySource: {} };
-  }
-}
-
-function writeStore(baseId: number, store: RollupStore): void {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || typeof localStorage === "undefined") return;
-  try {
-    if (!Object.keys(store.byField).length && !Object.keys(store.bySource).length) {
-      localStorage.removeItem(rollupStorageKey(baseId));
-    } else {
-      localStorage.setItem(rollupStorageKey(baseId), JSON.stringify(store));
-    }
-  } catch {
-    // Ignore storage quota / privacy mode failures.
-  }
-}
-
-/** Extract linkFieldId and lookupFieldId encoded in a lookup field's options array. */
+/** Extract linkFieldId, lookupFieldId, and cloud-persisted rollupAgg from field.options. */
 export function lookupFieldConfig(field: Pick<Field, "options"> | undefined): {
   linkFieldId: number;
   lookupFieldId: number;
+  rollupAgg: RollupAgg;
 } {
   const linkRaw = Number(field?.options?.[0]);
   const targetRaw = Number(field?.options?.[1]);
+  const aggRaw = field?.options?.[2];
   return {
     linkFieldId: Number.isSafeInteger(linkRaw) && linkRaw > 0 ? linkRaw : 0,
     lookupFieldId: Number.isSafeInteger(targetRaw) && targetRaw > 0 ? targetRaw : 0,
+    rollupAgg: isRollupAgg(aggRaw) ? aggRaw : "raw",
   };
 }
 
-/**
- * Persist rollup aggregation metadata for a lookup field.
- * Stores by explicit fieldId (when editing) and by (linkFieldId, lookupFieldId, fieldName)
- * so newly created lookup fields pick up their chosen rollup immediately after creation.
- */
-export function setLookupRollup(
-  baseId: number,
-  opts: {
-    fieldId?: number;
-    linkFieldId?: number;
-    lookupFieldId?: number;
-    fieldName?: string;
-    agg: RollupAgg;
-  },
-): void {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0) return;
-  const store = readStore(baseId);
-  const { fieldId, linkFieldId, lookupFieldId, fieldName, agg } = opts;
-  const normalizedName = fieldName?.trim() ?? "";
-
-  if (fieldId && Number.isSafeInteger(fieldId) && fieldId > 0) {
-    if (agg === "raw") {
-      delete store.byField[String(fieldId)];
-    } else {
-      store.byField[String(fieldId)] = agg;
-    }
-  }
-
-  if (linkFieldId && lookupFieldId && linkFieldId > 0 && lookupFieldId > 0) {
-    const baseSig = `${linkFieldId}:${lookupFieldId}`;
-    const namedSig = normalizedName ? `${baseSig}:${normalizedName}` : "";
-    if (agg === "raw") {
-      if (namedSig) delete store.bySource[namedSig];
-      if (!fieldId) delete store.bySource[baseSig];
-    } else {
-      if (namedSig) store.bySource[namedSig] = agg;
-      else store.bySource[baseSig] = agg;
-    }
-  }
-
-  writeStore(baseId, store);
+/** Build the cloud-persisted options array for a lookup field ([linkId, targetId] or [linkId, targetId, agg]). */
+export function buildLookupOptions(
+  linkFieldId: number,
+  lookupFieldId: number,
+  agg: RollupAgg,
+): string[] {
+  return agg === "raw"
+    ? [String(linkFieldId), String(lookupFieldId)]
+    : [String(linkFieldId), String(lookupFieldId), agg];
 }
 
-/** Remove saved rollup metadata for a field (e.g. when switching away from lookup). */
-export function clearLookupRollup(baseId: number, fieldId: number): void {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || !Number.isSafeInteger(fieldId) || fieldId <= 0) return;
-  const store = readStore(baseId);
-  if (!(String(fieldId) in store.byField)) return;
-  delete store.byField[String(fieldId)];
-  writeStore(baseId, store);
-}
-
-/** Resolve the configured rollup aggregation for a lookup field. */
+/** Resolve the configured rollup aggregation directly from field.options[2] (default "raw"). */
 export function getLookupRollup(
-  field: Pick<Field, "id" | "name" | "options"> | undefined,
-  baseId?: number,
+  field: Pick<Field, "options"> | undefined,
 ): RollupAgg {
-  if (!field || !baseId || !Number.isSafeInteger(baseId) || baseId <= 0) return "raw";
-  const store = readStore(baseId);
-  const byId = store.byField[String(field.id)];
-  if (byId) return byId;
-  const { linkFieldId, lookupFieldId } = lookupFieldConfig(field);
-  if (linkFieldId > 0 && lookupFieldId > 0) {
-    const baseSig = `${linkFieldId}:${lookupFieldId}`;
-    const name = field.name?.trim() ?? "";
-    if (name && store.bySource[`${baseSig}:${name}`]) {
-      return store.bySource[`${baseSig}:${name}`];
-    }
-    if (store.bySource[baseSig]) {
-      return store.bySource[baseSig];
-    }
-  }
-  return "raw";
+  const raw = field?.options?.[2];
+  return isRollupAgg(raw) ? raw : "raw";
 }
 
 function parseRollupNumber(value: unknown): number | null {

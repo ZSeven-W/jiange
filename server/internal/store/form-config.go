@@ -128,7 +128,7 @@ func PublicFormConfigExtrasEqual(current, proposed json.RawMessage) bool {
 	if !ok {
 		return false
 	}
-	for _, key := range []string{"title", "desc", "fields", "required"} {
+	for _, key := range []string{"title", "desc", "fields", "required", "branchRules"} {
 		delete(before, key)
 		delete(after, key)
 	}

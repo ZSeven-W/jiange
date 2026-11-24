@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ShieldCheck } from "lucide-react";
-import type { BaseRecord, Field } from "@/lib/api";
+import type { BaseRecord, Field, ViewConfig } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { TypeGlyph } from "./cells";
@@ -23,68 +23,66 @@ export const DEFAULT_VIEW_PERMISSIONS: ViewPermissionsConfig = {
 
 const VALID_FIELD_PERMS = new Set<string>(["edit", "readonly", "hidden"]);
 
-export function viewPermissionsStorageKey(baseId: number, viewId: number): string {
-  return `jiange:base:view-perms:${baseId}:${viewId}`;
-}
-
-export function loadViewPermissions(
-  baseId: number,
-  viewId: number | null | undefined,
+/** Convert cloud-persisted ViewConfig.permissions into the panel's normalized ViewPermissionsConfig. */
+export function viewPermissionsFromConfig(
+  perms: ViewConfig["permissions"] | undefined,
 ): ViewPermissionsConfig {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || !viewId || !Number.isSafeInteger(viewId) || viewId <= 0) {
+  if (!perms || typeof perms !== "object") {
     return { fields: {}, onlyOwnRows: false };
   }
-  if (typeof localStorage === "undefined") {
-    return { fields: {}, onlyOwnRows: false };
-  }
-  try {
-    const raw = localStorage.getItem(viewPermissionsStorageKey(baseId, viewId));
-    if (!raw) return { fields: {}, onlyOwnRows: false };
-    const parsed = JSON.parse(raw) as { fields?: Record<string, unknown>; onlyOwnRows?: unknown };
-    const fields: Record<number, FieldPermission> = {};
-    if (parsed && typeof parsed === "object" && parsed.fields && typeof parsed.fields === "object") {
-      for (const [k, v] of Object.entries(parsed.fields)) {
-        const fid = Number(k);
-        if (Number.isSafeInteger(fid) && fid > 0 && typeof v === "string" && VALID_FIELD_PERMS.has(v) && v !== "edit") {
-          fields[fid] = v as FieldPermission;
-        }
+  const fields: Record<number, FieldPermission> = {};
+  if (perms.fieldModes && typeof perms.fieldModes === "object") {
+    for (const [k, v] of Object.entries(perms.fieldModes)) {
+      const fid = Number(k);
+      if (Number.isSafeInteger(fid) && fid > 0 && typeof v === "string" && VALID_FIELD_PERMS.has(v) && v !== "edit") {
+        fields[fid] = v as FieldPermission;
       }
     }
-    return {
-      fields,
-      onlyOwnRows: parsed?.onlyOwnRows === true,
-    };
-  } catch {
-    return { fields: {}, onlyOwnRows: false };
   }
+  return {
+    fields,
+    onlyOwnRows: perms.onlyOwnRecords === true,
+  };
 }
 
-export function saveViewPermissions(
-  baseId: number,
-  viewId: number | null | undefined,
+/** Serialize ViewPermissionsConfig into cloud-persisted ViewConfig.permissions (or undefined if empty). */
+export function viewPermissionsToConfig(
   config: ViewPermissionsConfig,
-): void {
-  if (!Number.isSafeInteger(baseId) || baseId <= 0 || !viewId || !Number.isSafeInteger(viewId) || viewId <= 0) return;
-  if (typeof localStorage === "undefined") return;
-  try {
-    const cleanedFields: Record<number, FieldPermission> = {};
-    for (const [k, v] of Object.entries(config.fields)) {
+): ViewConfig["permissions"] | undefined {
+  const fieldModes: Record<string, FieldPermission> = {};
+  for (const [k, v] of Object.entries(config.fields)) {
+    const fid = Number(k);
+    if (Number.isSafeInteger(fid) && fid > 0 && (v === "readonly" || v === "hidden")) {
+      fieldModes[String(fid)] = v;
+    }
+  }
+  const hasFieldModes = Object.keys(fieldModes).length > 0;
+  if (!config.onlyOwnRows && !hasFieldModes) {
+    return undefined;
+  }
+  return {
+    ...(config.onlyOwnRows ? { onlyOwnRecords: true } : {}),
+    ...(hasFieldModes ? { fieldModes } : {}),
+  };
+}
+
+/** Intersect multiple view permission policies (hidden > readonly > edit; onlyOwnRows OR'd). */
+export function mergeViewPermissions(
+  configs: readonly ViewPermissionsConfig[],
+): ViewPermissionsConfig {
+  const fields: Record<number, FieldPermission> = {};
+  let onlyOwnRows = false;
+  for (const cfg of configs) {
+    if (cfg.onlyOwnRows) onlyOwnRows = true;
+    for (const [k, v] of Object.entries(cfg.fields)) {
       const fid = Number(k);
-      if (Number.isSafeInteger(fid) && fid > 0 && (v === "readonly" || v === "hidden")) {
-        cleanedFields[fid] = v;
+      if (!Number.isSafeInteger(fid) || fid <= 0) continue;
+      if (v === "hidden" || (v === "readonly" && fields[fid] !== "hidden")) {
+        fields[fid] = v;
       }
     }
-    if (!config.onlyOwnRows && Object.keys(cleanedFields).length === 0) {
-      localStorage.removeItem(viewPermissionsStorageKey(baseId, viewId));
-    } else {
-      localStorage.setItem(
-        viewPermissionsStorageKey(baseId, viewId),
-        JSON.stringify({ fields: cleanedFields, onlyOwnRows: !!config.onlyOwnRows }),
-      );
-    }
-  } catch {
-    // Ignore storage quota / privacy mode failures.
   }
+  return { fields, onlyOwnRows };
 }
 
 export function fieldPermissionOf(config: ViewPermissionsConfig, fieldId: number): FieldPermission {

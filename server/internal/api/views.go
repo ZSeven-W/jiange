@@ -1,12 +1,15 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"mime"
 	"net/http"
 	"net/url"
@@ -31,6 +34,39 @@ type viewInput struct {
 }
 
 var viewTypes = map[string]bool{"grid": true, "kanban": true, "gallery": true, "calendar": true, "form": true, "gantt": true}
+
+func viewPermissionsActive(p *btquery.ViewPermissions) bool {
+	if p == nil {
+		return false
+	}
+	if p.OnlyOwnRecords {
+		return true
+	}
+	for _, mode := range p.FieldModes {
+		if mode != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func sameViewPermissions(a, b *btquery.ViewPermissions) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return !viewPermissionsActive(a) && !viewPermissionsActive(b)
+	}
+	if a.OnlyOwnRecords != b.OnlyOwnRecords || len(a.FieldModes) != len(b.FieldModes) {
+		return false
+	}
+	for k, v := range a.FieldModes {
+		if bv, ok := b.FieldModes[k]; !ok || bv != v {
+			return false
+		}
+	}
+	return true
+}
 
 func (in viewInput) apply(w http.ResponseWriter, v *store.View) bool {
 	if in.Name != nil {
@@ -100,6 +136,10 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_config", "个人视图不支持权限锁定或视图配置锁定")
 		return
 	}
+	if v.OwnerID != nil && cfg.Permissions != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "个人视图不支持配置字段与行权限")
+		return
+	}
 	if b.Role != store.RoleManage {
 		if cfg.Locked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
@@ -107,6 +147,10 @@ func (s *Server) addView(w http.ResponseWriter, r *http.Request) {
 		}
 		if cfg.ConfigLocked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以锁定视图配置")
+			return
+		}
+		if cfg.Permissions != nil {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以配置字段与行权限")
 			return
 		}
 	}
@@ -177,6 +221,10 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_config", "个人视图不支持权限锁定或视图配置锁定")
 		return
 	}
+	if v.OwnerID != nil && cfg.Permissions != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_config", "个人视图不支持配置字段与行权限")
+		return
+	}
 	if b.Role != store.RoleManage {
 		if cfg.Locked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
@@ -184,6 +232,10 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 		}
 		if curCfg.ConfigLocked || cfg.ConfigLocked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "此视图已锁定配置，只有管理员可以修改")
+			return
+		}
+		if !sameViewPermissions(curCfg.Permissions, cfg.Permissions) || (curCfg.Permissions == nil && cfg.Permissions != nil) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以配置字段与行权限")
 			return
 		}
 	}
@@ -212,11 +264,29 @@ func (s *Server) deleteView(w http.ResponseWriter, r *http.Request) {
 	if !s.allowBaseWrite(w, r, b) {
 		return
 	}
+	vid := pathID(r, "vid")
+	if b.Role != store.RoleManage {
+		views, err := s.Store.Views(r.Context(), b.ID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		for _, v := range views {
+			if v.ID == vid && v.OwnerID == nil && len(v.Config) > 0 {
+				var curCfg btquery.Config
+				if json.Unmarshal(v.Config, &curCfg) == nil && viewPermissionsActive(curCfg.Permissions) {
+					httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以配置字段与行权限")
+					return
+				}
+				break
+			}
+		}
+	}
 	guard, ok := s.viewGuard(w, r)
 	if !ok {
 		return
 	}
-	if err := s.Store.DeleteViewGuarded(r.Context(), guard, b.ID, pathID(r, "vid")); err != nil {
+	if err := s.Store.DeleteViewGuarded(r.Context(), guard, b.ID, vid); err != nil {
 		s.viewMutationError(w, r, err)
 		return
 	}
@@ -469,6 +539,7 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	recs = filterOwnRecords(recs, read.policy, u.ID)
 	read.records = stripBaseRecords(recs, read.allFields, read.policy)
 	_, targets, err := s.expandBase(r.Context(), u.ID, &read, false)
 	if err != nil {
@@ -493,12 +564,196 @@ type formField struct {
 	Required     bool     `json:"required,omitempty"`
 }
 
+type formBranchRule struct {
+	ID            string `json:"id"`
+	TargetFieldID int64  `json:"targetFieldId"`
+	SourceFieldID int64  `json:"sourceFieldId"`
+	Operator      string `json:"operator"`
+	Value         string `json:"value,omitempty"`
+}
+
 // formConfig is the saved form definition (bt_views.config for type=form).
 type formConfig struct {
-	Title    string  `json:"title,omitempty"`
-	Desc     string  `json:"desc,omitempty"`
-	Fields   []int64 `json:"fields"`
-	Required []int64 `json:"required,omitempty"`
+	Title       string           `json:"title,omitempty"`
+	Desc        string           `json:"desc,omitempty"`
+	Fields      []int64          `json:"fields"`
+	Required    []int64          `json:"required,omitempty"`
+	BranchRules []formBranchRule `json:"branchRules,omitempty"`
+}
+
+func hasFormBranchCycle(rules []formBranchRule) bool {
+	adj := make(map[int64][]int64, len(rules))
+	for _, r := range rules {
+		adj[r.SourceFieldID] = append(adj[r.SourceFieldID], r.TargetFieldID)
+	}
+	state := make(map[int64]uint8, len(adj)) // 0=unvisited, 1=visiting, 2=visited
+	var dfs func(int64) bool
+	dfs = func(node int64) bool {
+		state[node] = 1
+		for _, next := range adj[node] {
+			switch state[next] {
+			case 1:
+				return true
+			case 0:
+				if dfs(next) {
+					return true
+				}
+			}
+		}
+		state[node] = 2
+		return false
+	}
+	for node := range adj {
+		if state[node] == 0 && dfs(node) {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeFormCellAny(raw json.RawMessage) (any, bool) {
+	if len(raw) == 0 {
+		return nil, false
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) != nil || v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+func formBranchAnyToString(v any) string {
+	switch x := v.(type) {
+	case string:
+		return x
+	case json.Number:
+		return x.String()
+	case bool:
+		return strconv.FormatBool(x)
+	case float64:
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case nil:
+		return ""
+	default:
+		return fmt.Sprint(x)
+	}
+}
+
+func formBranchValueEquals(val any, exists bool, expectedRaw string) bool {
+	expected := strings.TrimSpace(expectedRaw)
+	if !exists || val == nil {
+		return expected == ""
+	}
+	switch x := val.(type) {
+	case []any:
+		for _, item := range x {
+			if strings.TrimSpace(formBranchAnyToString(item)) == expected {
+				return true
+			}
+		}
+		return false
+	case bool:
+		return strconv.FormatBool(x) == strings.ToLower(expected)
+	default:
+		return strings.TrimSpace(formBranchAnyToString(x)) == expected
+	}
+}
+
+func matchesFormBranchRule(rule formBranchRule, raw json.RawMessage, exists bool) bool {
+	val, ok := decodeFormCellAny(raw)
+	if !exists {
+		ok = false
+		val = nil
+	}
+	switch rule.Operator {
+	case "not_empty":
+		if !ok || val == nil {
+			return false
+		}
+		switch x := val.(type) {
+		case string:
+			return strings.TrimSpace(x) != ""
+		case []any:
+			return len(x) > 0
+		case bool:
+			return x
+		case json.Number:
+			f, err := x.Float64()
+			return err == nil && !math.IsNaN(f) && !math.IsInf(f, 0)
+		case float64:
+			return !math.IsNaN(x) && !math.IsInf(x, 0)
+		default:
+			return false
+		}
+	case "checked":
+		if !ok || val == nil {
+			return false
+		}
+		switch x := val.(type) {
+		case bool:
+			return x
+		case string:
+			return x == "true"
+		default:
+			return false
+		}
+	case "eq":
+		return formBranchValueEquals(val, ok, rule.Value)
+	case "neq":
+		return !formBranchValueEquals(val, ok, rule.Value)
+	default:
+		return false
+	}
+}
+
+func visibleFormFieldIDs(fieldIDs []int64, rules []formBranchRule, cells map[string]json.RawMessage) map[int64]bool {
+	visible := make(map[int64]bool, len(fieldIDs))
+	if len(rules) == 0 {
+		for _, fid := range fieldIDs {
+			visible[fid] = true
+		}
+		return visible
+	}
+	allowed := make(map[int64]bool, len(fieldIDs))
+	for _, fid := range fieldIDs {
+		allowed[fid] = true
+	}
+	rulesByTarget := make(map[int64][]formBranchRule)
+	for _, rule := range rules {
+		if rule.SourceFieldID == rule.TargetFieldID || !allowed[rule.SourceFieldID] || !allowed[rule.TargetFieldID] {
+			continue
+		}
+		rulesByTarget[rule.TargetFieldID] = append(rulesByTarget[rule.TargetFieldID], rule)
+	}
+	memo := make(map[int64]bool, len(fieldIDs))
+	visiting := make(map[int64]bool, len(fieldIDs))
+	var isVisible func(int64) bool
+	isVisible = func(fid int64) bool {
+		if v, cached := memo[fid]; cached {
+			return v
+		}
+		if visiting[fid] {
+			return false
+		}
+		visiting[fid] = true
+		ok := true
+		for _, rule := range rulesByTarget[fid] {
+			raw, exists := cells[strconv.FormatInt(rule.SourceFieldID, 10)]
+			if !isVisible(rule.SourceFieldID) || !matchesFormBranchRule(rule, raw, exists) {
+				ok = false
+				break
+			}
+		}
+		delete(visiting, fid)
+		memo[fid] = ok
+		return ok
+	}
+	for _, fid := range fieldIDs {
+		visible[fid] = isVisible(fid)
+	}
+	return visible
 }
 
 type formValidationError struct{ code, message string }
@@ -557,6 +812,36 @@ func preparePublicForm(view store.View, fields []store.Field, allowDefault, requ
 			return cfg, nil, &formValidationError{"invalid_form", "必填字段必须属于可填写字段且不能重复"}
 		}
 		required[id] = true
+	}
+	if len(cfg.BranchRules) > 200 {
+		return cfg, nil, &formValidationError{"invalid_form", "表单显示规则不能超过 200 条"}
+	}
+	if len(cfg.BranchRules) > 0 {
+		seenRuleIDs := make(map[string]bool, len(cfg.BranchRules))
+		for _, rule := range cfg.BranchRules {
+			rid := strings.TrimSpace(rule.ID)
+			if rid == "" || utf8.RuneCountInString(rule.ID) > 100 || strings.ContainsRune(rule.ID, 0) || seenRuleIDs[rule.ID] {
+				return cfg, nil, &formValidationError{"invalid_form", "表单显示规则 ID 无效或重复"}
+			}
+			seenRuleIDs[rule.ID] = true
+			if rule.SourceFieldID <= 0 || rule.TargetFieldID <= 0 || rule.SourceFieldID == rule.TargetFieldID {
+				return cfg, nil, &formValidationError{"invalid_form", "表单显示规则源字段和目标字段无效"}
+			}
+			if !selected[rule.SourceFieldID] || !selected[rule.TargetFieldID] {
+				return cfg, nil, &formValidationError{"invalid_form", "表单显示规则引用的字段必须属于表单字段"}
+			}
+			switch rule.Operator {
+			case "eq", "neq", "not_empty", "checked":
+			default:
+				return cfg, nil, &formValidationError{"invalid_form", "表单显示规则条件操作符无效"}
+			}
+			if utf8.RuneCountInString(rule.Value) > 1000 || strings.ContainsRune(rule.Value, 0) {
+				return cfg, nil, &formValidationError{"invalid_form", "表单显示规则条件值无效"}
+			}
+		}
+		if hasFormBranchCycle(cfg.BranchRules) {
+			return cfg, nil, &formValidationError{"invalid_form", "表单显示逻辑不能存在循环依赖"}
+		}
 	}
 	encoded, err := json.Marshal(object)
 	if err != nil {
@@ -829,7 +1114,11 @@ func (s *Server) getForm(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	httpx.JSON(w, http.StatusOK, map[string]any{"title": cfg.Title, "desc": cfg.Desc, "fields": out})
+	resp := map[string]any{"title": cfg.Title, "desc": cfg.Desc, "fields": out}
+	if len(cfg.BranchRules) > 0 {
+		resp["branchRules"] = cfg.BranchRules
+	}
+	httpx.JSON(w, http.StatusOK, resp)
 }
 
 // PostgreSQL jsonb rejects NUL and invalid UTF-8; reject them consistently in
@@ -996,7 +1285,19 @@ func (s *Server) submitForm(w http.ResponseWriter, r *http.Request) {
 		if msg := checkCells(fields, clean); msg != "" {
 			return nil, &formValidationError{"invalid_cell", msg}
 		}
+		visible := visibleFormFieldIDs(cfg.Fields, cfg.BranchRules, clean)
+		if len(cfg.BranchRules) > 0 {
+			for k := range clean {
+				fid, err := strconv.ParseInt(k, 10, 64)
+				if err != nil || !visible[fid] {
+					delete(clean, k)
+				}
+			}
+		}
 		for _, id := range cfg.Required {
+			if !visible[id] {
+				continue
+			}
 			raw, ok := clean[strconv.FormatInt(id, 10)]
 			if !ok || !publicFormValuePresent(raw) {
 				return nil, &formValidationError{"required_field", "请填写所有必填字段"}

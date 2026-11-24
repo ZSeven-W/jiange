@@ -1,18 +1,15 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { Field } from "@/lib/api";
 import {
-  formBranchingStorageKey,
-  loadBranchRulesForFields,
-  loadFormBranchRules,
   matchesFormBranchRule,
-  saveFormBranchRules,
+  sanitizeFormBranchRules,
   visibleFormFields,
   wouldCreateBranchCycle,
   type FormBranchRule,
 } from "./form-branching";
-import { FormSetup } from "./form-setup";
+import { FormSetup, setFormField, validFormSelection } from "./form-setup";
 import { formCells, validPublicFormDefinition } from "@/pages/public-form";
 
 const sampleFields: Field[] = [
@@ -24,10 +21,6 @@ const sampleFields: Field[] = [
 ];
 
 describe("form conditional branching logic", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
   it("evaluates eq, neq, not_empty, and checked operators accurately", () => {
     expect(matchesFormBranchRule({ id: "1", sourceFieldId: 1, targetFieldId: 2, operator: "eq", value: "企业" }, "企业")).toBe(true);
     expect(matchesFormBranchRule({ id: "1", sourceFieldId: 1, targetFieldId: 2, operator: "eq", value: "企业" }, "个人")).toBe(false);
@@ -80,18 +73,39 @@ describe("form conditional branching logic", () => {
     expect(visibleFormFields(sampleFields.slice(0, 2), orphan, {}).map((f) => f.id)).toEqual([1, 2]);
   });
 
-  it("persists per (baseId, viewId) rules in localStorage and resolves matching public form rules", () => {
+  it("sanitizes cloud-persisted view.config.branchRules and validates form selection", () => {
     const rules: FormBranchRule[] = [
       { id: "r1", sourceFieldId: 1, targetFieldId: 2, operator: "eq", value: "企业" },
     ];
-    saveFormBranchRules(7, 15, rules);
-    expect(localStorage.getItem(formBranchingStorageKey(7, 15))).toBeTruthy();
-    expect(loadFormBranchRules(7, 15)).toEqual(rules);
-    expect(loadBranchRulesForFields([1, 2, 3])).toEqual(rules);
-    expect(loadBranchRulesForFields([10, 11])).toEqual([]);
+    expect(
+      sanitizeFormBranchRules(
+        [
+          ...rules,
+          { id: "r1", sourceFieldId: 2, targetFieldId: 3, operator: "not_empty" }, // dup id
+          { id: "cyc", sourceFieldId: 2, targetFieldId: 1, operator: "not_empty" }, // cycle
+          { id: "orph", sourceFieldId: 99, targetFieldId: 2, operator: "eq", value: "x" }, // not in allowed
+        ],
+        new Set([1, 2, 3]),
+      ),
+    ).toEqual(rules);
 
-    saveFormBranchRules(7, 15, []);
-    expect(localStorage.getItem(formBranchingStorageKey(7, 15))).toBeNull();
+    expect(validFormSelection({ fields: [1, 2], branchRules: rules }, sampleFields)).toBe(true);
+    expect(
+      validFormSelection(
+        {
+          fields: [1, 2],
+          branchRules: [
+            { id: "c1", sourceFieldId: 1, targetFieldId: 2, operator: "not_empty" },
+            { id: "c2", sourceFieldId: 2, targetFieldId: 1, operator: "not_empty" },
+          ],
+        },
+        sampleFields,
+      ),
+    ).toBe(false);
+
+    // Deselecting a field automatically prunes its branch rules from config.
+    const pruned = setFormField({ fields: [1, 2], required: [2], branchRules: rules }, 2, false);
+    expect(pruned.branchRules).toBeUndefined();
   });
 
   it("skips hidden required fields and omits stale hidden values in PublicForm formCells", () => {
@@ -116,7 +130,7 @@ describe("form conditional branching logic", () => {
     expect(validPublicFormDefinition({ title: "收集表", desc: "", fields: formFields, branchRules: [{ bad: true }] })).toBe(false);
   });
 
-  it("renders FormSetup branching section with FeishuSelect and live preview without native select", () => {
+  it("renders FormSetup branching section from config.branchRules with FeishuSelect and live preview", () => {
     const rules: FormBranchRule[] = [
       { id: "r1", sourceFieldId: 1, targetFieldId: 2, operator: "eq", value: "企业" },
     ];
@@ -124,7 +138,7 @@ describe("form conditional branching logic", () => {
       createElement(FormSetup, {
         baseId: 1,
         viewId: 2,
-        config: { fields: [1, 2], required: [2] },
+        config: { fields: [1, 2], required: [2], branchRules: rules },
         fields: sampleFields.slice(0, 2),
         canEdit: true,
         saving: false,
@@ -133,7 +147,6 @@ describe("form conditional branching logic", () => {
         onChange: () => {},
         onSave: () => {},
         onReset: () => {},
-        initialBranchRules: rules,
         defaultPreviewOpen: true,
       }),
     );

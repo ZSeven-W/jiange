@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import type { SlidesPage } from "@/lib/api";
 
 export type SlideTransitionKind = "none" | "fade" | "push" | "wipe";
 
@@ -36,6 +37,21 @@ export const SLIDE_TRANSITION_KEYFRAMES_CSS = `
 
 export function isSlideTransitionKind(value: unknown): value is SlideTransitionKind {
   return value === "none" || value === "fade" || value === "push" || value === "wipe";
+}
+
+/** Hydrate per-page slide transitions directly from cloud-persisted page.meta. */
+export function hydrateSlideTransitions(
+  pages: readonly Pick<SlidesPage, "id" | "meta">[] | undefined,
+): SlideTransitionMap {
+  if (!pages?.length) return {};
+  const result: SlideTransitionMap = {};
+  for (const page of pages) {
+    const transition = page.meta?.transition;
+    if (isSlideTransitionKind(transition) && transition !== "none") {
+      result[page.id] = transition;
+    }
+  }
+  return result;
 }
 
 export function slideTransitionsStorageKey(deckId: number): string {

@@ -96,3 +96,71 @@ func TestMatchAndSortInMemory(t *testing.T) {
 		t.Fatalf("not_contains + select sort (empty last): %v", got)
 	}
 }
+
+func TestValidatePermissionsAndGanttDeps(t *testing.T) {
+	validPerms := Config{
+		Permissions: &ViewPermissions{
+			OnlyOwnRecords: true,
+			FieldModes:     map[string]string{"1": "edit", "2": "readonly", "3": "hidden"},
+		},
+	}
+	if err := Validate(fields, validPerms); err != nil {
+		t.Fatalf("valid permissions rejected: %v", err)
+	}
+	if err := Validate(fields, Config{Permissions: &ViewPermissions{FieldModes: map[string]string{"999": "readonly"}}}); err == nil {
+		t.Fatal("unknown field in permissions accepted")
+	}
+	if err := Validate(fields, Config{Permissions: &ViewPermissions{FieldModes: map[string]string{"1": "admin"}}}); err == nil {
+		t.Fatal("invalid permission mode accepted")
+	}
+
+	// Diamond DAG is valid.
+	validDeps := Config{
+		GanttDeps: []GanttDependency{
+			{ID: "d1", FromID: 1, ToID: 2},
+			{ID: "d2", FromID: 1, ToID: 3},
+			{ID: "d3", FromID: 2, ToID: 4},
+			{ID: "d4", FromID: 3, ToID: 4},
+		},
+	}
+	if err := Validate(fields, validDeps); err != nil {
+		t.Fatalf("valid diamond gantt deps rejected: %v", err)
+	}
+	// Self-loop rejected.
+	if err := Validate(fields, Config{GanttDeps: []GanttDependency{{ID: "s", FromID: 1, ToID: 1}}}); err == nil {
+		t.Fatal("self-loop gantt dep accepted")
+	}
+	// Non-positive id rejected.
+	if err := Validate(fields, Config{GanttDeps: []GanttDependency{{ID: "z", FromID: 0, ToID: 2}}}); err == nil {
+		t.Fatal("zero gantt dep accepted")
+	}
+	// Cycle rejected.
+	cyclicDeps := Config{
+		GanttDeps: []GanttDependency{
+			{ID: "c1", FromID: 1, ToID: 2},
+			{ID: "c2", FromID: 2, ToID: 3},
+			{ID: "c3", FromID: 3, ToID: 1},
+		},
+	}
+	if err := Validate(fields, cyclicDeps); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("cyclic gantt deps accepted: %v", err)
+	}
+	// Duplicate edge rejected.
+	dupDeps := Config{
+		GanttDeps: []GanttDependency{
+			{ID: "a", FromID: 1, ToID: 2},
+			{ID: "b", FromID: 1, ToID: 2},
+		},
+	}
+	if err := Validate(fields, dupDeps); err == nil {
+		t.Fatal("duplicate gantt dep accepted")
+	}
+	// >500 edges rejected.
+	tooMany := make([]GanttDependency, 501)
+	for i := range tooMany {
+		tooMany[i] = GanttDependency{ID: "e", FromID: int64(i + 1), ToID: int64(i + 2)}
+	}
+	if err := Validate(fields, Config{GanttDeps: tooMany}); err == nil {
+		t.Fatal(">500 gantt deps accepted")
+	}
+}

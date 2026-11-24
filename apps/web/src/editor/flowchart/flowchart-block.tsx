@@ -15,8 +15,8 @@ import { MindMapSvg } from "./mind-map-svg";
 import { GPU_NATIVE_BOARD_SHAPES, WhiteboardGpuLayer } from "./whiteboard-gpu-layer";
 import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
 import { canonicalMindDescription, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
-import { layoutMindTopicsWithStructure, loadMindLayoutConfig, MIND_LAYOUT_OPTIONS, saveMindLayoutConfig, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
-import { createBoardFrame, exportFrameToSvg, loadBoardFrames, moveFrameWithContents, saveBoardFrames, type BoardFrame } from "./board-frames";
+import { layoutMindTopicsWithStructure, MIND_LAYOUT_OPTIONS, mindLayoutPropWrites, readMindLayoutFromProps, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
+import { boardFramePropWrites, createBoardFrame, exportFrameToSvg, moveFrameWithContents, readBoardFramesFromProps, type BoardFrame } from "./board-frames";
 import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getMindTextStyleSessionRevision, mindTextStyleFromHtml, mindTextStyleHtml, mindTextStyleShortcut, setMindTextStyleSession } from "./mindmap-text-style";
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
@@ -124,7 +124,7 @@ function NodeText({ n, fill }: { n: FlowNode; fill: string }) {
   return block(wrapLines(n.text, a.w * 14 / fs), a);
 }
 
-function boardContentBounds(
+export function boardContentBounds(
   graph: FlowGraph,
   mindStructure: MindLayoutKind = "logic",
   frames: readonly BoardFrame[] = [],
@@ -468,10 +468,11 @@ export function FlowSvg({ graph, width, height, viewBox, selected, editing, fram
 export type FlowUpload = (f: File) => Promise<{ id: number; name: string; mime: string }>;
 export type FlowAssets = { docId: number; copy?: (sourceDocId: number, fileIds: number[], requestId: string, signal: AbortSignal) => Promise<{ mapping: Record<string, number> }> };
 
-export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange, peers, onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true }: {
-  graph: FlowGraph; height: number; readOnly: boolean; autoOpen?: boolean;
+export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, ai, onChange, onProps, peers, onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true }: {
+  graph: FlowGraph; blockProps?: Record<string, string>; height: number; readOnly: boolean; autoOpen?: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
-  onChange?: (next: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
+  onChange?: (next: FlowGraph, base: FlowGraph, extraProps?: Record<string, string>) => FlowChangeOutcome;
+  onProps?: (patch: Record<string, string>) => void;
   peers?: FlowPeer[];
   onPresence?: (p: FlowPresence | null) => void;
   onComment?: (quote: string) => void;
@@ -483,10 +484,11 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
   canCopy?: boolean;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
-  const [previewTick, setPreviewTick] = useState(0);
-  const boardKey = assets?.docId ? `doc-${assets.docId}` : "default";
-  const previewFrames = useMemo(() => loadBoardFrames(boardKey), [boardKey, previewTick]);
-  const previewMindCfg = useMemo(() => loadMindLayoutConfig(boardKey), [boardKey, previewTick]);
+  const previewFrames = useMemo(() => (blockProps ? readBoardFramesFromProps(blockProps) : []), [blockProps]);
+  const previewMindCfg = useMemo(
+    () => (blockProps ? readMindLayoutFromProps(blockProps) : { structure: "logic" as MindLayoutKind, relations: [] as MindRelation[] }),
+    [blockProps],
+  );
   const previewPins = useMemo(() => resolveBoardCommentPins(comments, graph), [comments, graph]);
   return <div contentEditable={false} className="group/flow relative overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
     {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} width="100%" height="100%" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
@@ -495,7 +497,7 @@ export function FlowchartBlock({ graph, height, readOnly, autoOpen, ai, onChange
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
     {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
-    {open && <FlowchartEditor initial={graph} readOnly={readOnly} ai={ai} onChange={onChange} onClose={() => { onPresence?.(null); setOpen(false); setPreviewTick((t) => t + 1); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} />}
+    {open && <FlowchartEditor initial={graph} blockProps={blockProps} readOnly={readOnly} ai={ai} onChange={onChange} onProps={onProps} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} />}
   </div>;
 }
 
@@ -533,10 +535,16 @@ const MIND_PALETTE = [["#1f2329", "黑"], ["#646a73", "深灰"], ["#bbbfc4", "�
 const INK_WIDTHS = [2, 3, 5, 8, 12] as const;
 const MARKER_WIDTHS = [8, 12, 16, 20, 24] as const;
 
-export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peers = [], onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true }: {
-  initial: FlowGraph; readOnly: boolean;
+type EditorHistory = FlowHistory & {
+  beforeProps?: Record<string, string>;
+  afterProps?: Record<string, string>;
+};
+
+export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, onProps, onClose, peers = [], onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true }: {
+  initial: FlowGraph; blockProps?: Record<string, string>; readOnly: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
-  onChange?: (next: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
+  onChange?: (next: FlowGraph, base: FlowGraph, extraProps?: Record<string, string>) => FlowChangeOutcome;
+  onProps?: (patch: Record<string, string>) => void;
   onClose: () => void;
   peers?: FlowPeer[];
   onPresence?: (p: FlowPresence | null) => void;
@@ -550,8 +558,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
 }) {
   const [graph, setGraph] = useState(initial);
   const mindBoard = useRef(!!initial.mind?.length && !initial.nodes.length && !initial.strokes?.length).current;
-  const [undo, setUndo] = useState<FlowHistory[]>([]);
-  const [redo, setRedo] = useState<FlowHistory[]>([]);
+  const [undo, setUndo] = useState<EditorHistory[]>([]);
+  const [redo, setRedo] = useState<EditorHistory[]>([]);
   const [recovery, setRecovery] = useState<UnappliedFlow[]>([]);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
   const recoveryRef = useRef<UnappliedFlow[]>([]);
@@ -583,16 +591,25 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   }, [recoveryOpen]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [gpuActive, setGpuActive] = useState(false);
-  const boardKey = assets?.docId ? `doc-${assets.docId}` : "default";
-  const [frames, setFrames] = useState<BoardFrame[]>(() => loadBoardFrames(boardKey));
+  const hasCrdtProps = blockProps !== undefined;
+  const crdtFrames = useMemo(() => (blockProps ? readBoardFramesFromProps(blockProps) : []), [blockProps]);
+  const crdtMindCfg = useMemo(
+    () => (blockProps ? readMindLayoutFromProps(blockProps) : { structure: "logic" as MindLayoutKind, relations: [] as MindRelation[] }),
+    [blockProps],
+  );
+  const [localFrames, setLocalFrames] = useState<BoardFrame[]>([]);
+  const [dragFrames, setDragFrames] = useState<BoardFrame[] | null>(null);
+  const [localMindStructure, setLocalMindStructure] = useState<MindLayoutKind>("logic");
+  const [localMindRelations, setLocalMindRelations] = useState<MindRelation[]>([]);
+  const frames = dragFrames ?? (hasCrdtProps ? crdtFrames : localFrames);
+  const mindStructure = hasCrdtProps ? crdtMindCfg.structure : localMindStructure;
+  const mindRelations = hasCrdtProps ? crdtMindCfg.relations : localMindRelations;
   const framesRef = useRef(frames); framesRef.current = frames;
+  const mindStructureRef = useRef(mindStructure); mindStructureRef.current = mindStructure;
+  const mindRelationsRef = useRef(mindRelations); mindRelationsRef.current = mindRelations;
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [editingFrame, setEditingFrame] = useState<{ id: string; value: string } | null>(null);
-  const [mindStructure, setMindStructure] = useState<MindLayoutKind>(() => loadMindLayoutConfig(boardKey).structure);
-  const [mindRelations, setMindRelations] = useState<MindRelation[]>(() => loadMindLayoutConfig(boardKey).relations);
   const [mindRelationFrom, setMindRelationFrom] = useState<string | null>(null);
-  const updateFrames = (next: BoardFrame[]) => { setFrames(next); framesRef.current = next; saveBoardFrames(boardKey, next); };
-  const persistMindLayout = (nextStructure: MindLayoutKind, nextRelations: MindRelation[]) => { setMindStructure(nextStructure); setMindRelations(nextRelations); saveMindLayoutConfig(boardKey, { structure: nextStructure, relations: nextRelations }); };
   const [mindSelected, setMindSelected] = useState<string | null>(null);
   // Scoped to this editor instance; do not retain a copied document across sessions.
   const recentMindClipboard = useRef<MindClip | null>(null);
@@ -640,7 +657,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const [penKind, setPenKind] = useState<"pen" | "marker">("pen");
   const [markerColor, setMarkerColor] = useState("#FFEE24"), [markerWidth, setMarkerWidth] = useState(20);
   const [editing, setEditing] = useState<{ id: string; kind: "node" | "edge"; value: string } | null>(null);
-  const [view, setView] = useState(() => { const b = flowBounds(initial); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
+  const [view, setView] = useState(() => { const b = boardContentBounds(initial, crdtMindCfg.structure, crdtFrames); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
   const [drag, setDrag] = useState<Drag | null>(null);
   const [menu, setMenu] = useState<"theme" | "import" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | null>(null);
   useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") { setMindSelected(null); setMindRelationFrom(null); } }, [tool, menu]);
@@ -714,9 +731,13 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const submit = (base: FlowGraph, next: FlowGraph): FlowChangeOutcome => {
-    const keys = onChange || readOnly ? [] : Object.keys(flowIntentWrites(flowWrites({}, base), base, next).writes);
-    const result = readOnly ? { graph, conflicts: ["permission"], applied: false, appliedKeys: [] } : onChange?.(next, base) ?? { graph: next, conflicts: [], applied: keys.length > 0, appliedKeys: keys };
+  const submit = (base: FlowGraph, next: FlowGraph, extraProps?: Record<string, string>): FlowChangeOutcome => {
+    const extraKeys = extraProps ? Object.keys(extraProps) : [];
+    const graphKeys = onChange || readOnly ? [] : Object.keys(flowIntentWrites(flowWrites({}, base), base, next).writes);
+    const localKeys = [...graphKeys, ...extraKeys];
+    const result = readOnly
+      ? { graph, conflicts: ["permission"], applied: false, appliedKeys: [] }
+      : onChange?.(next, base, extraKeys.length ? extraProps : undefined) ?? { graph: next, conflicts: [], applied: localKeys.length > 0, appliedKeys: localKeys };
     if (result.conflicts.length) {
       const nextRecovery = [...recoveryRef.current, { before: base, proposed: next, conflicts: result.conflicts }];
       recoveryRef.current = nextRecovery;
@@ -726,6 +747,77 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     const cleanResult = { ...result, graph: cleanGraph };
     setGraph(cleanGraph); lastInitial.current = cleanGraph;
     return cleanResult;
+  };
+  const applyLocalExtraProps = (patch: Record<string, string>) => {
+    if (hasCrdtProps || !Object.keys(patch).length) return;
+    const synthetic: Record<string, string> = {
+      ...boardFramePropWrites([], framesRef.current),
+      ...mindLayoutPropWrites(
+        { structure: "logic", relations: [] },
+        { structure: mindStructureRef.current, relations: mindRelationsRef.current },
+      ),
+      ...patch,
+    };
+    const nextFrames = readBoardFramesFromProps(synthetic);
+    const nextMind = readMindLayoutFromProps(synthetic);
+    setLocalFrames(nextFrames);
+    framesRef.current = nextFrames;
+    setLocalMindStructure(nextMind.structure);
+    mindStructureRef.current = nextMind.structure;
+    setLocalMindRelations(nextMind.relations);
+    mindRelationsRef.current = nextMind.relations;
+  };
+  const commitExtraProps = (base: FlowGraph, next: FlowGraph, extraProps: Record<string, string>): FlowChangeOutcome => {
+    const extraKeys = Object.keys(extraProps);
+    if (readOnly) return { graph, conflicts: ["permission"], applied: false, appliedKeys: [] };
+    if (onChange) {
+      const result = submit(base, next, extraKeys.length ? extraProps : undefined);
+      if (extraKeys.length && onProps && !extraKeys.some((k) => result.appliedKeys.includes(k))) {
+        onProps(extraProps);
+        return { ...result, applied: true, appliedKeys: [...result.appliedKeys, ...extraKeys] };
+      }
+      return result;
+    }
+    if (extraKeys.length && onProps) {
+      onProps(extraProps);
+      return { graph: next, conflicts: [], applied: true, appliedKeys: extraKeys };
+    }
+    const result = submit(base, next, extraKeys.length ? extraProps : undefined);
+    applyLocalExtraProps(extraProps);
+    return result;
+  };
+  const updateFrames = (next: BoardFrame[]) => {
+    if (readOnly) return;
+    const before = framesRef.current;
+    const forwardWrites = boardFramePropWrites(before, next);
+    const reverseWrites = boardFramePropWrites(next, before);
+    if (!hasCrdtProps) setLocalFrames(next);
+    framesRef.current = next;
+    if (!Object.keys(forwardWrites).length) return;
+    const result = commitExtraProps(graph, graph, forwardWrites);
+    if (result.applied) {
+      setUndo((u) => [...u.slice(-99), { before: result.graph, after: result.graph, beforeProps: reverseWrites, afterProps: forwardWrites }]);
+      setRedo([]);
+    }
+  };
+  const persistMindLayout = (nextStructure: MindLayoutKind, nextRelations: MindRelation[]) => {
+    if (readOnly) return;
+    const before = { structure: mindStructureRef.current, relations: mindRelationsRef.current };
+    const after = { structure: nextStructure, relations: nextRelations };
+    const forwardWrites = mindLayoutPropWrites(before, after);
+    const reverseWrites = mindLayoutPropWrites(after, before);
+    if (!hasCrdtProps) {
+      setLocalMindStructure(nextStructure);
+      setLocalMindRelations(nextRelations);
+    }
+    mindStructureRef.current = nextStructure;
+    mindRelationsRef.current = nextRelations;
+    if (!Object.keys(forwardWrites).length) return;
+    const result = commitExtraProps(graph, graph, forwardWrites);
+    if (result.applied) {
+      setUndo((u) => [...u.slice(-99), { before: result.graph, after: result.graph, beforeProps: reverseWrites, afterProps: forwardWrites }]);
+      setRedo([]);
+    }
   };
   const commit = (next: FlowGraph) => {
     if (readOnly) return;
@@ -1033,9 +1125,14 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   };
   const finishFrameTitleEdit = () => {
     if (!editingFrame) return;
-    const trimmed = editingFrame.value.trim().slice(0, 120) || "Frame";
-    updateFrames(framesRef.current.map((f) => (f.id === editingFrame.id ? { ...f, title: trimmed } : f)));
+    const edit = editingFrame;
     setEditingFrame(null);
+    if (readOnly) return;
+    const current = framesRef.current.find((f) => f.id === edit.id);
+    if (!current) return;
+    const trimmed = edit.value.trim().slice(0, 120) || "Frame";
+    if (trimmed === current.title) return;
+    updateFrames(framesRef.current.map((f) => (f.id === edit.id ? { ...f, title: trimmed } : f)));
   };
   const deleteBoardFrame = (frame: BoardFrame) => {
     if (readOnly) return;
@@ -1111,16 +1208,36 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
   const nudge = (dx: number, dy: number) => commit(moveFlowSelection(graph, selected, dx, dy));
   const doUndo = () => {
     const step = undo.at(-1); if (!step) return;
-    const result = submit(step.after, step.before);
+    const extra = step.beforeProps ?? {};
+    const hasExtra = Object.keys(extra).length > 0;
+    const result = hasExtra ? commitExtraProps(step.after, step.before, extra) : submit(step.after, step.before);
     const applied = appliedFlowHistory(step.after, result.graph, result.appliedKeys);
-    if (result.applied && applied) { setUndo(undo.slice(0, -1)); setRedo([...redo, { before: applied.after, after: applied.before }]); }
+    if (result.applied && (applied || hasExtra)) {
+      if (hasExtra) applyLocalExtraProps(extra);
+      setUndo(undo.slice(0, -1));
+      setRedo([...redo, {
+        before: applied?.after ?? result.graph,
+        after: applied?.before ?? result.graph,
+        ...(hasExtra ? { beforeProps: step.beforeProps, afterProps: step.afterProps } : {}),
+      }]);
+    }
     else if (!result.conflicts.length) setUndo(undo.slice(0, -1));
   };
   const doRedo = () => {
     const step = redo.at(-1); if (!step) return;
-    const result = submit(step.before, step.after);
+    const extra = step.afterProps ?? {};
+    const hasExtra = Object.keys(extra).length > 0;
+    const result = hasExtra ? commitExtraProps(step.before, step.after, extra) : submit(step.before, step.after);
     const applied = appliedFlowHistory(step.before, result.graph, result.appliedKeys);
-    if (result.applied && applied) { setRedo(redo.slice(0, -1)); setUndo([...undo, applied]); }
+    if (result.applied && (applied || hasExtra)) {
+      if (hasExtra) applyLocalExtraProps(extra);
+      setRedo(redo.slice(0, -1));
+      setUndo([...undo, {
+        before: applied?.before ?? result.graph,
+        after: applied?.after ?? result.graph,
+        ...(hasExtra ? { beforeProps: step.beforeProps, afterProps: step.afterProps } : {}),
+      }]);
+    }
     else if (!result.conflicts.length) setRedo(redo.slice(0, -1));
   };
   useEffect(() => {
@@ -1251,7 +1368,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     };
   });
   useEffect(() => {
-    if (!autoFit.current || (!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length) || drag) return;
+    if (!autoFit.current || (!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !frames.length) || drag) return;
     const id = requestAnimationFrame(() => { const el = svgWrap.current; if (el && el.clientWidth && el.clientHeight) fit(graph, { w: el.clientWidth, h: el.clientHeight }); });
     return () => cancelAnimationFrame(id);
   }, [size.w, size.h, compact, !!drag]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1320,7 +1437,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     if (drag.kind === "frame-move") {
       const moved = moveFrameWithContents(drag.frameOrigin, drag.baseGraph.nodes, dx, dy);
       const nextFrames = drag.framesOrigin.map((f) => (f.id === drag.frameId ? moved.frame : f));
-      setFrames(nextFrames);
+      setDragFrames(nextFrames);
       framesRef.current = nextFrames;
       if (moved.movedNodeIds.length > 0) {
         setGraph((g) => ({ ...g, nodes: moved.nodes }));
@@ -1328,10 +1445,10 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       return;
     }
     if (drag.kind === "frame-resize") {
-      const nextW = Math.max(160, Math.round(drag.frameOrigin.w + dx));
-      const nextH = Math.max(120, Math.round(drag.frameOrigin.h + dy));
+      const nextW = Math.min(8_000, Math.max(160, Math.round(drag.frameOrigin.w + dx)));
+      const nextH = Math.min(8_000, Math.max(120, Math.round(drag.frameOrigin.h + dy)));
       const nextFrames = drag.framesOrigin.map((f) => (f.id === drag.frameId ? { ...f, w: nextW, h: nextH } : f));
-      setFrames(nextFrames);
+      setDragFrames(nextFrames);
       framesRef.current = nextFrames;
       return;
     }
@@ -1406,16 +1523,42 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
       return;
     }
     if (d.kind === "frame-move") {
-      saveBoardFrames(boardKey, framesRef.current);
-      if (JSON.stringify(d.baseGraph.nodes) !== JSON.stringify(graph.nodes)) {
-        const result = submit(d.baseGraph, graph);
+      const nextFrames = framesRef.current;
+      const forwardWrites = boardFramePropWrites(d.framesOrigin, nextFrames);
+      const reverseWrites = boardFramePropWrites(nextFrames, d.framesOrigin);
+      const nodesChanged = JSON.stringify(d.baseGraph.nodes) !== JSON.stringify(graph.nodes);
+      setDragFrames(null);
+      if (!hasCrdtProps) setLocalFrames(nextFrames);
+      if (Object.keys(forwardWrites).length || nodesChanged) {
+        const result = commitExtraProps(d.baseGraph, graph, forwardWrites);
         const step = appliedFlowHistory(d.baseGraph, result.graph, result.appliedKeys);
-        if (result.applied && step) { setUndo((u) => [...u.slice(-99), step]); setRedo([]); }
+        if (result.applied && (step || Object.keys(forwardWrites).length)) {
+          setUndo((u) => [
+            ...u.slice(-99),
+            {
+              before: step?.before ?? result.graph,
+              after: step?.after ?? result.graph,
+              ...(Object.keys(forwardWrites).length ? { beforeProps: reverseWrites, afterProps: forwardWrites } : {}),
+            },
+          ]);
+          setRedo([]);
+        }
       }
       return;
     }
     if (d.kind === "frame-resize") {
-      saveBoardFrames(boardKey, framesRef.current);
+      const nextFrames = framesRef.current;
+      const forwardWrites = boardFramePropWrites(d.framesOrigin, nextFrames);
+      const reverseWrites = boardFramePropWrites(nextFrames, d.framesOrigin);
+      setDragFrames(null);
+      if (!hasCrdtProps) setLocalFrames(nextFrames);
+      if (Object.keys(forwardWrites).length) {
+        const result = commitExtraProps(graph, graph, forwardWrites);
+        if (result.applied) {
+          setUndo((u) => [...u.slice(-99), { before: result.graph, after: result.graph, beforeProps: reverseWrites, afterProps: forwardWrites }]);
+          setRedo([]);
+        }
+      }
       return;
     }
     if (d.kind === "marquee") {
@@ -1694,7 +1837,7 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
     }
   };
 
-  return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag?.kind === "frame-move" || drag?.kind === "frame-resize") { setFrames(drag.framesOrigin); framesRef.current = drag.framesOrigin; } if (drag && !["mind", "pan", "marquee", "connect", "reconnect", "frame-resize"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
+  return createPortal(<div className="fixed inset-0 z-[80] select-none bg-surface" data-flow-editor onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={() => { ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null); touchPlacement.current = null; if (drag?.kind === "frame-move" || drag?.kind === "frame-resize") { setDragFrames(null); framesRef.current = drag.framesOrigin; } if (drag && !["mind", "pan", "marquee", "connect", "reconnect", "frame-resize"].includes(drag.kind)) setGraph(lastInitial.current); setDrag(null); setGuides([]); }}>
     {/* 画布 */}
     <div ref={svgWrap} className="absolute inset-0 overflow-hidden" style={{ left: !readOnly && library && !compact ? 260 : 0, top: recovery.length ? 72 + Math.max(48, recoveryBannerHeight) : compact ? 64 : 0, bottom: compact ? (reserveStyleBar ? 76 + Math.max(52, styleBarSize.h) : 128) : 0, touchAction: "none", background: theme.canvas, backgroundImage: mindBoard ? "none" : `radial-gradient(${theme.id === "dark" ? "#3A404D" : "#D0D3D6"} 1px, transparent 1px)`, backgroundSize: `${20 * view.zoom}px ${20 * view.zoom}px`, backgroundPosition: `${-view.x * view.zoom}px ${-view.y * view.zoom}px`, cursor: tool !== "select" ? "crosshair" : drag?.kind === "pan" ? "grabbing" : hand ? "grab" : "default" }}
       onTouchStart={(e) => {
@@ -1708,7 +1851,8 @@ export function FlowchartEditor({ initial, readOnly, ai, onChange, onClose, peer
         ink.current = null; setInkPreview(null); erase.current = null; setErasePreview(null);
         touchPlacement.current = null;
         pinch.current = { view, center: { x: (a.clientX + b.clientX) / 2 - rect.left, y: (a.clientY + b.clientY) / 2 - rect.top }, distance };
-        if (drag && !["mind", "pan", "marquee", "connect", "reconnect"].includes(drag.kind)) setGraph(lastInitial.current);
+        if (drag?.kind === "frame-move" || drag?.kind === "frame-resize") { setDragFrames(null); framesRef.current = drag.framesOrigin; }
+        if (drag && !["mind", "pan", "marquee", "connect", "reconnect", "frame-resize"].includes(drag.kind)) setGraph(lastInitial.current);
         setDrag(null); setGuides([]);
       }}
       onTouchMove={(e) => {

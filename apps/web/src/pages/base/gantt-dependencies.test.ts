@@ -1,14 +1,12 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BaseRecord, Field } from "@/lib/api";
 import {
   addGanttDependency,
   computeGanttArrowPath,
-  ganttDepsStorageKey,
-  loadGanttDependencies,
   removeGanttDependency,
-  saveGanttDependencies,
+  sanitizeGanttDependencies,
   wouldCreateGanttCycle,
 } from "./gantt-dependencies";
 import { Gantt } from "./gantt";
@@ -26,10 +24,6 @@ const record = (id: number, start: string, end: string): BaseRecord => ({
 });
 
 describe("gantt dependencies helper", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
   it("detects self-loops, direct cycles, and deep transitive cycles while allowing diamond DAGs", () => {
     const chain = [
       { fromId: 1, toId: 2 },
@@ -68,31 +62,20 @@ describe("gantt dependencies helper", () => {
     expect(addGanttDependency(afterRemove, 3, 1).ok).toBe(true);
   });
 
-  it("persists per-base dependencies in localStorage and sanitizes corrupt stored data", () => {
-    const edges = [
-      { id: "e1", fromId: 1, toId: 2 },
-      { id: "e2", fromId: 2, toId: 3 },
+  it("sanitizes cloud-persisted view.config.ganttDeps by dropping duplicates, self-loops, and cycles", () => {
+    const raw = [
+      { id: "a", fromId: 1, toId: 2 },
+      { id: "dup", fromId: 1, toId: 2 },
+      { id: "self", fromId: 2, toId: 2 },
+      { id: "cyc", fromId: 2, toId: 1 },
+      { id: "bad", fromId: "x", toId: 3 },
+      { id: "b", fromId: 2, toId: 3 },
     ];
-    saveGanttDependencies(42, edges);
-    expect(localStorage.getItem(ganttDepsStorageKey(42))).toBeTruthy();
-    expect(loadGanttDependencies(42)).toEqual(edges);
-    expect(loadGanttDependencies(99)).toEqual([]);
-
-    // Corrupt payload with duplicate, self-loop, and cycle gets sanitized.
-    localStorage.setItem(
-      ganttDepsStorageKey(42),
-      JSON.stringify([
-        { id: "a", fromId: 1, toId: 2 },
-        { id: "dup", fromId: 1, toId: 2 },
-        { id: "self", fromId: 2, toId: 2 },
-        { id: "cyc", fromId: 2, toId: 1 },
-        { id: "bad", fromId: "x", toId: 3 },
-      ]),
-    );
-    expect(loadGanttDependencies(42)).toEqual([{ id: "a", fromId: 1, toId: 2 }]);
-
-    saveGanttDependencies(42, []);
-    expect(localStorage.getItem(ganttDepsStorageKey(42))).toBeNull();
+    expect(sanitizeGanttDependencies(raw)).toEqual([
+      { id: "a", fromId: 1, toId: 2 },
+      { id: "b", fromId: 2, toId: 3 },
+    ]);
+    expect(sanitizeGanttDependencies(null)).toEqual([]);
   });
 
   it("computes orthogonal SVG elbow paths for forward, same-row, and overlapping bars", () => {
@@ -106,11 +89,10 @@ describe("gantt dependencies helper", () => {
     expect(detour).toBe("M 200 20 H 212 V 40.5 H 108 V 61 H 120");
   });
 
-  it("renders dependency toolbar button and SVG elbow arrow layer in Gantt view", () => {
+  it("renders cloud-persisted dependencies prop and SVG elbow arrow layer in Gantt view", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-11-15T12:00:00Z"));
     try {
-      saveGanttDependencies(42, [{ id: "dep-1-2", fromId: 1, toId: 2 }]);
       const html = renderToStaticMarkup(
         createElement(Gantt, {
           baseId: 42,
@@ -118,6 +100,8 @@ describe("gantt dependencies helper", () => {
           fields,
           records: [record(1, "2026-11-05", "2026-11-10"), record(2, "2026-11-14", "2026-11-20")],
           members: [],
+          dependencies: [{ id: "dep-1-2", fromId: 1, toId: 2 }],
+          onChangeDependencies: () => {},
           onMutate: () => {},
         }),
       );

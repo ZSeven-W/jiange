@@ -10,7 +10,12 @@ export interface BoardFrame {
   bg?: string;
 }
 
+export const BOARD_FRAME_PROP_PREFIX = "fc.fr.";
+
 const FRAME_STORAGE_PREFIX = "jiange.board.frames.v1:";
+const FRAME_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const MAX_BOARD_FRAMES = 100;
 const MIN_FRAME_W = 160;
 const MIN_FRAME_H = 120;
 const MAX_COORD = 20_000;
@@ -19,21 +24,24 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-export function normalizeBoardFrame(input: unknown): BoardFrame | null {
+export function boardFramePropKey(id: string): string {
+  return `${BOARD_FRAME_PROP_PREFIX}${id}`;
+}
+
+export function normalizeBoardFrame(input: unknown, idOverride?: string): BoardFrame | null {
   if (!input || typeof input !== "object" || Array.isArray(input)) return null;
   const raw = input as Record<string, unknown>;
-  if (typeof raw.id !== "string" || !raw.id || raw.id.length > 64) return null;
+  const id = idOverride ?? (typeof raw.id === "string" ? raw.id : "");
+  if (!FRAME_ID_RE.test(id)) return null;
   if (typeof raw.x !== "number" || !Number.isFinite(raw.x)) return null;
   if (typeof raw.y !== "number" || !Number.isFinite(raw.y)) return null;
   if (typeof raw.w !== "number" || !Number.isFinite(raw.w)) return null;
   if (typeof raw.h !== "number" || !Number.isFinite(raw.h)) return null;
-  const title = typeof raw.title === "string" ? raw.title.slice(0, 120) : "Frame";
-  const bg =
-    typeof raw.bg === "string" && (/^#[0-9a-fA-F]{6}$/.test(raw.bg) || /^rgba?\([^)]{1,40}\)$/.test(raw.bg))
-      ? raw.bg
-      : undefined;
+  const title =
+    typeof raw.title === "string" ? raw.title.replace(/\0/g, "").trim().slice(0, 120) : "Frame";
+  const bg = typeof raw.bg === "string" && HEX_COLOR_RE.test(raw.bg) ? raw.bg : undefined;
   return {
-    id: raw.id,
+    id,
     title: title || "Frame",
     x: Math.round(clamp(raw.x, -MAX_COORD, MAX_COORD)),
     y: Math.round(clamp(raw.y, -MAX_COORD, MAX_COORD)),
@@ -41,6 +49,67 @@ export function normalizeBoardFrame(input: unknown): BoardFrame | null {
     h: Math.round(clamp(raw.h, MIN_FRAME_H, 8_000)),
     ...(bg ? { bg } : {}),
   };
+}
+
+/** Canonical JSON encoding for a CRDT `fc.fr.<id>` block prop. */
+export function canonicalBoardFrame(frame: BoardFrame): string | null {
+  const clean = normalizeBoardFrame(frame);
+  if (!clean) return null;
+  const payload: BoardFrame = {
+    id: clean.id,
+    title: clean.title,
+    x: clean.x,
+    y: clean.y,
+    w: clean.w,
+    h: clean.h,
+    ...(clean.bg ? { bg: clean.bg } : {}),
+  };
+  return JSON.stringify(payload);
+}
+
+/** Read all live board frames from CRDT block props (`fc.fr.<id>`), skipping tombstones and malformed payloads. */
+export function readBoardFramesFromProps(props: Record<string, string>): BoardFrame[] {
+  const out: BoardFrame[] = [];
+  for (const [key, value] of Object.entries(props)) {
+    if (!key.startsWith(BOARD_FRAME_PROP_PREFIX) || !value) continue;
+    const id = key.slice(BOARD_FRAME_PROP_PREFIX.length);
+    if (!FRAME_ID_RE.test(id)) continue;
+    try {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      if ("id" in parsed && (parsed as Record<string, unknown>).id !== id) continue;
+      const clean = normalizeBoardFrame(parsed, id);
+      if (clean) out.push(clean);
+    } catch {
+      /* skip corrupt CRDT frame entry */
+    }
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id)).slice(0, MAX_BOARD_FRAMES);
+}
+
+/** Compute minimal CRDT prop writes (`fc.fr.<id>` JSON or `""` tombstones) from `before` to `after`. */
+export function boardFramePropWrites(
+  before: readonly BoardFrame[],
+  after: readonly BoardFrame[],
+): Record<string, string> {
+  const beforeMap = new Map<string, string>();
+  for (const item of before) {
+    const encoded = canonicalBoardFrame(item);
+    if (encoded) beforeMap.set(item.id, encoded);
+  }
+  const afterMap = new Map<string, string>();
+  for (const item of after.slice(0, MAX_BOARD_FRAMES)) {
+    const encoded = canonicalBoardFrame(item);
+    if (encoded) afterMap.set(item.id, encoded);
+  }
+  const writes: Record<string, string> = {};
+  for (const [id, encoded] of afterMap) {
+    if (beforeMap.get(id) !== encoded) writes[boardFramePropKey(id)] = encoded;
+  }
+  for (const id of beforeMap.keys()) {
+    if (!afterMap.has(id)) writes[boardFramePropKey(id)] = "";
+  }
+  return writes;
 }
 
 export function boardFrameStorageKey(boardKey: string): string {

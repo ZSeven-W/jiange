@@ -1,14 +1,33 @@
 import { useEffect, useRef, useState } from "react";
+import { type QueryClient, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, SmilePlus, ThumbsUp } from "lucide-react";
 import { Avatar } from "@/components/brand";
+import {
+  docsApi,
+  type DocReactionItem,
+  type DocReactionsResponse,
+} from "@/lib/api";
 import { colorFor } from "@/lib/presence";
 import { cn } from "@/lib/utils";
 
-const FEISHU_EMOJIS = ["👍", "🎉", "❤️", "🔥", "👀", "🚀", "👏", "💯", "💡", "✅"] as const;
+/** Closed Feishu document reaction emoji palette matching server store.DocReactionEmojis. */
+export const DOC_REACTION_EMOJIS = [
+  "👍",
+  "❤️",
+  "🎉",
+  "👏",
+  "🔥",
+  "😄",
+  "🚀",
+  "👀",
+  "💯",
+  "🙏",
+] as const;
 
-export interface DocReactionEntry {
-  emoji: string;
-  users: { id: number; name: string }[];
+const EMPTY_DOC_REACTIONS: DocReactionsResponse = { reactions: [], viewerCount: 1 };
+
+export function docReactionsQueryKey(docId: number) {
+  return ["doc-reactions", docId] as const;
 }
 
 export interface DocReaderEntry {
@@ -17,48 +36,91 @@ export interface DocReaderEntry {
   viewedAt?: string;
 }
 
-const storageKey = (docId: number) => `jiange:doc-reactions:v1:${docId}`;
-
-export function loadDocReactions(docId: number): DocReactionEntry[] {
-  try {
-    const raw = typeof localStorage !== "undefined" ? localStorage.getItem(storageKey(docId)) : null;
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .filter((x): x is DocReactionEntry => !!x && typeof x.emoji === "string" && Array.isArray(x.users))
-      .map((x) => ({
-        emoji: x.emoji,
-        users: x.users.filter((u): u is { id: number; name: string } => !!u && typeof u.id === "number" && typeof u.name === "string"),
-      }))
-      .filter((x) => x.users.length > 0);
-  } catch {
-    return [];
-  }
-}
-
-export function saveDocReactions(docId: number, entries: DocReactionEntry[]) {
-  try {
-    if (!entries.length) localStorage.removeItem(storageKey(docId));
-    else localStorage.setItem(storageKey(docId), JSON.stringify(entries));
-  } catch { /* ignore storage errors */ }
-}
-
-export function toggleDocReaction(
-  entries: readonly DocReactionEntry[],
+/**
+ * Optimistically toggles a single emoji reaction for the current user,
+ * keeping palette ordering and omitting zero-count buckets.
+ */
+export function applyOptimisticDocReaction(
+  prev: DocReactionsResponse | undefined,
   emoji: string,
-  user: { id: number; name: string },
-): DocReactionEntry[] {
-  const existing = entries.find((e) => e.emoji === emoji);
-  if (!existing) return [...entries, { emoji, users: [user] }];
-  const has = existing.users.some((u) => u.id === user.id);
-  const nextUsers = has ? existing.users.filter((u) => u.id !== user.id) : [...existing.users, user];
-  if (nextUsers.length === 0) return entries.filter((e) => e.emoji !== emoji);
-  return entries.map((e) => (e.emoji === emoji ? { ...e, users: nextUsers } : e));
+): DocReactionsResponse {
+  const base: DocReactionsResponse = prev ?? EMPTY_DOC_REACTIONS;
+  const existing = base.reactions.find((item) => item.emoji === emoji);
+  let nextReactions: DocReactionItem[];
+  if (!existing) {
+    nextReactions = [...base.reactions, { emoji, count: 1, reacted: true }];
+  } else if (existing.reacted) {
+    const nextCount = existing.count - 1;
+    nextReactions =
+      nextCount <= 0
+        ? base.reactions.filter((item) => item.emoji !== emoji)
+        : base.reactions.map((item) =>
+            item.emoji === emoji ? { ...item, count: nextCount, reacted: false } : item,
+          );
+  } else {
+    nextReactions = base.reactions.map((item) =>
+      item.emoji === emoji ? { ...item, count: item.count + 1, reacted: true } : item,
+    );
+  }
+  nextReactions.sort((a, b) => {
+    const ia = DOC_REACTION_EMOJIS.indexOf(a.emoji as (typeof DOC_REACTION_EMOJIS)[number]);
+    const ib = DOC_REACTION_EMOJIS.indexOf(b.emoji as (typeof DOC_REACTION_EMOJIS)[number]);
+    return (ia === -1 ? Number.MAX_SAFE_INTEGER : ia) - (ib === -1 ? Number.MAX_SAFE_INTEGER : ib);
+  });
+  return {
+    reactions: nextReactions,
+    viewerCount: Math.max(1, base.viewerCount),
+  };
+}
+
+export interface DocReactionMutationContext {
+  key: readonly ["doc-reactions", number];
+  previous: DocReactionsResponse | undefined;
+}
+
+export function docReactionToggleOptions(queryClient: QueryClient, docId: number) {
+  const mutationKey = docReactionsQueryKey(docId);
+  return {
+    mutationKey,
+    mutationFn: (emoji: string) => docsApi.toggleReaction(docId, emoji),
+    onMutate: async (emoji: string): Promise<DocReactionMutationContext> => {
+      const key = docReactionsQueryKey(docId);
+      await queryClient.cancelQueries({ queryKey: key });
+      const previous = queryClient.getQueryData<DocReactionsResponse>(key);
+      queryClient.setQueryData<DocReactionsResponse>(
+        key,
+        applyOptimisticDocReaction(previous, emoji),
+      );
+      return { key, previous };
+    },
+    onError: (
+      _err: unknown,
+      _emoji: string,
+      context: DocReactionMutationContext | undefined,
+    ) => {
+      if (!context) return;
+      if (context.previous !== undefined) {
+        queryClient.setQueryData<DocReactionsResponse>(context.key, context.previous);
+      } else {
+        queryClient.setQueryData<DocReactionsResponse>(context.key, EMPTY_DOC_REACTIONS);
+      }
+      void queryClient.invalidateQueries({ queryKey: context.key, exact: true });
+    },
+    onSuccess: (
+      snapshot: DocReactionsResponse,
+      _emoji: string,
+      context: DocReactionMutationContext | undefined,
+    ) => {
+      const key = context?.key ?? docReactionsQueryKey(docId);
+      if (queryClient.isMutating({ mutationKey: key }) <= 1) {
+        queryClient.setQueryData<DocReactionsResponse>(key, snapshot);
+      }
+    },
+  };
 }
 
 /**
- * Feishu-style document footer bar: 👍 Like pill + emoji reactions + reader insights.
+ * Feishu-style document footer bar: 👍 Like pill + cloud-persisted emoji reactions + reader insights.
  */
 export function DocReactionsBar({
   docId,
@@ -69,13 +131,20 @@ export function DocReactionsBar({
   me: { id: number; name: string };
   readers: readonly DocReaderEntry[];
 }) {
-  const [entries, setEntries] = useState<DocReactionEntry[]>(() => loadDocReactions(docId));
+  const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [readersOpen, setReadersOpen] = useState(false);
   const barRef = useRef<HTMLDivElement>(null);
 
+  const reactionsQuery = useQuery({
+    queryKey: docReactionsQueryKey(docId),
+    queryFn: () => docsApi.reactions(docId),
+    enabled: docId > 0,
+  });
+
+  const toggleMutation = useMutation(docReactionToggleOptions(queryClient, docId));
+
   useEffect(() => {
-    setEntries(loadDocReactions(docId));
     setPickerOpen(false);
     setReadersOpen(false);
   }, [docId]);
@@ -103,24 +172,24 @@ export function DocReactionsBar({
   }, [pickerOpen, readersOpen]);
 
   const onToggle = (emoji: string) => {
-    setEntries((prev) => {
-      const next = toggleDocReaction(prev, emoji, me);
-      saveDocReactions(docId, next);
-      return next;
-    });
+    if (docId <= 0) return;
+    toggleMutation.mutate(emoji);
   };
 
-  const thumbs = entries.find((e) => e.emoji === "👍");
-  const liked = !!thumbs?.users.some((u) => u.id === me.id);
-  const otherReactions = entries.filter((e) => e.emoji !== "👍");
+  const reactions = reactionsQuery.data?.reactions ?? EMPTY_DOC_REACTIONS.reactions;
+  const thumbs = reactions.find((e) => e.emoji === "👍");
+  const liked = !!thumbs?.reacted;
+  const thumbsCount = thumbs?.count ?? 0;
+  const otherReactions = reactions.filter((e) => e.emoji !== "👍");
 
   const uniqueReaders: DocReaderEntry[] = [];
   const seen = new Set<number>();
-  for (const r of [ { id: me.id, name: me.name, viewedAt: "刚刚" }, ...readers ]) {
+  for (const r of [{ id: me.id, name: me.name, viewedAt: "刚刚" }, ...readers]) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     uniqueReaders.push(r);
   }
+  const viewerCount = Math.max(reactionsQuery.data?.viewerCount ?? 1, uniqueReaders.length);
 
   return (
     <div
@@ -135,7 +204,7 @@ export function DocReactionsBar({
           onClick={() => onToggle("👍")}
           aria-pressed={liked}
           data-doc-like-btn
-          title={thumbs?.users.length ? thumbs.users.map((u) => u.name).join("、") : "点赞"}
+          title="点赞"
           className={cn(
             "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[12px] transition-colors",
             liked
@@ -144,31 +213,30 @@ export function DocReactionsBar({
           )}
         >
           <ThumbsUp size={13} strokeWidth={1.8} />
-          <span>{thumbs?.users.length ? thumbs.users.length : "赞"}</span>
+          <span className={thumbsCount > 0 ? "tabular-nums" : undefined}>
+            {thumbsCount > 0 ? thumbsCount : "赞"}
+          </span>
         </button>
 
-        {otherReactions.map((entry) => {
-          const active = entry.users.some((u) => u.id === me.id);
-          return (
-            <button
-              key={entry.emoji}
-              type="button"
-              onClick={() => onToggle(entry.emoji)}
-              aria-pressed={active}
-              data-doc-reaction={entry.emoji}
-              title={entry.users.map((u) => u.name).join("、")}
-              className={cn(
-                "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[12px] transition-colors",
-                active
-                  ? "border-[#BACEFD] bg-[#EBF2FF] font-medium text-[#3370FF]"
-                  : "border-[#E5E6EB] bg-surface text-[#646A73] hover:border-[#D0D3D6] hover:bg-[#F5F6F7] dark:border-border dark:hover:bg-hover",
-              )}
-            >
-              <span className="text-[13px] leading-none">{entry.emoji}</span>
-              <span className="tabular-nums">{entry.users.length}</span>
-            </button>
-          );
-        })}
+        {otherReactions.map((entry) => (
+          <button
+            key={entry.emoji}
+            type="button"
+            onClick={() => onToggle(entry.emoji)}
+            aria-pressed={entry.reacted}
+            data-doc-reaction={entry.emoji}
+            title={`${entry.emoji} ${entry.count}`}
+            className={cn(
+              "inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[12px] transition-colors",
+              entry.reacted
+                ? "border-[#BACEFD] bg-[#EBF2FF] font-medium text-[#3370FF]"
+                : "border-[#E5E6EB] bg-surface text-[#646A73] hover:border-[#D0D3D6] hover:bg-[#F5F6F7] dark:border-border dark:hover:bg-hover",
+            )}
+          >
+            <span className="text-[13px] leading-none">{entry.emoji}</span>
+            <span className="tabular-nums">{entry.count}</span>
+          </button>
+        ))}
 
         <div className="relative">
           <button
@@ -189,17 +257,24 @@ export function DocReactionsBar({
               data-doc-reaction-picker
               className="absolute bottom-9 left-0 z-30 flex items-center gap-0.5 rounded-full border border-[#DEE0E3] bg-surface px-2 py-1 shadow-[0_6px_20px_rgba(31,35,41,0.14)] dark:border-border"
             >
-              {FEISHU_EMOJIS.map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => { onToggle(emoji); setPickerOpen(false); }}
-                  className="grid size-7 place-items-center rounded-full text-[16px] transition-transform hover:scale-115 hover:bg-[#F2F3F5] dark:hover:bg-hover"
-                >
-                  {emoji}
-                </button>
-              ))}
+              {DOC_REACTION_EMOJIS.map((emoji) => {
+                const active = reactions.some((item) => item.emoji === emoji && item.reacted);
+                return (
+                  <button
+                    key={emoji}
+                    type="button"
+                    role="menuitem"
+                    aria-pressed={active}
+                    onClick={() => { onToggle(emoji); setPickerOpen(false); }}
+                    className={cn(
+                      "grid size-7 place-items-center rounded-full text-[16px] transition-transform hover:scale-115 hover:bg-[#F2F3F5] dark:hover:bg-hover",
+                      active && "bg-[#EBF2FF]",
+                    )}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
             </div>
           )}
         </div>
@@ -219,7 +294,7 @@ export function DocReactionsBar({
             ))}
           </span>
           <Eye size={12} strokeWidth={1.7} />
-          <span className="tabular-nums">{uniqueReaders.length} 人看过</span>
+          <span className="tabular-nums">{viewerCount} 人看过</span>
         </button>
         {readersOpen && (
           <div
@@ -230,7 +305,7 @@ export function DocReactionsBar({
           >
             <div className="mb-2 flex items-center justify-between px-1 text-[12px] font-medium text-[#1F2329] dark:text-foreground">
               <span>浏览记录</span>
-              <span className="text-[11px] font-normal text-[#8F959E]">{uniqueReaders.length} 人</span>
+              <span className="text-[11px] font-normal text-[#8F959E]">{viewerCount} 人</span>
             </div>
             <div className="max-h-48 space-y-1 overflow-y-auto">
               {uniqueReaders.map((r) => (

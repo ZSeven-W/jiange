@@ -11,7 +11,7 @@ import { ArrowDownAZ, ArrowDownZA, ArrowLeftToLine, ArrowRightToLine, EyeOff, Sn
 import { popupPosition } from "./popup-position";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
-import { clearLookupRollup, getLookupRollup, lookupFieldConfig, setLookupRollup, type RollupAgg } from "./rollup";
+import { buildLookupOptions, getLookupRollup, lookupFieldConfig, type RollupAgg } from "./rollup";
 
 /** Shared form for creating and editing a field. */
 export function FieldForm({
@@ -51,7 +51,7 @@ export function FieldForm({
   const [linkFieldId, setLinkFieldId] = useState<number>(initialLookup.linkFieldId);
   const [lookupFieldId, setLookupFieldId] = useState<number>(initialLookup.lookupFieldId);
   const [rollupAgg, setRollupAgg] = useState<RollupAgg>(() =>
-    initial?.type === "lookup" ? getLookupRollup(initial, baseId) : "raw",
+    initial?.type === "lookup" ? getLookupRollup(initial) : "raw",
   );
   const [fetchedTableFields, setFetchedTableFields] = useState<Field[]>([]);
   const [fetchedTargetFields, setFetchedTargetFields] = useState<Field[]>([]);
@@ -203,7 +203,7 @@ export function FieldForm({
           const finalName = name.trim() || initial?.name || t("新字段");
           const linkOptions = type === "link" && baseId ? [String(baseId)] : undefined;
           const lookupOptions = type === "lookup" && linkFieldId > 0 && lookupFieldId > 0
-            ? [String(linkFieldId), String(lookupFieldId)]
+            ? buildLookupOptions(linkFieldId, lookupFieldId, rollupAgg)
             : undefined;
           await onSubmit({
             name: finalName,
@@ -216,19 +216,6 @@ export function FieldForm({
             multiple: type === "person" ? multi : false,
             defaultValue: defaultCell(type, dflt, names, members),
           });
-          if (baseId) {
-            if (type === "lookup") {
-              setLookupRollup(baseId, {
-                fieldId: initial?.id,
-                linkFieldId,
-                lookupFieldId,
-                fieldName: finalName,
-                agg: rollupAgg,
-              });
-            } else if (initial?.id && initial.type === "lookup") {
-              clearLookupRollup(baseId, initial.id);
-            }
-          }
           onCancel();
         } catch {
           setError(t("无法确认字段是否保存。请先刷新或检查字段列表，避免重复创建；输入已保留。"));

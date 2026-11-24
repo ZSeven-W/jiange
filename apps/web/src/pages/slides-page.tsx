@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, docsApi, slidesApi, type DocMeta, type SlidesPage as Page, type SlideShape } from "@/lib/api";
+import { ApiError, docsApi, slidesApi, type DocMeta, type SlidePageMeta, type SlidesPage as Page, type SlideShape } from "@/lib/api";
 import { exportSlidesToPptx, parsePptxToSlides, type PptxImportResult } from "@jiange/slides-sdk/pptx";
 import { ShareDialog } from "@/components/share-dialog";
 import { ask } from "@/components/ui/ask";
@@ -23,13 +23,12 @@ import { SlidesGpuLayer } from "./slides-gpu-layer";
 import { isDarkSlideBackground, PresenterView, SlideSurface } from "./slides-presenter";
 import { SlideShapeControls, SlideMultiShapeControls } from "./slides-shape-controls";
 import { SlideTextControls } from "./slides-text-controls";
-import { bodyHasBullets, loadSlideTextStyles, saveSlideTextStyles, toggleBodyBullets, type SlideFieldTextStyle, type SlideTextStyleMap } from "./slides-text-style";
-import { applyThemeToTextStyles, type SlideThemePreset } from "./slides-themes";
+import { bodyHasBullets, buildSlidePageMeta, hydrateSlideTextStyles, toggleBodyBullets, type SlideFieldTextStyle, type SlidePageTextStyles, type SlideTextStyleMap } from "./slides-text-style";
+import { applyThemeToPageTextStyle, applyThemeToTextStyles, type SlideThemePreset } from "./slides-themes";
 import {
   applyTransitionToAllPages,
   getSlideTransition,
-  loadSlideTransitions,
-  saveSlideTransitions,
+  hydrateSlideTransitions,
   setSlideTransition,
   SLIDE_TRANSITION_DURATION_MS,
   SLIDE_TRANSITION_KEYFRAMES_CSS,
@@ -43,14 +42,15 @@ import {
   distributeShapesVertically,
   expandSelectionWithGroups,
   groupShapes,
+  hydrateSlideShapeGroups,
   isSelectionSingleGroup,
-  loadSlideShapeGroups,
   pruneShapeGroups,
-  saveSlideShapeGroups,
+  sameSlideShapeGroups,
   shapesInMarquee,
   ungroupShapes,
   type SlideDeckShapeGroups,
   type SlideRect,
+  type SlideShapeGroups,
 } from "./slides-multi-select";
 import { patchSlideShape } from "./slides-shape-state";
 import { clampSlideZoom, fitSlideZoom, parseSlideZoom, SLIDE_HEIGHT, SLIDE_WIDTH } from "./slides-zoom";
@@ -165,17 +165,157 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [selectedShapes, setSelectedShapes] = useState<string[]>([]);
   const selectedShape = selectedShapes.length === 1 ? selectedShapes[0] : null;
   const setSelectedShape = (id: string | null) => setSelectedShapes(id ? [id] : []);
-  const [shapeGroups, setShapeGroups] = useState<SlideDeckShapeGroups>(() => loadSlideShapeGroups(deckId));
-  useEffect(() => { setShapeGroups(loadSlideShapeGroups(deckId)); }, [deckId]);
+  const [shapeGroups, setShapeGroups] = useState<SlideDeckShapeGroups>({});
+  const shapeGroupsRef = useRef<SlideDeckShapeGroups>(shapeGroups);
+  shapeGroupsRef.current = shapeGroups;
+  const [transitions, setTransitions] = useState<SlideTransitionMap>({});
+  const transitionsRef = useRef<SlideTransitionMap>(transitions);
+  transitionsRef.current = transitions;
+  const [textStyles, setTextStyles] = useState<SlideTextStyleMap>({});
+  const textStylesRef = useRef<SlideTextStyleMap>(textStyles);
+  textStylesRef.current = textStyles;
+  const metaInFlightRef = useRef<Map<number, number>>(new Map());
+  const metaQueuedRef = useRef<Map<number, SlidePageMeta>>(new Map());
+  const metaFlushPromisesRef = useRef<Map<number, Promise<void>>>(new Map());
+  const metaBatchInFlightRef = useRef(0);
+  const metaDeckKeyRef = useRef(`${deckId}:${userId}`);
+  useEffect(() => {
+    metaDeckKeyRef.current = `${deckId}:${userId}`;
+    metaInFlightRef.current.clear();
+    metaQueuedRef.current.clear();
+    metaFlushPromisesRef.current.clear();
+    metaBatchInFlightRef.current = 0;
+    shapeGroupsRef.current = {};
+    transitionsRef.current = {};
+    textStylesRef.current = {};
+    setShapeGroups({});
+    setTransitions({});
+    setTextStyles({});
+  }, [deckId, userId]);
+  const applyPageMetaToCache = (pageId: number, metaValue: SlidePageMeta | undefined) => {
+    const clean = metaValue && Object.keys(metaValue).length > 0 ? metaValue : undefined;
+    qc.setQueryData<Page[]>(["slides", deckId, userId], (old) =>
+      old?.map((item) => (item.id === pageId ? { ...item, meta: clean } : item)),
+    );
+  };
+  const flushPageMeta = async (pageId: number, deckKey: string) => {
+    while (metaDeckKeyRef.current === deckKey) {
+      const next = metaQueuedRef.current.get(pageId);
+      if (!next) {
+        metaInFlightRef.current.delete(pageId);
+        metaFlushPromisesRef.current.delete(pageId);
+        return;
+      }
+      metaQueuedRef.current.delete(pageId);
+      try {
+        const saved = await slidesApi.patchPageMeta(deckId, pageId, userId, next);
+        if (metaDeckKeyRef.current !== deckKey) return;
+        if (!metaQueuedRef.current.has(pageId)) {
+          metaInFlightRef.current.delete(pageId);
+          metaFlushPromisesRef.current.delete(pageId);
+          applyPageMetaToCache(pageId, saved.meta);
+          return;
+        }
+      } catch (error) {
+        if (metaDeckKeyRef.current !== deckKey) return;
+        metaQueuedRef.current.delete(pageId);
+        metaInFlightRef.current.delete(pageId);
+        metaFlushPromisesRef.current.delete(pageId);
+        setOperationError(
+          error instanceof ApiError && error.message
+            ? error.message
+            : "保存页面样式或动画失败，请重试。",
+        );
+        void qc.invalidateQueries({ queryKey: ["slides", deckId, userId] });
+        return;
+      }
+    }
+  };
+  const schedulePageMetaSave = (
+    pageId: number,
+    styles: SlidePageTextStyles | undefined,
+    transition: SlideTransitionKind | undefined,
+    groups: SlideShapeGroups | undefined,
+  ) => {
+    if (!mayWrite.current) return;
+    const deckKey = `${deckId}:${userId}`;
+    const nextMeta = buildSlidePageMeta(styles, transition, groups);
+    metaQueuedRef.current.set(pageId, nextMeta);
+    const alreadyRunning = metaInFlightRef.current.has(pageId);
+    if (!alreadyRunning) metaInFlightRef.current.set(pageId, 1);
+    applyPageMetaToCache(pageId, nextMeta);
+    if (!alreadyRunning) {
+      const p = flushPageMeta(pageId, deckKey);
+      metaFlushPromisesRef.current.set(pageId, p);
+      void p;
+    }
+  };
+  const persistBatchPagesMeta = async (
+    patch: Partial<Pick<SlidePageMeta, "titleStyle" | "bodyStyle" | "transition">>,
+  ) => {
+    if (!mayWrite.current) return;
+    const deckKey = `${deckId}:${userId}`;
+    metaBatchInFlightRef.current += 1;
+    let decremented = false;
+    const finishBatch = () => {
+      if (!decremented && metaDeckKeyRef.current === deckKey) {
+        decremented = true;
+        metaBatchInFlightRef.current = Math.max(0, metaBatchInFlightRef.current - 1);
+      }
+    };
+    qc.setQueryData<Page[]>(["slides", deckId, userId], (old) =>
+      old?.map((item) => {
+        const cur: SlidePageMeta = { ...(item.meta ?? {}) };
+        if (patch.titleStyle) cur.titleStyle = { ...cur.titleStyle, ...patch.titleStyle };
+        if (patch.bodyStyle) cur.bodyStyle = { ...cur.bodyStyle, ...patch.bodyStyle };
+        if (patch.transition !== undefined) {
+          if (patch.transition === "none") delete cur.transition;
+          else cur.transition = patch.transition;
+        }
+        return { ...item, meta: Object.keys(cur).length > 0 ? cur : undefined };
+      }),
+    );
+    try {
+      if (metaFlushPromisesRef.current.size > 0) {
+        await Promise.allSettled([...metaFlushPromisesRef.current.values()]);
+      }
+      if (metaDeckKeyRef.current !== deckKey) return;
+      const { pages: updatedPages } = await slidesApi.batchPagesMeta(deckId, userId, patch);
+      if (metaDeckKeyRef.current !== deckKey) return;
+      const byId = new Map(updatedPages.map((p) => [p.id, p.meta]));
+      finishBatch();
+      qc.setQueryData<Page[]>(["slides", deckId, userId], (old) =>
+        old?.map((item) =>
+          byId.has(item.id) && !metaInFlightRef.current.has(item.id)
+            ? { ...item, meta: byId.get(item.id) }
+            : item,
+        ),
+      );
+    } catch (error) {
+      if (metaDeckKeyRef.current !== deckKey) return;
+      finishBatch();
+      setOperationError(
+        error instanceof ApiError && error.message
+          ? error.message
+          : "批量保存页面样式或动画失败，请重试。",
+      );
+      void qc.invalidateQueries({ queryKey: ["slides", deckId, userId] });
+    } finally {
+      finishBatch();
+    }
+  };
   const updatePageGroups = (pageId: number, updater: (prev: SlideDeckShapeGroups[number] | undefined) => SlideDeckShapeGroups[number]) => {
-    setShapeGroups((prev) => {
-      const nextPage = updater(prev[pageId]);
-      const next: SlideDeckShapeGroups = { ...prev };
-      if (Object.keys(nextPage).length > 0) next[pageId] = nextPage;
-      else delete next[pageId];
-      saveSlideShapeGroups(deckId, next);
-      return next;
-    });
+    const prevAll = shapeGroupsRef.current;
+    const prevPage = prevAll[pageId];
+    const nextPage = updater(prevPage);
+    const normalizedNext = Object.keys(nextPage).length > 0 ? nextPage : undefined;
+    if (sameSlideShapeGroups(prevPage, normalizedNext)) return;
+    const next: SlideDeckShapeGroups = { ...prevAll };
+    if (normalizedNext) next[pageId] = normalizedNext;
+    else delete next[pageId];
+    shapeGroupsRef.current = next;
+    setShapeGroups(next);
+    schedulePageMetaSave(pageId, textStylesRef.current[pageId], transitionsRef.current[pageId], normalizedNext);
   };
   const [marqueeRect, setMarqueeRect] = useState<SlideRect | null>(null);
   const marqueeDrag = useRef<{
@@ -188,17 +328,14 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
     baseSelection: string[];
     active: boolean;
   } | null>(null);
-  const [transitions, setTransitions] = useState<SlideTransitionMap>(() => loadSlideTransitions(deckId));
-  useEffect(() => { setTransitions(loadSlideTransitions(deckId)); }, [deckId]);
   const [transitionPreview, setTransitionPreview] = useState<{ kind: SlideTransitionKind; nonce: number } | null>(null);
   const transitionPreviewTimer = useRef<number | null>(null);
   useEffect(() => () => { if (transitionPreviewTimer.current !== null) window.clearTimeout(transitionPreviewTimer.current); }, []);
   const updatePageTransition = (pageId: number, kind: SlideTransitionKind) => {
-    setTransitions((prev) => {
-      const next = setSlideTransition(prev, pageId, kind);
-      saveSlideTransitions(deckId, next);
-      return next;
-    });
+    const next = setSlideTransition(transitionsRef.current, pageId, kind);
+    transitionsRef.current = next;
+    setTransitions(next);
+    schedulePageMetaSave(pageId, textStylesRef.current[pageId], kind, shapeGroupsRef.current[pageId]);
   };
   const triggerTransitionPreview = (kind: SlideTransitionKind) => {
     if (transitionPreviewTimer.current !== null) {
@@ -226,26 +363,32 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const [titleFocusPage, setTitleFocusPage] = useState<number | null>(null);
   const [bodyFocusPage, setBodyFocusPage] = useState<number | null>(null);
   const [activeTextField, setActiveTextField] = useState<{ pageId: number; kind: "title" | "body" } | null>(null);
-  const [textStyles, setTextStyles] = useState<SlideTextStyleMap>(() => loadSlideTextStyles(deckId));
-  useEffect(() => { setTextStyles(loadSlideTextStyles(deckId)); }, [deckId]);
   const patchFieldStyle = (pageId: number, kind: "title" | "body", patch: Partial<SlideFieldTextStyle>) => {
-    setTextStyles((prev) => {
-      const next: SlideTextStyleMap = {
-        ...prev,
-        [pageId]: { ...prev[pageId], [kind]: { ...prev[pageId]?.[kind], ...patch } },
-      };
-      saveSlideTextStyles(deckId, next);
-      return next;
-    });
+    const prev = textStylesRef.current;
+    const nextPage: SlidePageTextStyles = { ...prev[pageId], [kind]: { ...prev[pageId]?.[kind], ...patch } };
+    const next: SlideTextStyleMap = { ...prev, [pageId]: nextPage };
+    textStylesRef.current = next;
+    setTextStyles(next);
+    schedulePageMetaSave(pageId, nextPage, transitionsRef.current[pageId], shapeGroupsRef.current[pageId]);
+  };
+  const applyPageThemeStyle = (pageId: number, theme: SlideThemePreset) => {
+    const prev = textStylesRef.current;
+    const nextPage = applyThemeToPageTextStyle(prev[pageId], theme);
+    const next: SlideTextStyleMap = { ...prev, [pageId]: nextPage };
+    textStylesRef.current = next;
+    setTextStyles(next);
+    schedulePageMetaSave(pageId, nextPage, transitionsRef.current[pageId], shapeGroupsRef.current[pageId]);
   };
   const resetFieldStyle = (pageId: number, kind: "title" | "body") => {
-    setTextStyles((prev) => {
-      const pageEntry = { ...prev[pageId] };
-      delete pageEntry[kind];
-      const next: SlideTextStyleMap = { ...prev, [pageId]: pageEntry };
-      saveSlideTextStyles(deckId, next);
-      return next;
-    });
+    const prev = textStylesRef.current;
+    const pageEntry: SlidePageTextStyles = { ...prev[pageId] };
+    delete pageEntry[kind];
+    const next: SlideTextStyleMap = { ...prev };
+    if (pageEntry.title || pageEntry.body) next[pageId] = pageEntry;
+    else delete next[pageId];
+    textStylesRef.current = next;
+    setTextStyles(next);
+    schedulePageMetaSave(pageId, next[pageId], transitionsRef.current[pageId], shapeGroupsRef.current[pageId]);
   };
   const [showSlideList, setShowSlideList] = useState(true);
   const [fitZoom, setFitZoom] = useState(100);
@@ -284,9 +427,44 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const mayWrite = useRef(false);
   mayWrite.current = !meta.isError && !meta.isFetching && meta.data?.kind === "slides" && (meta.data.role === "edit" || meta.data.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId, userId], queryFn: () => slidesApi.pages(deckId, userId), enabled: meta.data?.kind === "slides" && !meta.isError, refetchInterval: 5000, refetchIntervalInBackground: false });
+  // Hydrate text styles, transitions, and shape groups directly from cloud page.meta
+  // whenever pages.data loads or updates (initial load, tab return, polling, or WS invalidation).
+  useEffect(() => {
+    if (!pages.data || metaBatchInFlightRef.current > 0) return;
+    const serverStyles = hydrateSlideTextStyles(pages.data);
+    const serverTransitions = hydrateSlideTransitions(pages.data);
+    const serverGroups = hydrateSlideShapeGroups(pages.data);
+    const inFlight = metaInFlightRef.current;
+    if (inFlight.size === 0) {
+      textStylesRef.current = serverStyles;
+      transitionsRef.current = serverTransitions;
+      shapeGroupsRef.current = serverGroups;
+      setTextStyles(serverStyles);
+      setTransitions(serverTransitions);
+      setShapeGroups(serverGroups);
+      return;
+    }
+    const mergeMap = <T,>(server: Record<number, T>, local: Record<number, T>): Record<number, T> => {
+      const merged: Record<number, T> = { ...server };
+      for (const pageId of inFlight.keys()) {
+        if (pageId in local) merged[pageId] = local[pageId];
+        else delete merged[pageId];
+      }
+      return merged;
+    };
+    const nextStyles = mergeMap(serverStyles, textStylesRef.current);
+    const nextTransitions = mergeMap(serverTransitions, transitionsRef.current);
+    const nextGroups = mergeMap(serverGroups, shapeGroupsRef.current);
+    textStylesRef.current = nextStyles;
+    transitionsRef.current = nextTransitions;
+    shapeGroupsRef.current = nextGroups;
+    setTextStyles(nextStyles);
+    setTransitions(nextTransitions);
+    setShapeGroups(nextGroups);
+  }, [pages.data, deckId, userId]);
   const queue = useMemo(() => new SlidesDraftQueue(
     (page, content) => slidesApi.update(deckId, page.id, userId, content.title, content.body, content.background, content.layout ?? "", page.revision, content.notes, content.shapes),
-    (saved) => qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? saved : item)),
+    (saved) => qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((item) => item.id === saved.id && item.revision <= saved.revision ? (metaInFlightRef.current.has(saved.id) || metaBatchInFlightRef.current > 0 ? { ...saved, meta: item.meta } : saved) : item)),
     () => setDraftVersion((version) => version + 1),
     () => {
       const pid = activePageRef.current;
@@ -722,7 +900,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   const endPageAction = () => { pageActionCount.current--; setPageActions(pageActionCount.current); };
   const mergeBackgroundPages = (after: Page[]) => {
     const byId = new Map(after.map((page) => [page.id, page]));
-    qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((page) => { const saved = byId.get(page.id); return saved && page.revision <= saved.revision ? { ...saved, pos: page.pos, updatedAt: Date.parse(page.updatedAt) > Date.parse(saved.updatedAt) ? page.updatedAt : saved.updatedAt } : page; }));
+    qc.setQueryData<Page[]>(["slides", deckId, userId], (old) => old?.map((page) => { const saved = byId.get(page.id); return saved && page.revision <= saved.revision ? { ...saved, pos: page.pos, meta: page.meta, updatedAt: Date.parse(page.updatedAt) > Date.parse(saved.updatedAt) ? page.updatedAt : saved.updatedAt } : page; }));
   };
   const historyAvailable = (redo: boolean) => {
     const action = backgroundHistory[redo ? "redo" : "undo"].at(-1);
@@ -1233,10 +1411,12 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
       mergeBackgroundPages(after);
       if (themeForStyles) {
         const pageIds = after.map((page) => page.id);
-        setTextStyles((prev) => {
-          const next = applyThemeToTextStyles(prev, pageIds, themeForStyles);
-          saveSlideTextStyles(deckId, next);
-          return next;
+        const nextStyles = applyThemeToTextStyles(textStylesRef.current, pageIds, themeForStyles);
+        textStylesRef.current = nextStyles;
+        setTextStyles(nextStyles);
+        await persistBatchPagesMeta({
+          titleStyle: { color: themeForStyles.titleColor },
+          bodyStyle: { color: themeForStyles.bodyColor },
         });
       }
       if (before.some((page, index) => page.background !== after[index].background)) setBackgroundHistory((history) => ({ undo: [...history.undo, { id, before, after }].slice(-50), redo: [] }));
@@ -1250,11 +1430,10 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
   };
   const applyTransitionToAll = (kind: SlideTransitionKind) => {
     const pageIds = list.map((page) => page.id);
-    setTransitions((prev) => {
-      const next = applyTransitionToAllPages(prev, pageIds, kind);
-      saveSlideTransitions(deckId, next);
-      return next;
-    });
+    const next = applyTransitionToAllPages(transitionsRef.current, pageIds, kind);
+    transitionsRef.current = next;
+    setTransitions(next);
+    void persistBatchPagesMeta({ transition: kind });
     setClipboardNotice(kind === "none" ? "已清除全部页面的切换动画。" : "已将切换动画应用到全部页面。");
   };
   const openPageMenu = (page: Page, x: number, y: number) => {
@@ -1525,7 +1704,7 @@ export function SlidesDeck({ deckId, userId }: { deckId: number; userId: number 
           <footer className="flex h-9 shrink-0 items-center justify-between border-t border-[#e5e6eb] bg-white px-4 text-[12px] text-[#8f959e]"><span>{active ? `${list.findIndex((page) => page.id === active.id) + 1} / ${list.length}` : "0 / 0"}</span><span className="hidden sm:inline">使用方向键切换放映页面</span></footer>
         </section>
       </div>
-      {formatOpen && active && draft && <SlideFormatPanel key={active.id} background={draft.content.background} layout={draft.content.layout ?? ""} shapes={draft.content.shapes} usedColors={list.map((page) => queue.get(page).content.background)} textStyle={textStyles[active.id]} transition={getSlideTransition(transitions, active.id)} canEdit={canEdit} busy={pageActions > 0 || pages.isFetching || queue.hasUnsaved()} applying={backgroundApplying} onChange={(color) => { if (canEdit && !pageActionCount.current && activePageRef.current === active.id) queue.edit(active, { background: color }); }} onLayoutChange={(layout) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; const plan = planSlideLayout(queue.get(active).content, layout); if (!plan.ok) { setOperationError(plan.message); return; } setOperationError(""); setSelectedShape(null); queue.edit(active, plan.content); }} onMore={() => { if (canEdit && activePageRef.current === active.id) { backgroundTarget.current = active.id; backgroundRef.current?.click(); } }} onApplyAll={() => void applyBackgroundToAll()} onApplyTheme={(theme) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; patchFieldStyle(active.id, "title", { color: theme.titleColor }); patchFieldStyle(active.id, "body", { color: theme.bodyColor }); }} onApplyThemeAll={(theme) => void applyBackgroundToAll(theme.background, theme)} onTransitionChange={(kind) => { if (canEdit && activePageRef.current === active.id) updatePageTransition(active.id, kind); }} onPreviewTransition={(kind) => triggerTransitionPreview(kind)} onApplyTransitionAll={(kind) => { if (canEdit) applyTransitionToAll(kind); }} onClose={() => { setFormatOpen(false); backgroundButtonRef.current?.focus(); }}/>}
+      {formatOpen && active && draft && <SlideFormatPanel key={active.id} background={draft.content.background} layout={draft.content.layout ?? ""} shapes={draft.content.shapes} usedColors={list.map((page) => queue.get(page).content.background)} textStyle={textStyles[active.id]} transition={getSlideTransition(transitions, active.id)} canEdit={canEdit} busy={pageActions > 0 || pages.isFetching || queue.hasUnsaved()} applying={backgroundApplying} onChange={(color) => { if (canEdit && !pageActionCount.current && activePageRef.current === active.id) queue.edit(active, { background: color }); }} onLayoutChange={(layout) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; const plan = planSlideLayout(queue.get(active).content, layout); if (!plan.ok) { setOperationError(plan.message); return; } setOperationError(""); setSelectedShape(null); queue.edit(active, plan.content); }} onMore={() => { if (canEdit && activePageRef.current === active.id) { backgroundTarget.current = active.id; backgroundRef.current?.click(); } }} onApplyAll={() => void applyBackgroundToAll()} onApplyTheme={(theme) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; applyPageThemeStyle(active.id, theme); }} onApplyThemeAll={(theme) => void applyBackgroundToAll(theme.background, theme)} onTransitionChange={(kind) => { if (canEdit && activePageRef.current === active.id) updatePageTransition(active.id, kind); }} onPreviewTransition={(kind) => triggerTransitionPreview(kind)} onApplyTransitionAll={(kind) => { if (canEdit) applyTransitionToAll(kind); }} onClose={() => { setFormatOpen(false); backgroundButtonRef.current?.focus(); }}/>}
       </div>
       {pageMenu && (() => {
         const page = list.find((item) => item.id === pageMenu.id);

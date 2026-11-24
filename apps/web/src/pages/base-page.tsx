@@ -29,9 +29,9 @@ import { ViewGlyph } from "./base/view-glyph";
 import { ViewConfigActions } from "./base/view-config-actions";
 import {
   applyViewPermissions,
-  DEFAULT_VIEW_PERMISSIONS,
-  loadViewPermissions,
-  saveViewPermissions,
+  mergeViewPermissions,
+  viewPermissionsFromConfig,
+  viewPermissionsToConfig,
   ViewPermissionsPanel,
   type ViewPermissionsConfig,
 } from "./base/view-permissions-panel";
@@ -154,7 +154,6 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const shareAnchor = useRef<HTMLButtonElement>(null);
   const [cfg, setCfgState] = useState<ViewConfig>(EMPTY_CONFIG);
   const configDrafts = useRef(new Map<string, ViewConfig>());
-  const [viewPerms, setViewPerms] = useState<ViewPermissionsConfig>(DEFAULT_VIEW_PERMISSIONS);
   const [filter, setFilter] = useState("");
   const [pane, setPane] = useState<"table" | "dashboard">("table");
   const refresh = () => {
@@ -183,12 +182,20 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     setCfgState(current ? configDrafts.current.get(`${id}:${current.id}`) ?? current.config ?? EMPTY_CONFIG : EMPTY_CONFIG);
   }, [id, current?.id, current?.config, current && JSON.stringify(current.config)]);
   // ^ load a view's saved config when switching views; JSON dep covers server updates
-  useEffect(() => {
-    setViewPerms(loadViewPermissions(id, current?.id));
-  }, [id, current?.id]);
+  const viewPerms = useMemo(() => viewPermissionsFromConfig(cfg.permissions), [cfg.permissions]);
+  const effectivePerms = useMemo(() => {
+    if (q.data?.base.role === "manage") return viewPerms;
+    const sharedPerms = views
+      .filter((v) => v.ownerId == null && v.type !== "form" && v.config?.permissions)
+      .map((v) => viewPermissionsFromConfig(v.config.permissions));
+    return mergeViewPermissions([...sharedPerms, viewPerms]);
+  }, [q.data?.base.role, views, viewPerms]);
   const updateViewPerms = (next: ViewPermissionsConfig) => {
-    setViewPerms(next);
-    saveViewPermissions(id, current?.id, next);
+    const permissions = viewPermissionsToConfig(next);
+    const nextCfg: ViewConfig = { ...cfg };
+    if (permissions) nextCfg.permissions = permissions;
+    else delete nextCfg.permissions;
+    setCfg(nextCfg);
   };
 
   const filtersActive = (cfg.filters?.rules?.length ?? 0) > 0;
@@ -252,7 +259,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const queryRecords = queryActive ? recordsForAuthorizedQuery(q.data.records, serverQuery.data?.records, q.isFetching, serverQuery.isSuccess) : [];
   const source = foldExpansions(q.data.fields, queryActive ? queryRecords : q.data.records, q.data.expansions ?? {});
   const permProjection = current?.type !== "form"
-    ? applyViewPermissions(baseVisibleFields, source, viewPerms, userId)
+    ? applyViewPermissions(baseVisibleFields, source, effectivePerms, userId)
     : { visibleFields: baseVisibleFields, readonlyFieldIds: new Set<number>(), hiddenFieldIds: new Set<number>(), records: source };
   const visibleFields = permProjection.visibleFields;
   const readonlyFieldIds = permProjection.readonlyFieldIds;
@@ -520,10 +527,11 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
         <span className="ml-auto" aria-hidden />
-        {current && current.type !== "form" && (
+        {current && current.type !== "form" && current.ownerId == null && (
           <ViewPermissionsPanel
             fields={fields}
             value={viewPerms}
+            disabled={base.role !== "manage" || !canEdit}
             onChange={updateViewPerms}
           />
         )}
@@ -662,6 +670,13 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           members={members}
           startFieldId={cfg.group}
           endFieldId={cfg.endField}
+          dependencies={cfg.ganttDeps ?? []}
+          onChangeDependencies={(ganttDeps) => {
+            const nextCfg: ViewConfig = { ...cfg };
+            if (ganttDeps.length > 0) nextCfg.ganttDeps = ganttDeps;
+            else delete nextCfg.ganttDeps;
+            setCfg(nextCfg);
+          }}
           onMutate={refresh}
           onOpen={(r) => setDetailRecord(r.id)}
           onRecordUndo={(step) => undoStack.record(step)}
@@ -671,7 +686,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         const rec = q.data.records.find((r) => r.id === detailRecord);
         const at = records.findIndex((r) => r.id === detailRecord);
         const detailFields = current?.type !== "form"
-          ? applyViewPermissions(fields, [], viewPerms, userId).visibleFields
+          ? applyViewPermissions(fields, [], effectivePerms, userId).visibleFields
           : fields;
         return rec ? (
           <RecordDetail

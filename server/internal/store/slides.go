@@ -40,6 +40,7 @@ type SlidesPage struct {
 	Layout     string          `json:"layout"`
 	Notes      string          `json:"notes"`
 	Shapes     json.RawMessage `json:"shapes"`
+	Meta       json.RawMessage `json:"meta,omitempty"`
 	Hidden     bool            `json:"hidden"`
 	Revision   int64           `json:"revision"`
 	UpdatedAt  time.Time       `json:"updatedAt"`

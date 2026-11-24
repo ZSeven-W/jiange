@@ -88,11 +88,12 @@ describe("published forms", () => {
     await expect(closeForm(2,3,2)).rejects.toMatchObject({status:409,code:"conflict"});
     await expect(closeForm(2,3,3)).rejects.toThrow("关闭结果无效");
   });
-  it("sends the exact observed configuration and field schema with a form configuration update", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({config:{fields:[1],required:[1]}}),{status:200}));
+  it("sends the exact observed configuration and field schema with a form configuration update including branchRules", async () => {
+    const branchRules = [{ id: "r1", sourceFieldId: 1, targetFieldId: 2, operator: "not_empty" as const }];
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({config:{fields:[1,2],required:[1],branchRules}}),{status:200}));
     vi.stubGlobal("fetch", fetchMock);
-    const schema = [{id:1,name:"文本",type:"text" as const,position:1}];
-    expect(await saveFormConfig(2,3,{},schema,{fields:[1],required:[1]})).toEqual({fields:[1],required:[1]});
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({expectedConfig:{},expectedFields:schema,config:{fields:[1],required:[1]}});
+    const schema = [{id:1,name:"文本",type:"text" as const,position:1},{id:2,name:"补充",type:"text" as const,position:2}];
+    expect(await saveFormConfig(2,3,{},schema,{fields:[1,2],required:[1],branchRules})).toEqual({fields:[1,2],required:[1],branchRules});
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toEqual({expectedConfig:{},expectedFields:schema,config:{fields:[1,2],required:[1],branchRules}});
   });
 });

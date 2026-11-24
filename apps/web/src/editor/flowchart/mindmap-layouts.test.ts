@@ -1,16 +1,23 @@
 import { createElement } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { Doc, ROOT, Tx } from "@jiange/collab";
 import { layoutMindTopics, type MindTopic } from "./mindmap";
 import {
   layoutMindTopicsWithStructure,
   loadMindLayoutConfig,
+  MIND_LAYOUT_PROP_KEY,
+  MIND_RELATION_PROP_PREFIX,
+  mindLayoutPropWrites,
   mindLayoutStorageKey,
   mindRelationCurvePath,
   mindRelationLabelPoint,
+  mindRelationPropKey,
+  readMindLayoutFromProps,
   saveMindLayoutConfig,
   type MindRelation,
 } from "./mindmap-layouts";
+import { FlowchartBlock } from "./flowchart-block";
 import { MindMapSvg } from "./mind-map-svg";
 
 const sampleTree: MindTopic[] = [
@@ -140,5 +147,140 @@ describe("MindMap multi-structure layouts", () => {
     );
     expect(timelineHtml).toContain('data-mind-structure="timeline"');
     expect(timelineHtml).toContain('data-mind-timeline-spine="r"');
+  });
+
+  it("reads and writes minimal CRDT fc.ml and fc.mr.<id> props with tombstones", () => {
+    expect(MIND_LAYOUT_PROP_KEY).toBe("fc.ml");
+    expect(MIND_RELATION_PROP_PREFIX).toBe("fc.mr.");
+    expect(mindRelationPropKey("mr_1")).toBe("fc.mr.mr_1");
+
+    const r1: MindRelation = { id: "mr_1", fromId: "s1", toId: "s3", label: "依赖" };
+    const r2: MindRelation = { id: "mr_2", fromId: "b1", toId: "b3" };
+    const initialWrites = mindLayoutPropWrites(
+      { structure: "logic", relations: [] },
+      { structure: "org", relations: [r1, r2] },
+    );
+    expect(initialWrites).toEqual({
+      "fc.ml": "org",
+      "fc.mr.mr_1": JSON.stringify(r1),
+      "fc.mr.mr_2": JSON.stringify(r2),
+    });
+    expect(readMindLayoutFromProps(initialWrites)).toEqual({
+      structure: "org",
+      relations: [r1, r2],
+    });
+
+    // Switching back to default "logic" writes "" to fc.ml; deleting r2 writes "" tombstone; r1 is untouched.
+    const resetWrites = mindLayoutPropWrites(
+      { structure: "org", relations: [r1, r2] },
+      { structure: "logic", relations: [r1] },
+    );
+    expect(resetWrites).toEqual({
+      "fc.ml": "",
+      "fc.mr.mr_2": "",
+    });
+    expect(readMindLayoutFromProps({ ...initialWrites, ...resetWrites })).toEqual({
+      structure: "logic",
+      relations: [r1],
+    });
+
+    // No-op diff emits zero writes.
+    expect(
+      mindLayoutPropWrites(
+        { structure: "logic", relations: [r1] },
+        { structure: "logic", relations: [r1] },
+      ),
+    ).toEqual({});
+
+    // Malformed, self-loop, invalid-ID, and mismatched-ID entries are skipped safely.
+    const dirty: Record<string, string> = {
+      ...initialWrites,
+      "fc.ml": "invalid-layout",
+      "fc.mr.mr_2": "",
+      "fc.mr.self": JSON.stringify({ id: "self", fromId: "s1", toId: "s1", label: "自环" }),
+      "fc.mr.bad!": JSON.stringify({ id: "bad!", fromId: "s1", toId: "s3" }),
+      "fc.mr.mismatch": JSON.stringify({ id: "other", fromId: "s1", toId: "s3" }),
+      "fc.mr.corrupt": "{not json",
+    };
+    expect(readMindLayoutFromProps(dirty)).toEqual({
+      structure: "logic",
+      relations: [r1],
+    });
+  });
+
+  it("converges concurrent MindMap structure and cross-branch relation edits across CRDT peers", () => {
+    const docA = new Doc(1);
+    const docB = new Doc(2);
+    const initTx = new Tx(docA);
+    const block = initTx.create("flowchart", null, ROOT, {});
+    for (const op of initTx.ops) docB.apply(op);
+
+    const r1: MindRelation = { id: "mr_a", fromId: "s1", toId: "s3", label: "联动" };
+    const r2: MindRelation = { id: "mr_b", fromId: "b1", toId: "b3", label: "并行" };
+
+    const txA = new Tx(docA);
+    for (const [k, v] of Object.entries(
+      mindLayoutPropWrites({ structure: "logic", relations: [] }, { structure: "fishbone", relations: [r1] }),
+    )) {
+      txA.setProp(block, k, v);
+    }
+
+    const txB = new Tx(docB);
+    for (const [k, v] of Object.entries(
+      mindLayoutPropWrites({ structure: "logic", relations: [] }, { structure: "logic", relations: [r2] }),
+    )) {
+      txB.setProp(block, k, v);
+    }
+
+    for (const op of txA.ops) docB.apply(op);
+    for (const op of txB.ops) docA.apply(op);
+
+    for (const d of [docA, docB]) {
+      expect(readMindLayoutFromProps(d.blockInfo(block).props)).toEqual({
+        structure: "fishbone",
+        relations: [r1, r2],
+      });
+    }
+
+    // Delete r1 via tombstone and verify removal converges on both peers.
+    const delTx = new Tx(docA);
+    for (const [k, v] of Object.entries(
+      mindLayoutPropWrites({ structure: "fishbone", relations: [r1, r2] }, { structure: "fishbone", relations: [r2] }),
+    )) {
+      delTx.setProp(block, k, v);
+    }
+    for (const op of delTx.ops) docB.apply(op);
+
+    for (const d of [docA, docB]) {
+      expect(readMindLayoutFromProps(d.blockInfo(block).props)).toEqual({
+        structure: "fishbone",
+        relations: [r2],
+      });
+    }
+  });
+
+  it("derives FlowchartBlock MindMap structure and relations directly from CRDT blockProps without localStorage", () => {
+    saveMindLayoutConfig("doc-99", {
+      structure: "org",
+      relations: [{ id: "mr_stale", fromId: "b1", toId: "b2", label: "本地旧值" }],
+    });
+    const crdtProps = mindLayoutPropWrites(
+      { structure: "logic", relations: [] },
+      { structure: "timeline", relations: [{ id: "mr_live", fromId: "s1", toId: "s3", label: "云端关联" }] },
+    );
+    const html = renderToStaticMarkup(
+      createElement(FlowchartBlock, {
+        graph: { nodes: [], edges: [], mind: sampleTree, theme: "feishu" },
+        blockProps: crdtProps,
+        height: 360,
+        readOnly: true,
+        assets: { docId: 99 },
+      }),
+    );
+    expect(html).toContain('data-mind-structure="timeline"');
+    expect(html).toContain('data-mind-relation="mr_live"');
+    expect(html).toContain("云端关联");
+    expect(html).not.toContain("mr_stale");
+    expect(html).not.toContain("本地旧值");
   });
 });

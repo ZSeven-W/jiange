@@ -3616,12 +3616,33 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                   reply: onBoardCommentReply,
                   resolve: onBoardCommentResolve,
                 } : undefined}
-                onFlowChange={readOnly ? undefined : (graph, base) => {
+                onFlowChange={readOnly ? undefined : (graph, base, extraProps) => {
                   if (readOnlyRef.current || sync.client.doc !== doc || !doc.hasBlock(b) || doc.blockInfo(b).type !== "flowchart") return { graph: base, conflicts: ["document"], applied: false, appliedKeys: [] };
                   if (flowAutoOpen === k) setFlowAutoOpen(null);
                   const tx = new Tx(doc);
-                  const intent = flowIntentWrites(doc.blockInfo(b).props, base, graph);
-                  for (const [key, value] of Object.entries(intent.writes)) tx.setProp(b, key, value);
+                  const currentProps = doc.blockInfo(b).props;
+                  const intent = flowIntentWrites(currentProps, base, graph);
+                  const appliedKeys: string[] = [];
+                  for (const [key, value] of Object.entries(intent.writes)) {
+                    tx.setProp(b, key, value);
+                    appliedKeys.push(key);
+                  }
+                  if (extraProps) {
+                    let wroteExtra = false;
+                    for (const [key, value] of Object.entries(extraProps)) {
+                      if (key in intent.writes) continue;
+                      if (key !== "fc.ml" && !key.startsWith("fc.fr.") && !key.startsWith("fc.mr.")) continue;
+                      if ((currentProps[key] ?? "") !== value) {
+                        tx.setProp(b, key, value);
+                        appliedKeys.push(key);
+                        wroteExtra = true;
+                      }
+                    }
+                    if (wroteExtra && currentProps["fc.v"] !== "1" && !("fc.v" in intent.writes)) {
+                      tx.setProp(b, "fc.v", "1");
+                      appliedKeys.push("fc.v");
+                    }
+                  }
                   if (tx.ops.length) {
                     um.seal();
                     um.record(tx, sel.current, sel.current, "prop");
@@ -3630,7 +3651,7 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     force((x) => x + 1);
                   }
                   // No publish(): it would drop the flowchart pointer/selection presence.
-                  return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0, appliedKeys: tx.ops.length ? Object.keys(intent.writes) : [] };
+                  return { graph: readFlow(doc.blockInfo(b).props), conflicts: intent.conflicts, applied: tx.ops.length > 0, appliedKeys: tx.ops.length ? appliedKeys : [] };
                 }}
                 onTableChange={readOnly || atomicTableLocked ? undefined : applyTableStructure}
                 uploadNotice={uploading?.anchor === k ? uploading : null}
@@ -3881,7 +3902,7 @@ interface BlockProps {
   docId?: number;
   userId?: number;
   /** 流程图块：写回图（逐对象属性）；未提供表示只读。 */
-  onFlowChange?: (graph: FlowGraph, base: FlowGraph) => FlowChangeOutcome;
+  onFlowChange?: (graph: FlowGraph, base: FlowGraph, extraProps?: Record<string, string>) => FlowChangeOutcome;
   flowAI?: (messages: AIMessage[]) => Promise<string>;
   flowAutoOpen?: boolean;
   flowPeers?: FlowPeer[];
@@ -4185,7 +4206,7 @@ function Block({ docId, userId, onFlowChange, flowAI, flowAutoOpen, flowPeers, o
       </span>
       {type === "flowchart" && (
         <div className="my-2">
-          <FlowchartBlock graph={readFlow(props)} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} comments={flowComments} activeThread={activeThread} commentActions={flowCommentActions} upload={flowUpload} assets={flowAssets} canCopy={canCopy} />
+          <FlowchartBlock graph={readFlow(props)} blockProps={props} height={Math.min(1200, Math.max(200, Number(props["fc.h"]) || 360))} readOnly={!onFlowChange} autoOpen={flowAutoOpen} ai={flowAI} onChange={onFlowChange} peers={flowPeers} onPresence={onFlowPresence} onComment={onFlowComment} comments={flowComments} activeThread={activeThread} commentActions={flowCommentActions} upload={flowUpload} assets={flowAssets} canCopy={canCopy} />
         </div>
       )}
       {type === "diagram" ? (

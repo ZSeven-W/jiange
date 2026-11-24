@@ -110,10 +110,12 @@ func (m *Memory) insertSlidesPage(ctx context.Context, g RestoreGuard, slidesID,
 	if copySource {
 		page = *src
 		page.Shapes = slices.Clone(src.Shapes)
+		page.Meta = cloneSlideMeta(src.Meta)
 	}
 	page.ID, page.Pos, page.Revision, page.UpdatedAt = m.slidesSequence, pos, 1, time.Now()
 	m.slides = append(m.slides, page)
 	page.Shapes = slices.Clone(page.Shapes)
+	page.Meta = cloneSlideMeta(page.Meta)
 	return page, nil
 }
 
@@ -143,6 +145,7 @@ func (m *Memory) ListSlidesPages(_ context.Context, uid, slidesID int64) ([]Slid
 	for _, p := range m.slides {
 		if p.SlidesID == slidesID {
 			p.Shapes = slices.Clone(p.Shapes)
+			p.Meta = cloneSlideMeta(p.Meta)
 			out = append(out, p)
 		}
 	}
@@ -236,6 +239,7 @@ func (m *Memory) updateSlidesPage(ctx context.Context, g RestoreGuard, slidesID,
 	m.slides[i].UpdatedAt = time.Now()
 	result := m.slides[i]
 	result.Shapes = slices.Clone(result.Shapes)
+	result.Meta = cloneSlideMeta(result.Meta)
 	return result, nil
 }
 
@@ -259,6 +263,7 @@ func (m *Memory) SetSlidesPageHidden(ctx context.Context, g RestoreGuard, slides
 	}
 	result := m.slides[i]
 	result.Shapes = slices.Clone(result.Shapes)
+	result.Meta = cloneSlideMeta(result.Meta)
 	return result, nil
 }
 
@@ -375,6 +380,7 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 	for _, p := range m.slides {
 		if p.SlidesID == c.SourceID {
 			p.Shapes = slices.Clone(p.Shapes)
+			p.Meta = cloneSlideMeta(p.Meta)
 			pages = append(pages, p)
 		}
 	}
@@ -433,7 +439,7 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 		if err != nil {
 			return DocMeta{}, nil, err
 		}
-		next := SlidesPage{ID: m.slidesSequence + int64(len(copied)) + 1, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Layout: page.Layout, Notes: page.Notes, Shapes: shapes, Hidden: page.Hidden, Revision: 1, UpdatedAt: now}
+		next := SlidesPage{ID: m.slidesSequence + int64(len(copied)) + 1, SlidesID: newID, Pos: page.Pos, Title: page.Title, Body: page.Body, Background: page.Background, Layout: page.Layout, Notes: page.Notes, Shapes: shapes, Meta: cloneSlideMeta(page.Meta), Hidden: page.Hidden, Revision: 1, UpdatedAt: now}
 		copied = append(copied, next)
 	}
 	if err := ctx.Err(); err != nil {
@@ -446,5 +452,11 @@ func (m *Memory) CopySlidesDeck(ctx context.Context, c SlidesDeckCopy) (DocMeta,
 	m.d.docs = append(m.d.docs, d)
 	m.slides = append(m.slides, copied...)
 	m.slidesSequence += int64(len(copied))
-	return meta, copied, nil
+	out := make([]SlidesPage, len(copied))
+	for i, page := range copied {
+		page.Shapes = slices.Clone(page.Shapes)
+		page.Meta = cloneSlideMeta(page.Meta)
+		out[i] = page
+	}
+	return meta, out, nil
 }

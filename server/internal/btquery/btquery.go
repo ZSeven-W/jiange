@@ -39,6 +39,19 @@ type Sort struct {
 	Asc bool  `json:"asc"`
 }
 
+// ViewPermissions defines fine-grained row and field permissions persisted on a shared view.
+type ViewPermissions struct {
+	OnlyOwnRecords bool              `json:"onlyOwnRecords,omitempty"`
+	FieldModes     map[string]string `json:"fieldModes,omitempty"`
+}
+
+// GanttDependency represents a directed finish-to-start task edge persisted on a Gantt view.
+type GanttDependency struct {
+	ID     string `json:"id"`
+	FromID int64  `json:"fromId"`
+	ToID   int64  `json:"toId"`
+}
+
 // Config is what a saved view keeps in bt_views.config.
 type Config struct {
 	Filters  *Filters `json:"filters,omitempty"`
@@ -52,6 +65,11 @@ type Config struct {
 	// ConfigLocked locks this shared view's layout/filter/sort configuration to
 	// manage roles without restricting record/field data access or data edits.
 	ConfigLocked bool `json:"configLocked,omitempty"`
+	// Permissions defines fine-grained row (onlyOwnRecords) and per-field
+	// (edit/readonly/hidden) permissions enforced server-side for non-manage roles.
+	Permissions *ViewPermissions `json:"permissions,omitempty"`
+	// GanttDeps persists directed task dependency edges for Gantt views.
+	GanttDeps []GanttDependency `json:"ganttDeps,omitempty"`
 }
 
 var ops = map[string]bool{
@@ -112,6 +130,68 @@ func Validate(fields []FieldSpec, cfg Config) error {
 	if cfg.EndField != nil {
 		if _, ok := byID[*cfg.EndField]; !ok {
 			return fmt.Errorf("unknown field %d", *cfg.EndField)
+		}
+	}
+	if cfg.Permissions != nil {
+		for fidStr, mode := range cfg.Permissions.FieldModes {
+			fid, err := strconv.ParseInt(fidStr, 10, 64)
+			if err != nil || fid <= 0 || strconv.FormatInt(fid, 10) != fidStr {
+				return fmt.Errorf("unknown field %s", fidStr)
+			}
+			if _, ok := byID[fid]; !ok {
+				return fmt.Errorf("unknown field %d", fid)
+			}
+			switch mode {
+			case "edit", "readonly", "hidden":
+			default:
+				return fmt.Errorf("invalid field permission mode %q", mode)
+			}
+		}
+	}
+	if len(cfg.GanttDeps) > 500 {
+		return fmt.Errorf("too many gantt dependencies (max 500)")
+	}
+	if len(cfg.GanttDeps) > 0 {
+		seenPairs := make(map[[2]int64]bool, len(cfg.GanttDeps))
+		adj := make(map[int64][]int64, len(cfg.GanttDeps))
+		for _, dep := range cfg.GanttDeps {
+			if dep.FromID <= 0 || dep.ToID <= 0 {
+				return fmt.Errorf("gantt dependency record ids must be positive")
+			}
+			if dep.FromID == dep.ToID {
+				return fmt.Errorf("gantt dependency cannot reference itself (%d)", dep.FromID)
+			}
+			if len(dep.ID) > 200 || strings.ContainsRune(dep.ID, 0) {
+				return fmt.Errorf("invalid gantt dependency id")
+			}
+			pair := [2]int64{dep.FromID, dep.ToID}
+			if seenPairs[pair] {
+				return fmt.Errorf("duplicate gantt dependency %d->%d", dep.FromID, dep.ToID)
+			}
+			seenPairs[pair] = true
+			adj[dep.FromID] = append(adj[dep.FromID], dep.ToID)
+		}
+		state := make(map[int64]uint8, len(adj))
+		var hasCycle func(int64) bool
+		hasCycle = func(node int64) bool {
+			state[node] = 1
+			for _, next := range adj[node] {
+				switch state[next] {
+				case 1:
+					return true
+				case 0:
+					if hasCycle(next) {
+						return true
+					}
+				}
+			}
+			state[node] = 2
+			return false
+		}
+		for node := range adj {
+			if state[node] == 0 && hasCycle(node) {
+				return fmt.Errorf("gantt dependencies contain a cycle")
+			}
 		}
 	}
 	return nil

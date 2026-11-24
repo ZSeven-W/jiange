@@ -318,7 +318,7 @@ export function displayValue(rec: BaseRecord | undefined, f: Field | undefined, 
       return formulaCache.get(rec)?.get(f.id) ?? undefined;
     case "lookup": {
       const raw = rec.cells[f.id];
-      const agg = getLookupRollup(f, rec.baseId);
+      const agg = getLookupRollup(f);
       if (agg === "raw") return raw;
       const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
       const aggregated = aggregateRollupValues(items, agg);
@@ -455,7 +455,7 @@ function displayRaw(rec: BaseRecord, f: Field, members: User[]): FormulaValue {
     }
     case "lookup": {
       const raw = rec.cells[f.id];
-      const agg = getLookupRollup(f, rec.baseId);
+      const agg = getLookupRollup(f);
       const items = Array.isArray(raw) ? raw : raw !== undefined ? [raw] : [];
       if (agg !== "raw") {
         const res = aggregateRollupValues(items, agg);

@@ -20,12 +20,17 @@ import (
 // not as a complete implementation of Feishu's advanced permissions. Multiple
 // locked views intersect, so adding another cannot relax an existing rule.
 type baseReadPolicy struct {
-	mandatory []btquery.Config
-	hidden    map[int64]bool
+	mandatory      []btquery.Config
+	hidden         map[int64]bool
+	readonly       map[int64]bool
+	onlyOwnRecords bool
 }
 
 func parseBasePolicy(b store.DocMeta, fields []store.Field, views []store.View) (baseReadPolicy, error) {
-	p := baseReadPolicy{hidden: map[int64]bool{}}
+	p := baseReadPolicy{
+		hidden:   map[int64]bool{},
+		readonly: map[int64]bool{},
+	}
 	if b.Role == store.RoleManage {
 		return p, nil
 	}
@@ -37,6 +42,23 @@ func parseBasePolicy(b store.DocMeta, fields []store.Field, views []store.View) 
 		if len(v.Config) != 0 && !bytes.Equal(v.Config, []byte("null")) {
 			if err := json.Unmarshal(v.Config, &cfg); err != nil {
 				return p, fmt.Errorf("invalid stored view %d: %w", v.ID, err)
+			}
+		}
+		if cfg.Permissions != nil {
+			if cfg.Permissions.OnlyOwnRecords {
+				p.onlyOwnRecords = true
+			}
+			for fidStr, mode := range cfg.Permissions.FieldModes {
+				fid, err := strconv.ParseInt(fidStr, 10, 64)
+				if err != nil || fid <= 0 {
+					continue
+				}
+				switch mode {
+				case "hidden":
+					p.hidden[fid] = true
+				case "readonly":
+					p.readonly[fid] = true
+				}
 			}
 		}
 		if !cfg.Locked {
@@ -158,6 +180,191 @@ func readBaseAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, u
 	return readBaseTableAllowedWith(ctx, reader, uid, id, 0)
 }
 
+func filterOwnRecords(recs []store.Record, p baseReadPolicy, uid int64) []store.Record {
+	if !p.onlyOwnRecords {
+		return recs
+	}
+	out := make([]store.Record, 0, len(recs))
+	for _, rec := range recs {
+		if rec.CreatorID != nil && *rec.CreatorID == uid {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+func cellsTouchFieldSet(cells map[string]json.RawMessage, blocked map[int64]bool) bool {
+	if len(blocked) == 0 || len(cells) == 0 {
+		return false
+	}
+	for k := range cells {
+		fid, err := strconv.ParseInt(k, 10, 64)
+		if err == nil && blocked[fid] {
+			return true
+		}
+	}
+	return false
+}
+
+// checkBaseRecordWritePolicy enforces fine-grained view permissions
+// (onlyOwnRecords, readonly, and hidden fields) for non-manage users.
+func (s *Server) checkBaseRecordWritePolicy(
+	w http.ResponseWriter,
+	r *http.Request,
+	b store.DocMeta,
+	uid int64,
+	defaultTableID int64,
+	recordIDs []int64,
+	cellMaps []map[string]json.RawMessage,
+	expectedMaps []map[string]json.RawMessage,
+) bool {
+	if b.Role == store.RoleManage {
+		return true
+	}
+	ctx := r.Context()
+	allViews, err := s.Store.Views(ctx, b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return false
+	}
+	hasPermissions := false
+	for _, v := range allViews {
+		if v.OwnerID != nil || len(v.Config) == 0 || bytes.Equal(v.Config, []byte("null")) {
+			continue
+		}
+		var cfg btquery.Config
+		if err := json.Unmarshal(v.Config, &cfg); err != nil {
+			s.fail(w, r, fmt.Errorf("invalid stored view %d: %w", v.ID, err))
+			return false
+		}
+		if cfg.Permissions != nil && (cfg.Permissions.OnlyOwnRecords || len(cfg.Permissions.FieldModes) > 0) {
+			hasPermissions = true
+			break
+		}
+	}
+	if !hasPermissions {
+		return true
+	}
+	allFields, err := s.Store.Fields(ctx, b.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return false
+	}
+	resolvedDefault := defaultTableID
+	defaultResolved := resolvedDefault > 0
+	resolveTable := func(tid int64) (int64, error) {
+		if tid > 0 {
+			return tid, nil
+		}
+		if !defaultResolved {
+			defaultResolved = true
+			tables, err := s.Store.BaseTables(ctx, b.ID)
+			if err != nil {
+				return 0, err
+			}
+			for _, tbl := range tables {
+				if tbl.IsDefault {
+					resolvedDefault = tbl.ID
+					break
+				}
+			}
+			if resolvedDefault == 0 && len(tables) > 0 {
+				resolvedDefault = tables[0].ID
+			}
+		}
+		return resolvedDefault, nil
+	}
+	policies := map[int64]baseReadPolicy{}
+	policyFor := func(tid int64) (baseReadPolicy, error) {
+		effID, err := resolveTable(tid)
+		if err != nil {
+			return baseReadPolicy{}, err
+		}
+		if p, ok := policies[effID]; ok {
+			return p, nil
+		}
+		p, err := parseBasePolicy(b, filterFieldsByTable(allFields, effID), filterViewsByTable(allViews, effID))
+		if err != nil {
+			return baseReadPolicy{}, err
+		}
+		policies[effID] = p
+		return p, nil
+	}
+	checkCellsAndExpected := func(p baseReadPolicy, cells, expected map[string]json.RawMessage) bool {
+		if cellsTouchFieldSet(cells, p.hidden) || cellsTouchFieldSet(cells, p.readonly) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "该字段为只读或隐藏状态，无法修改")
+			return false
+		}
+		if cellsTouchFieldSet(expected, p.hidden) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "该字段已隐藏，无法访问")
+			return false
+		}
+		return true
+	}
+	if len(recordIDs) > 0 {
+		recs, err := s.Store.RecordsConstrainedByIDs(ctx, b.ID, recordIDs, allFields, nil)
+		if err != nil {
+			s.fail(w, r, err)
+			return false
+		}
+		byID := make(map[int64]store.Record, len(recs))
+		for _, rec := range recs {
+			byID[rec.ID] = rec
+		}
+		for i, rid := range recordIDs {
+			var cells, expected map[string]json.RawMessage
+			if i < len(cellMaps) {
+				cells = cellMaps[i]
+			}
+			if i < len(expectedMaps) {
+				expected = expectedMaps[i]
+			}
+			if rec, ok := byID[rid]; ok {
+				p, err := policyFor(rec.TableID)
+				if err != nil {
+					s.fail(w, r, err)
+					return false
+				}
+				if p.onlyOwnRecords && (rec.CreatorID == nil || *rec.CreatorID != uid) {
+					httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限仅允许修改或删除自己创建的记录")
+					return false
+				}
+				if !checkCellsAndExpected(p, cells, expected) {
+					return false
+				}
+			} else {
+				p, err := policyFor(0)
+				if err != nil {
+					s.fail(w, r, err)
+					return false
+				}
+				if !checkCellsAndExpected(p, cells, expected) {
+					return false
+				}
+			}
+		}
+		return true
+	}
+	p, err := policyFor(0)
+	if err != nil {
+		s.fail(w, r, err)
+		return false
+	}
+	for i := 0; i < len(cellMaps) || i < len(expectedMaps); i++ {
+		var cells, expected map[string]json.RawMessage
+		if i < len(cellMaps) {
+			cells = cellMaps[i]
+		}
+		if i < len(expectedMaps) {
+			expected = expectedMaps[i]
+		}
+		if !checkCellsAndExpected(p, cells, expected) {
+			return false
+		}
+	}
+	return true
+}
+
 func readBaseTableAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, uid, id, tableID int64) (baseReadable, error) {
 	out, err := readBaseTablePolicyWith(ctx, reader, uid, id, tableID)
 	if err != nil {
@@ -167,6 +374,7 @@ func readBaseTableAllowedWith(ctx context.Context, reader store.BaseSnapshotRead
 	if err != nil {
 		return out, err
 	}
+	recs = filterOwnRecords(recs, out.policy, uid)
 	out.records = stripBaseRecords(recs, out.allFields, out.policy)
 	return out, nil
 }
@@ -522,6 +730,26 @@ func visibleBaseViews(views []store.View, p baseReadPolicy, callerUserID int64) 
 			var id int64
 			if json.Unmarshal(raw, &id) == nil && p.hidden[id] {
 				delete(obj, "group")
+			}
+		}
+		if raw, ok := obj["permissions"]; ok {
+			var perms btquery.ViewPermissions
+			if json.Unmarshal(raw, &perms) == nil {
+				if len(perms.FieldModes) > 0 {
+					cleanModes := make(map[string]string, len(perms.FieldModes))
+					for fidStr, mode := range perms.FieldModes {
+						fid, err := strconv.ParseInt(fidStr, 10, 64)
+						if err == nil && !p.hidden[fid] {
+							cleanModes[fidStr] = mode
+						}
+					}
+					perms.FieldModes = cleanModes
+				}
+				if !perms.OnlyOwnRecords && len(perms.FieldModes) == 0 {
+					delete(obj, "permissions")
+				} else {
+					obj["permissions"], _ = json.Marshal(perms)
+				}
 			}
 		}
 		delete(obj, "hidden")

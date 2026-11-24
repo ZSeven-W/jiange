@@ -1,14 +1,14 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { BaseRecord, Field } from "@/lib/api";
 import {
   applyViewPermissions,
   countActiveViewPermissions,
   fieldPermissionOf,
-  loadViewPermissions,
-  saveViewPermissions,
+  mergeViewPermissions,
+  viewPermissionsFromConfig,
+  viewPermissionsToConfig,
   ViewPermissionsPanel,
-  viewPermissionsStorageKey,
   type ViewPermissionsConfig,
 } from "./view-permissions-panel";
 
@@ -25,27 +25,35 @@ const records: BaseRecord[] = [
 ];
 
 describe("view permissions panel & projection", () => {
-  beforeEach(() => {
-    localStorage.clear();
-  });
-
-  it("persists per (baseId, viewId) permissions in localStorage and cleans defaults", () => {
+  it("round-trips between ViewPermissionsConfig and cloud-persisted ViewConfig.permissions", () => {
     const cfg: ViewPermissionsConfig = {
       fields: { 1: "edit", 2: "readonly", 3: "hidden" },
       onlyOwnRows: true,
     };
-    saveViewPermissions(12, 34, cfg);
-    expect(localStorage.getItem(viewPermissionsStorageKey(12, 34))).toBeTruthy();
+    const serialized = viewPermissionsToConfig(cfg);
+    expect(serialized).toEqual({
+      onlyOwnRecords: true,
+      fieldModes: { "2": "readonly", "3": "hidden" },
+    });
 
-    // "edit" is default and omitted from storage; other views remain isolated.
-    expect(loadViewPermissions(12, 34)).toEqual({
+    // "edit" is default and omitted from cloud payload; round-trip restores exact non-default entries.
+    expect(viewPermissionsFromConfig(serialized)).toEqual({
       fields: { 2: "readonly", 3: "hidden" },
       onlyOwnRows: true,
     });
-    expect(loadViewPermissions(12, 99)).toEqual({ fields: {}, onlyOwnRows: false });
+    expect(viewPermissionsFromConfig(undefined)).toEqual({ fields: {}, onlyOwnRows: false });
+    expect(viewPermissionsToConfig({ fields: {}, onlyOwnRows: false })).toBeUndefined();
+  });
 
-    saveViewPermissions(12, 34, { fields: {}, onlyOwnRows: false });
-    expect(localStorage.getItem(viewPermissionsStorageKey(12, 34))).toBeNull();
+  it("merges shared view permissions strictly (hidden > readonly > edit)", () => {
+    const merged = mergeViewPermissions([
+      { fields: { 2: "readonly", 3: "readonly" }, onlyOwnRows: false },
+      { fields: { 3: "hidden" }, onlyOwnRows: true },
+    ]);
+    expect(merged).toEqual({
+      fields: { 2: "readonly", 3: "hidden" },
+      onlyOwnRows: true,
+    });
   });
 
   it("applies hidden fields, readonly fields, and own-row filtering cleanly", () => {

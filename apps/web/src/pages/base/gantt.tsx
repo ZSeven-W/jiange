@@ -11,9 +11,8 @@ import { BaseGanttGpuLayer } from "./base-gpu-layer";
 import {
   addGanttDependency,
   computeGanttArrowPath,
-  loadGanttDependencies,
   removeGanttDependency,
-  saveGanttDependencies,
+  sanitizeGanttDependencies,
   type GanttDependency,
 } from "./gantt-dependencies";
 
@@ -113,7 +112,7 @@ type PointerBarDraft = { id: number; mode: "move" | "resize-start" | "resize-end
 type Bar = { rec: BaseRecord; range: GanttRange; visibleStart: number; visibleEnd: number; label: string };
 
 /** Timeline Gantt view with real pointer drag-move, left/right edge resize, zoom, and Undo/Redo. */
-export function Gantt({ baseId, canEdit, fields, records, members, startFieldId, endFieldId, onMutate, onOpen, onRecordUndo }: {
+export function Gantt({ baseId, canEdit, fields, records, members, startFieldId, endFieldId, dependencies, onChangeDependencies, onMutate, onOpen, onRecordUndo }: {
   baseId: number;
   canEdit: boolean;
   fields: Field[];
@@ -121,6 +120,8 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
   members: User[];
   startFieldId?: number | null;
   endFieldId?: number | null;
+  dependencies?: GanttDependency[];
+  onChangeDependencies?: (next: GanttDependency[]) => void;
   onMutate: () => void;
   onOpen?: (record: BaseRecord) => void;
   onRecordUndo?: (step: UndoStep) => void;
@@ -142,7 +143,11 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
   const [busy, setBusy] = useState(false);
   const [pointerDraft, setPointerDraft] = useState<PointerBarDraft | null>(null);
   const markerUid = useId();
-  const [deps, setDeps] = useState<GanttDependency[]>(() => loadGanttDependencies(baseId));
+  const [uncontrolledDeps, setUncontrolledDeps] = useState<GanttDependency[]>([]);
+  const deps = useMemo(
+    () => sanitizeGanttDependencies(dependencies !== undefined ? dependencies : uncontrolledDeps),
+    [dependencies, uncontrolledDeps],
+  );
   const [depsOpen, setDepsOpen] = useState(false);
   const [depFromId, setDepFromId] = useState<number>(0);
   const [depToId, setDepToId] = useState<number>(0);
@@ -176,7 +181,7 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     setError(null);
     dragRef.current = null;
     setPointerDraft(null);
-    setDeps(loadGanttDependencies(baseId));
+    setUncontrolledDeps([]);
     setDepError(null);
   }, [baseId]);
   useEffect(() => {
@@ -433,6 +438,11 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
     ? t("{year} 年 {month} 月", { year: month.year, month: month.month })
     : `${monthBuckets[0].year}/${monthBuckets[0].month} – ${monthBuckets[monthBuckets.length - 1].year}/${monthBuckets[monthBuckets.length - 1].month}`;
 
+  const commitDeps = (next: GanttDependency[]) => {
+    if (onChangeDependencies) onChangeDependencies(next);
+    else if (dependencies === undefined) setUncontrolledDeps(next);
+  };
+
   const handleAddDep = () => {
     setDepError(null);
     const res = addGanttDependency(deps, depFromId, depToId);
@@ -448,14 +458,12 @@ export function Gantt({ baseId, canEdit, fields, records, members, startFieldId,
       );
       return;
     }
-    setDeps(res.edges);
-    saveGanttDependencies(baseId, res.edges);
+    commitDeps(res.edges);
   };
 
   const handleRemoveDep = (id: string) => {
     const next = removeGanttDependency(deps, id);
-    setDeps(next);
-    saveGanttDependencies(baseId, next);
+    commitDeps(next);
     setDepError(null);
   };
 

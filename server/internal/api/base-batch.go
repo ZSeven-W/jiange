@@ -52,6 +52,10 @@ func (s *Server) batchDeleteBaseRecords(w http.ResponseWriter, r *http.Request) 
 	if !httpx.Decode(w, r, &in) {
 		return
 	}
+	u, _ := UserFrom(r.Context())
+	if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, 0, in.IDs, nil, nil) {
+		return
+	}
 	deleted, affected, err := s.Store.BatchDeleteRecordsGuarded(r.Context(), guard, b.ID, in.IDs)
 	if s.writeBaseBatchErr(w, r, err) {
 		return
@@ -79,6 +83,12 @@ func (s *Server) batchRestoreBaseRecords(w http.ResponseWriter, r *http.Request)
 	}
 	if !httpx.Decode(w, r, &in) {
 		return
+	}
+	u, _ := UserFrom(r.Context())
+	for _, rec := range in.Records {
+		if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, rec.TableID, nil, []map[string]json.RawMessage{rec.Cells}, nil) {
+			return
+		}
 	}
 	restored, affected, err := s.Store.BatchRestoreRecordsGuarded(r.Context(), guard, b.ID, in.Records, func(fields []store.Field, cells map[string]json.RawMessage) error {
 		if msg := checkCells(fields, cells); msg != "" {
@@ -111,6 +121,18 @@ func (s *Server) batchUpdateBaseRecords(w http.ResponseWriter, r *http.Request) 
 		Updates []store.BatchCellUpdateInput `json:"updates"`
 	}
 	if !httpx.Decode(w, r, &in) {
+		return
+	}
+	u, _ := UserFrom(r.Context())
+	ids := make([]int64, len(in.Updates))
+	cellMaps := make([]map[string]json.RawMessage, len(in.Updates))
+	expectedMaps := make([]map[string]json.RawMessage, len(in.Updates))
+	for i, upd := range in.Updates {
+		ids[i] = upd.RecordID
+		cellMaps[i] = upd.Cells
+		expectedMaps[i] = upd.Expected
+	}
+	if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, 0, ids, cellMaps, expectedMaps) {
 		return
 	}
 	updated, affected, err := s.Store.BatchUpdateCellsGuarded(r.Context(), guard, b.ID, in.Updates, func(fields []store.Field, cells map[string]json.RawMessage) error {

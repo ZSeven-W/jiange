@@ -46,6 +46,7 @@ type Memory struct {
 	baseDashboards   []BaseDashboard
 	baseDashboardSeq int64
 	reactions        map[reactionKey]time.Time
+	docReactions     map[docReactionKey]time.Time
 	aiSettings       map[int64]AISettings
 	templates        []memTemplate
 	templateSeq      int64

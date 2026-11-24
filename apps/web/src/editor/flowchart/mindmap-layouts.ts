@@ -37,7 +37,109 @@ export interface MindLayoutStorageConfig {
   relations: MindRelation[];
 }
 
+export const MIND_LAYOUT_PROP_KEY = "fc.ml";
+export const MIND_RELATION_PROP_PREFIX = "fc.mr.";
+
 const LAYOUT_STORAGE_PREFIX = "jiange.board.mindlayout.v1:";
+const MIND_RELATION_ID_RE = /^[A-Za-z0-9_-]{1,40}$/;
+const MIND_TOPIC_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const MAX_MIND_RELATIONS = 200;
+const MAX_MIND_RELATION_LABEL = 80;
+
+export function mindRelationPropKey(id: string): string {
+  return `${MIND_RELATION_PROP_PREFIX}${id}`;
+}
+
+export function normalizeMindRelation(input: unknown, idOverride?: string): MindRelation | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  const raw = input as Record<string, unknown>;
+  const id = idOverride ?? (typeof raw.id === "string" ? raw.id : "");
+  if (!MIND_RELATION_ID_RE.test(id)) return null;
+  if (typeof raw.fromId !== "string" || !MIND_TOPIC_ID_RE.test(raw.fromId)) return null;
+  if (typeof raw.toId !== "string" || !MIND_TOPIC_ID_RE.test(raw.toId)) return null;
+  if (raw.fromId === raw.toId) return null;
+  const label =
+    typeof raw.label === "string"
+      ? raw.label.replace(/\0/g, "").trim().slice(0, MAX_MIND_RELATION_LABEL)
+      : "";
+  return {
+    id,
+    fromId: raw.fromId,
+    toId: raw.toId,
+    ...(label ? { label } : {}),
+  };
+}
+
+/** Canonical JSON encoding for a CRDT `fc.mr.<id>` cross-branch relation prop. */
+export function canonicalMindRelation(relation: MindRelation): string | null {
+  const clean = normalizeMindRelation(relation);
+  if (!clean) return null;
+  const payload: MindRelation = {
+    id: clean.id,
+    fromId: clean.fromId,
+    toId: clean.toId,
+    ...(clean.label ? { label: clean.label } : {}),
+  };
+  return JSON.stringify(payload);
+}
+
+/** Read MindMap structure layout (`fc.ml`) and cross-branch relations (`fc.mr.<id>`) from CRDT block props. */
+export function readMindLayoutFromProps(props: Record<string, string>): MindLayoutStorageConfig {
+  const rawStructure = props[MIND_LAYOUT_PROP_KEY];
+  const structure: MindLayoutKind = isMindLayoutKind(rawStructure) ? rawStructure : "logic";
+  const relations: MindRelation[] = [];
+  for (const [key, value] of Object.entries(props)) {
+    if (!key.startsWith(MIND_RELATION_PROP_PREFIX) || !value) continue;
+    const id = key.slice(MIND_RELATION_PROP_PREFIX.length);
+    if (!MIND_RELATION_ID_RE.test(id)) continue;
+    try {
+      const parsed = JSON.parse(value);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+      if ("id" in parsed && (parsed as Record<string, unknown>).id !== id) continue;
+      const clean = normalizeMindRelation(parsed, id);
+      if (clean) relations.push(clean);
+    } catch {
+      /* skip corrupt CRDT relation entry */
+    }
+  }
+  return {
+    structure,
+    relations: relations.sort((a, b) => a.id.localeCompare(b.id)).slice(0, MAX_MIND_RELATIONS),
+  };
+}
+
+/** Compute minimal CRDT prop writes (`fc.ml` and `fc.mr.<id>` JSON or `""` tombstones) from `before` to `after`. */
+export function mindLayoutPropWrites(
+  before: { structure: MindLayoutKind; relations: readonly MindRelation[] },
+  after: { structure: MindLayoutKind; relations: readonly MindRelation[] },
+): Record<string, string> {
+  const writes: Record<string, string> = {};
+  const beforeStructure =
+    isMindLayoutKind(before.structure) && before.structure !== "logic" ? before.structure : "";
+  const afterStructure =
+    isMindLayoutKind(after.structure) && after.structure !== "logic" ? after.structure : "";
+  if (beforeStructure !== afterStructure) {
+    writes[MIND_LAYOUT_PROP_KEY] = afterStructure;
+  }
+
+  const beforeMap = new Map<string, string>();
+  for (const rel of before.relations) {
+    const encoded = canonicalMindRelation(rel);
+    if (encoded) beforeMap.set(rel.id, encoded);
+  }
+  const afterMap = new Map<string, string>();
+  for (const rel of after.relations.slice(0, MAX_MIND_RELATIONS)) {
+    const encoded = canonicalMindRelation(rel);
+    if (encoded) afterMap.set(rel.id, encoded);
+  }
+  for (const [id, encoded] of afterMap) {
+    if (beforeMap.get(id) !== encoded) writes[mindRelationPropKey(id)] = encoded;
+  }
+  for (const id of beforeMap.keys()) {
+    if (!afterMap.has(id)) writes[mindRelationPropKey(id)] = "";
+  }
+  return writes;
+}
 
 export function mindLayoutStorageKey(boardKey: string): string {
   return `${LAYOUT_STORAGE_PREFIX}${boardKey || "default"}`;

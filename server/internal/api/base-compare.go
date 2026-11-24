@@ -31,7 +31,11 @@ func (s *Server) compareDateCells(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	guard := store.BaseWriteGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
-	record, changed, err := s.Store.CompareDateCells(r.Context(), guard, b.ID, pathID(r, "rid"), in.Expected, in.Cells)
+	rid := pathID(r, "rid")
+	if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, 0, []int64{rid}, []map[string]json.RawMessage{in.Cells}, []map[string]json.RawMessage{in.Expected}) {
+		return
+	}
+	record, changed, err := s.Store.CompareDateCells(r.Context(), guard, b.ID, rid, in.Expected, in.Cells)
 	switch {
 	case errors.Is(err, store.ErrUnauthenticated):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，未修改记录")

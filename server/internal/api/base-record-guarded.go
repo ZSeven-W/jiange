@@ -60,6 +60,16 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		httpx.Error(w, http.StatusBadRequest, "invalid_cell", "仅修改或删除记录时可指定预期值")
 		return
 	}
+	if operation == "add" {
+		if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, in.TableID, nil, []map[string]json.RawMessage{in.Cells}, nil) {
+			return
+		}
+	} else {
+		rid := pathID(r, "rid")
+		if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, in.TableID, []int64{rid}, []map[string]json.RawMessage{in.Cells}, []map[string]json.RawMessage{in.Expected}) {
+			return
+		}
+	}
 	mutation := store.BaseRecordMutation{Operation: operation, TableID: in.TableID, RecordID: pathID(r, "rid"), Cells: in.Cells, Position: in.Position, Expected: in.Expected, ExpectExact: in.Exact}
 	record, affected, err := s.Store.MutateRecordGuarded(r.Context(), guard, b.ID, mutation, func(fields []store.Field) error {
 		if msg := checkCells(fields, in.Cells); msg != "" {
@@ -141,6 +151,10 @@ func (s *Server) writeProjectedRecord(w http.ResponseWriter, r *http.Request, us
 	}
 	if err != nil {
 		s.fail(w, r, err)
+		return
+	}
+	if read.policy.onlyOwnRecords && (row.CreatorID == nil || *row.CreatorID != userID) {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "记录已修改，但当前无法查看；请刷新后核对")
 		return
 	}
 	read.records = stripBaseRecords([]store.Record{row}, read.allFields, read.policy)

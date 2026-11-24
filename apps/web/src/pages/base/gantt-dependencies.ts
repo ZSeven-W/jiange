@@ -4,56 +4,31 @@ export interface GanttDependency {
   toId: number;
 }
 
-export function ganttDepsStorageKey(baseId: number): string {
-  return `jiange:base:gantt-deps:${baseId}`;
-}
-
 function validId(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
-/** Load persisted Gantt dependency edges for a base, filtering corrupt/duplicate entries. */
-export function loadGanttDependencies(baseId: number): GanttDependency[] {
-  if (!validId(baseId) || typeof localStorage === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(ganttDepsStorageKey(baseId));
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: GanttDependency[] = [];
-    const seen = new Set<string>();
-    for (const item of parsed) {
-      if (!item || typeof item !== "object") continue;
-      const rec = item as Record<string, unknown>;
-      if (!validId(rec.fromId) || !validId(rec.toId) || rec.fromId === rec.toId) continue;
-      const pairKey = `${rec.fromId}->${rec.toId}`;
-      if (seen.has(pairKey)) continue;
-      if (wouldCreateGanttCycle(out, rec.fromId, rec.toId)) continue;
-      seen.add(pairKey);
-      out.push({
-        id: typeof rec.id === "string" && rec.id.trim() ? rec.id : `dep-${rec.fromId}-${rec.toId}`,
-        fromId: rec.fromId,
-        toId: rec.toId,
-      });
-    }
-    return out;
-  } catch {
-    return [];
+/** Sanitize cloud-persisted Gantt dependency edges, dropping corrupt, duplicate, or cyclic entries. */
+export function sanitizeGanttDependencies(raw: unknown): GanttDependency[] {
+  if (!Array.isArray(raw)) return [];
+  const out: GanttDependency[] = [];
+  const seen = new Set<string>();
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    if (!validId(rec.fromId) || !validId(rec.toId) || rec.fromId === rec.toId) continue;
+    const pairKey = `${rec.fromId}->${rec.toId}`;
+    if (seen.has(pairKey)) continue;
+    if (wouldCreateGanttCycle(out, rec.fromId, rec.toId)) continue;
+    seen.add(pairKey);
+    out.push({
+      id: typeof rec.id === "string" && rec.id.trim() ? rec.id : `dep-${rec.fromId}-${rec.toId}`,
+      fromId: rec.fromId,
+      toId: rec.toId,
+    });
+    if (out.length >= 500) break;
   }
-}
-
-/** Persist Gantt dependency edges for a base into localStorage. */
-export function saveGanttDependencies(baseId: number, edges: readonly GanttDependency[]): void {
-  if (!validId(baseId) || typeof localStorage === "undefined") return;
-  try {
-    if (edges.length === 0) {
-      localStorage.removeItem(ganttDepsStorageKey(baseId));
-    } else {
-      localStorage.setItem(ganttDepsStorageKey(baseId), JSON.stringify(edges));
-    }
-  } catch {
-    // Ignore storage quota / privacy mode failures.
-  }
+  return out;
 }
 
 /**

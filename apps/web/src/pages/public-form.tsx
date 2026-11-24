@@ -5,7 +5,6 @@ import { Logo } from "@/components/brand";
 import { clearPublicFormDraft, readPublicFormDraft, writePublicFormDraft, type FormDraftEntry } from "./public-form-draft";
 import {
   isValidFormBranchRule,
-  loadBranchRulesForFields,
   visibleFormFields,
   type FormBranchRule,
 } from "./base/form-branching";
@@ -181,7 +180,7 @@ export function PublicForm({ token, branchRules: explicitBranchRules }: { token:
   const activeBranchRules = useMemo(() => {
     if (explicitBranchRules && explicitBranchRules.length > 0) return explicitBranchRules;
     if (def?.branchRules && def.branchRules.length > 0) return def.branchRules;
-    return def ? loadBranchRulesForFields(def.fields.map((f) => f.id)) : [];
+    return [];
   }, [explicitBranchRules, def]);
 
   const displayedFields = useMemo(

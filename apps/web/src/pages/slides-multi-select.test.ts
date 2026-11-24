@@ -9,11 +9,14 @@ import {
   expandSelectionWithGroups,
   findShapeGroup,
   groupShapes,
+  hydrateSlideShapeGroups,
   isSelectionSingleGroup,
   loadSlideShapeGroups,
   moveMultipleShapes,
   multiSelectionBounds,
+  normalizeSlideShapeGroups,
   pruneShapeGroups,
+  sameSlideShapeGroups,
   saveSlideShapeGroups,
   shapesInMarquee,
   slideShapeGroupsStorageKey,
@@ -202,6 +205,19 @@ describe("slides multi-select geometry, distribution, alignment, and grouping", 
 
     // Ungroup splits them cleanly
     expect(ungroupShapes(g1, ["a", "b"])).toEqual({});
+
+    // Hydrate shape groups directly from cloud page.meta
+    expect(hydrateSlideShapeGroups(undefined)).toEqual({});
+    expect(
+      hydrateSlideShapeGroups([
+        { id: 101, meta: { shapeGroups: { "grp-1": ["a", "b", "a"], ignored: ["only-one"] } } },
+        { id: 102, meta: {} },
+      ]),
+    ).toEqual({ 101: { "grp-1": ["a", "b"] } });
+    expect(normalizeSlideShapeGroups({ empty: [] })).toBeUndefined();
+    expect(sameSlideShapeGroups({ g: ["a", "b"] }, { g: ["a", "b"] })).toBe(true);
+    expect(sameSlideShapeGroups({ g: ["a", "b"] }, { g: ["a", "c"] })).toBe(false);
+    expect(sameSlideShapeGroups(undefined, undefined)).toBe(true);
   });
 
   it("renders floating Feishu multi-select pill with group/ungroup, align, distribute, and bulk delete", () => {
