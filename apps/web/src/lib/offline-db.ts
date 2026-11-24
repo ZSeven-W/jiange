@@ -484,6 +484,7 @@ function createIndexedDbBackend(db: IDBDatabase): OfflineDbBackend {
       await idbTransactionComplete(tx);
     },
     async getCollabRecord(key) {
+      if (!db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)) return null;
       const tx = db.transaction(OFFLINE_COLLAB_STORE, "readonly");
       const result = await idbRequestToPromise(
         tx.objectStore(OFFLINE_COLLAB_STORE).get(key) as IDBRequest<OfflineCollabRecord | undefined>,
@@ -491,6 +492,7 @@ function createIndexedDbBackend(db: IDBDatabase): OfflineDbBackend {
       return result ?? null;
     },
     async getAllCollabRecords() {
+      if (!db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)) return [];
       const tx = db.transaction(OFFLINE_COLLAB_STORE, "readonly");
       const result = await idbRequestToPromise(
         tx.objectStore(OFFLINE_COLLAB_STORE).getAll() as IDBRequest<OfflineCollabRecord[]>,
@@ -498,16 +500,19 @@ function createIndexedDbBackend(db: IDBDatabase): OfflineDbBackend {
       return Array.isArray(result) ? result : [];
     },
     async putCollabRecord(record) {
+      if (!db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)) return;
       const tx = db.transaction(OFFLINE_COLLAB_STORE, "readwrite");
       tx.objectStore(OFFLINE_COLLAB_STORE).put(record);
       await idbTransactionComplete(tx);
     },
     async deleteCollabRecord(key) {
+      if (!db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)) return;
       const tx = db.transaction(OFFLINE_COLLAB_STORE, "readwrite");
       tx.objectStore(OFFLINE_COLLAB_STORE).delete(key);
       await idbTransactionComplete(tx);
     },
     async clearCollabRecords() {
+      if (!db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)) return;
       const tx = db.transaction(OFFLINE_COLLAB_STORE, "readwrite");
       tx.objectStore(OFFLINE_COLLAB_STORE).clear();
       await idbTransactionComplete(tx);
@@ -613,7 +618,35 @@ function getBackend(): Promise<OfflineDbBackend> {
         return createMemoryBackend();
       }
       try {
-        const db = await openIndexedDb(factory);
+        let db = await openIndexedDb(factory);
+        const hasAllStores =
+          db.objectStoreNames.contains(OFFLINE_SNAPSHOTS_STORE) &&
+          db.objectStoreNames.contains(OFFLINE_QUEUE_STORE) &&
+          db.objectStoreNames.contains(OFFLINE_COLLAB_STORE);
+        if (!hasAllStores) {
+          db.close();
+          if (typeof factory.deleteDatabase === "function") {
+            await new Promise<void>((resolve) => {
+              try {
+                const del = factory.deleteDatabase(OFFLINE_DB_NAME);
+                del.onsuccess = () => resolve();
+                del.onerror = () => resolve();
+                del.onblocked = () => resolve();
+              } catch {
+                resolve();
+              }
+            });
+            db = await openIndexedDb(factory);
+          }
+          if (
+            !db.objectStoreNames.contains(OFFLINE_SNAPSHOTS_STORE) ||
+            !db.objectStoreNames.contains(OFFLINE_QUEUE_STORE) ||
+            !db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)
+          ) {
+            db.close();
+            return createMemoryBackend();
+          }
+        }
         db.onversionchange = () => {
           db.close();
           backendPromise = null;

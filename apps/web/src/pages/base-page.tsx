@@ -677,7 +677,7 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
         {canEdit && current && current.type !== "form" && <ViewConfigActions locked={!!cfg.locked} configLocked={!!cfg.configLocked} isPersonal={current.ownerId != null} canManage={base.role === "manage"} dirty={dirty} saving={savingView} onLockedChange={(locked) => setCfg({ ...cfg, locked: locked || undefined })} onConfigLockedChange={(configLocked) => setCfg({ ...cfg, configLocked: configLocked || undefined })} onClear={() => setCfg(current.config ?? EMPTY_CONFIG)} onSave={() => void save()} />}
       </div>
       {/* 第二行：工具栏 */}
-      <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
+      <div className={cn("flex min-h-10 shrink-0 flex-wrap items-center gap-x-0.5 gap-y-1 px-3 py-1 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
         {canAddRecord && current?.type !== "form" && <AddRecordMenu disabled={ledger.blocked("record:create") || ledger.blocked("batch")} aiAllowed={!preventCopy && !q.isFetching} onAdd={() => void addRecord()} onAi={() => setAiPasteOpen(true)} />}
         {undoNotice && <span role="status" className="mx-1 max-w-72 truncate text-xs text-subtle" title={undoNotice}>{undoNotice}</span>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}

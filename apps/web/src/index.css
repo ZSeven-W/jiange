@@ -310,6 +310,15 @@
   background: rgba(76, 136, 255, 0.36);
 }
 
+/* 暗黑模式高亮块配色：深色低饱和底色 + 高对比正文，避免浅底白字 */
+.dark [data-callout-color="0"] { background: rgba(245, 158, 11, 0.14) !important; border-color: rgba(245, 158, 11, 0.36) !important; color: var(--foreground); }
+.dark [data-callout-color="1"] { background: rgba(59, 130, 246, 0.14) !important; border-color: rgba(59, 130, 246, 0.36) !important; color: var(--foreground); }
+.dark [data-callout-color="2"] { background: rgba(34, 197, 94, 0.14) !important; border-color: rgba(34, 197, 94, 0.36) !important; color: var(--foreground); }
+.dark [data-callout-color="3"] { background: rgba(148, 163, 184, 0.14) !important; border-color: rgba(148, 163, 184, 0.32) !important; color: var(--foreground); }
+.dark [data-callout-color="4"] { background: rgba(234, 179, 8, 0.14) !important; border-color: rgba(234, 179, 8, 0.36) !important; color: var(--foreground); }
+.dark [data-callout-color="5"] { background: rgba(168, 85, 247, 0.14) !important; border-color: rgba(168, 85, 247, 0.36) !important; color: var(--foreground); }
+.dark [data-callout-color="6"] { background: rgba(239, 68, 68, 0.14) !important; border-color: rgba(239, 68, 68, 0.36) !important; color: var(--foreground); }
+
 /* 移动端响应式基础：平滑横向滚动、安全视口与弹窗防溢出 */
 .mobile-scroll-x {
   overflow-x: auto;

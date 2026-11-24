@@ -108,7 +108,7 @@ import { AtSign, Check, ChevronRight, Copy, Download, Eye, FileDiff, FileDown, F
 const TITLE: OpId = { client: 0, clock: 1 };
 
 export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobalSearch, onSearchGuardRegistrar }: { id: number; linkedVersion?: string | null; me: Me; sidebarDocked?: boolean; onGlobalSearch?: () => void; onSearchGuardRegistrar?: (capture: SearchGuardCapture | null) => void }) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const qc = useQueryClient();
   const meta = useQuery({
     queryKey: docMetaKey(id, me.user.id),
@@ -196,7 +196,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   useEffect(() => {
     let active = true;
     setPendingWordState(null); setPendingWordLoading(true); setPendingWordError(""); setPendingWordSubmitted(false);
-    void loadPendingWord(me.user.id, id).then((value) => { if (active && value) setPendingWordState({ user: me.user.id, doc: id, value }); }).catch(() => { if (active) setPendingWordError("无法读取本地 Word 暂存，请检查浏览器存储后重新打开文档。"); }).finally(() => { if (active) setPendingWordLoading(false); });
+    void loadPendingWord(me.user.id, id).then((value) => { if (active && value) setPendingWordState({ user: me.user.id, doc: id, value }); }).catch(() => { if (active) setPendingWordError(t("无法读取本地 Word 暂存，请检查浏览器存储后重新打开文档。")); }).finally(() => { if (active) setPendingWordLoading(false); });
     return () => { active = false; };
   }, [id, me.user.id]);
   const [exportNotice, setExportNotice] = useState<{ id: number; user: number; text: string } | null>(null);
@@ -347,19 +347,30 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     if (status === "undone" || status === "redone" || status === "undo_failed" || status === "redo_failed" || status === "step_cancelled" || status === "history_lost" && !atomicFindMessage.current) {
       if (!findAtomicHistoryRef.current) return false;
       setAtomicFindBusy(false);
-      if (status === "undone" || status === "redone") { const next = status === "undone" ? "redo" : "undo"; findAtomicHistoryRef.current = next; setFindAtomicHistory(next); setFindMessage(status === "undone" ? "已撤销本次替换。" : "已重做本次替换。"); }
-      else if (status === "history_lost") { findAtomicHistoryRef.current = null; setFindAtomicHistory(null); setFindMessage("操作已保存，但本次撤销记录不可用。"); }
-      else setFindMessage(status === "step_cancelled" ? "已停止未提交的撤销或重做。" : "文档或历史已变化，未执行该操作。");
+      if (status === "undone" || status === "redone") { const next = status === "undone" ? "redo" : "undo"; findAtomicHistoryRef.current = next; setFindAtomicHistory(next); setFindMessage(status === "undone" ? t("已撤销本次替换。") : t("已重做本次替换。")); }
+      else if (status === "history_lost") { findAtomicHistoryRef.current = null; setFindAtomicHistory(null); setFindMessage(t("操作已保存，但本次撤销记录不可用。")); }
+      else setFindMessage(status === "step_cancelled" ? t("已停止未提交的撤销或重做。") : t("文档或历史已变化，未执行该操作。"));
       return true;
     }
     const pending = atomicFindMessage.current;
     if (!pending || pending.query !== findInputs.current.query || pending.replacement !== findInputs.current.replacement) return false;
     atomicFindMessage.current = null;
-    const skipped = pending.skipped ? `，跳过 ${pending.skipped} 处提及内容` : "";
-    setFindMessage(status === "cancelled" ? "已停止未提交的替换。" : status === "not_committed" ? "文档已变化，本次替换未执行，请重新查找。" : status === "history_lost" ? `替换已保存${skipped}，但本次撤销记录不可用。` : `替换已保存${skipped}。`);
+    setFindMessage(
+      status === "cancelled"
+        ? t("已停止未提交的替换。")
+        : status === "not_committed"
+          ? t("文档已变化，本次替换未执行，请重新查找。")
+          : status === "history_lost"
+            ? (pending.skipped
+              ? t("替换已保存，跳过 {n} 处提及内容，但本次撤销记录不可用。", { n: pending.skipped })
+              : t("替换已保存，但本次撤销记录不可用。"))
+            : (pending.skipped
+              ? t("替换已保存，跳过 {n} 处提及内容。", { n: pending.skipped })
+              : t("替换已保存。")),
+    );
     findAtomicHistoryRef.current = status === "saved" ? "undo" : null; setFindAtomicHistory(findAtomicHistoryRef.current);
     return true;
-  }, []);
+  }, [t]);
   const [findPending, setFindPending] = useState<ReplacementNotice | null>(null);
   const [findNavigation, setFindNavigation] = useState(0);
   const [findResult, setFindResult] = useState<FindSnapshot | null>(null);
@@ -378,7 +389,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const commentStorage = useRef<{ doc: number; user: number; value: CommentDraftStorage } | null>(null);
   const commentStorageGeneration = useRef(0);
   const [commentStoragePrepared, setCommentStoragePrepared] = useState<(CommentTarget & { generation: number }) | null>(null);
-  const [commentStorageNotice, setCommentStorageNotice] = useState<{ doc: number; user: number; text: string } | null>(null);
+  const [commentStorageNotice, setCommentStorageNotice] = useState<{ doc: number; user: number; text: string; code?: "redact" | "save" } | null>(null);
   const [commentStorageDamaged, setCommentStorageDamaged] = useState<{ doc: number; user: number; count: number } | null>(null);
   const [commentRecovery, setCommentRecovery] = useState<{ doc: number; user: number; values: CommentRecovery[] } | null>(null);
   useEffect(() => { setCommentRecovery(null); setCommentStorageNotice(null); setCommentStorageDamaged(null); }, [id, me.user.id]);
@@ -429,25 +440,25 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       void commentAttempts.redactQuotes().then((complete) => {
       if (!active) return;
       if (!complete) {
-        setCommentStorageNotice({ doc: id, user: me.user.id, text: "部分受保护的引用记录属于其他标签或无法安全更新，原记录已保留。" });
+        setCommentStorageNotice({ doc: id, user: me.user.id, code: "redact", text: t("部分受保护的引用记录属于其他标签或无法安全更新，原记录已保留。") });
         timer = setTimeout(redact, 2000);
-      } else setCommentStorageNotice((previous) => previous?.doc === id && previous.user === me.user.id && previous.text === "部分受保护的引用记录属于其他标签或无法安全更新，原记录已保留。" ? null : previous);
+      } else setCommentStorageNotice((previous) => previous?.doc === id && previous.user === me.user.id && previous.code === "redact" ? null : previous);
       }).catch(() => { if (active) timer = setTimeout(redact, 2000); });
     };
     void redact();
     return () => { active = false; if (timer) clearTimeout(timer); };
-  }, [commentAttempts, redactAttemptQuotes, id, me.user.id]);
+  }, [commentAttempts, redactAttemptQuotes, id, me.user.id, t]);
   const commentStorageReady = commentDraftStorageReady(commentStoragePrepared, { doc: id, user: me.user.id, session: commentSession }, commentStorageGeneration.current, commentsAvailable);
   const persistCommentDrafts = useCallback(() => {
     const active = commentStorage.current;
     if (!active || active.doc !== id || active.user !== me.user.id) return;
     try {
       active.value.write(commentDraftJournal.current.list(id, me.user.id), commentDraftJournal.current.recovered(id, me.user.id));
-      setCommentStorageNotice((previous) => previous?.doc === id && previous.user === me.user.id && previous.text === "评论草稿无法保存到本机，关闭页面前请复制草稿。" ? null : previous);
+      setCommentStorageNotice((previous) => previous?.doc === id && previous.user === me.user.id && previous.code === "save" ? null : previous);
     } catch {
-      setCommentStorageNotice({ doc: id, user: me.user.id, text: "评论草稿无法保存到本机，关闭页面前请复制草稿。" });
+      setCommentStorageNotice({ doc: id, user: me.user.id, code: "save", text: t("评论草稿无法保存到本机，关闭页面前请复制草稿。") });
     }
-  }, [id, me.user.id]);
+  }, [id, me.user.id, t]);
   const freezeCommentDrafts = useCallback(() => {
     const own = commentDraftJournal.current.freeze(id, me.user.id);
     const active = commentStorage.current;
@@ -501,7 +512,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     let opened: CommentDraftStorage | null = null;
     const generation = ++commentStorageGeneration.current;
     const doc = id, user = me.user.id, session = commentSession;
-    setCommentStorageNotice({ doc, user, text: "正在准备评论草稿的本机保存。" });
+    setCommentStorageNotice({ doc, user, text: t("正在准备评论草稿的本机保存。") });
     void CommentDraftStorage.open(browserCommentDraftEnvironment, doc, user).then((value) => {
       if (cancelled || !matchesCommentTarget(commentIdentity.current, doc, user, session)) { value.close(); return; }
       opened = value;
@@ -511,15 +522,15 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         const values = mergeRecoveredCommentDrafts(commentDraftJournal.current.recovered(doc, user), value.read());
         setCommentRecovery(values.length ? { doc, user, values } : null);
         setCommentStorageDamaged(value.damaged().length ? { doc, user, count: value.damaged().length } : null);
-        setCommentStorageNotice(value.canClearOtherTabs() ? null : { doc, user, text: "此浏览器无法安全清除其他标签页的草稿，已保留这些记录。" });
+        setCommentStorageNotice(value.canClearOtherTabs() ? null : { doc, user, text: t("此浏览器无法安全清除其他标签页的草稿，已保留这些记录。") });
         setCommentStoragePrepared({ doc, user, session, generation });
       } catch {
-        setCommentStorageNotice({ doc, user, text: "评论草稿无法保存到本机，关闭页面前请复制草稿。" });
+        setCommentStorageNotice({ doc, user, code: "save", text: t("评论草稿无法保存到本机，关闭页面前请复制草稿。") });
         setCommentStoragePrepared({ doc, user, session, generation });
       }
     }).catch(() => {
       if (!cancelled && matchesCommentTarget(commentIdentity.current, doc, user, session)) {
-        setCommentStorageNotice({ doc, user, text: "评论草稿无法保存到本机，关闭页面前请复制草稿。" });
+        setCommentStorageNotice({ doc, user, code: "save", text: t("评论草稿无法保存到本机，关闭页面前请复制草稿。") });
         setCommentStoragePrepared({ doc, user, session, generation });
       }
     });
@@ -701,18 +712,18 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const docMarkdown = () => { const d = sync.client.doc; return d ? viewToMarkdown(d.view()) : ""; };
   const appendMarkdown = (md: string) => {
     const d = sync.client.doc;
-    if (!d || !canEditRef.current || !sync.client.caughtUp || !recordExternalUndo.current || !parseMarkdown(md).length) { setPageNotice({ ok: false, text: "当前无法写入文档，请确认编辑权限和同步状态。" }); return; }
+    if (!d || !canEditRef.current || !sync.client.caughtUp || !recordExternalUndo.current || !parseMarkdown(md).length) { setPageNotice({ ok: false, text: t("当前无法写入文档，请确认编辑权限和同步状态。") }); return; }
     const tx = appendMarkdownOps(d, md);
-    if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); setPageNotice({ ok: true, text: "已插入到文末。" }); }
+    if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); setPageNotice({ ok: true, text: t("已插入到文末。") }); }
   };
   const saveTemplate = async (md: string) => {
-    if (!md.trim()) { setPageNotice({ ok: false, text: "没有可保存的内容。" }); return; }
-    const name = await askText("保存为模板", "模板名称", (title || "未命名模板").slice(0, 100));
+    if (!md.trim()) { setPageNotice({ ok: false, text: t("没有可保存的内容。") }); return; }
+    const name = await askText(t("保存为模板"), t("模板名称"), (title || t("未命名模板")).slice(0, 100));
     if (!name?.trim()) return;
     const current = exportContext.current;
     if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client || !current.verified || !canCopyContent(current.meta) || current.client.blocked || !current.client.caughtUp) return;
-    try { await templatesApi.add(name.trim(), md); void qc.invalidateQueries({ queryKey: ["my-templates"] }); setPageNotice({ ok: true, text: `已保存为模板「${name.trim()}」，新建文档时可在模板中选择。` }); }
-    catch (err) { setPageNotice({ ok: false, text: err instanceof ApiError ? err.message : "保存模板失败，请重试。" }); }
+    try { await templatesApi.add(name.trim(), md); void qc.invalidateQueries({ queryKey: ["my-templates"] }); setPageNotice({ ok: true, text: t("已保存为模板「{name}」，新建文档时可在模板中选择。", { name: name.trim() }) }); }
+    catch (err) { setPageNotice({ ok: false, text: err instanceof ApiError ? err.message : t("保存模板失败，请重试。") }); }
   };
   const [printOpen, setPrintOpen] = useState(false);
   const [printSettings, setPrintSettings] = useState<DocPrintSettings>(DEFAULT_PRINT_SETTINGS);
@@ -741,7 +752,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       if (block.type === "title") continue;
       const text = block.spans.map((sp) => sp.text).join("").trim();
       if (block.type === "table") {
-        lines.push({ kind: "table", text: "表格内容（跨页自动重复表头）" });
+        lines.push({ kind: "table", text: t("表格内容（跨页自动重复表头）") });
       } else if (block.type === "callout") {
         if (text) lines.push({ kind: "callout", text });
       } else if (/^h[1-9]$/.test(block.type)) {
@@ -761,7 +772,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     if (!imported?.length || !allowed) return 0;
     let added = 0;
     for (const item of imported.slice(0, 50)) {
-      const authorTag = item.author ? `Word 批注 · ${item.author}` : "Word 批注";
+      const authorTag = item.author ? t("Word 批注 · {author}", { author: item.author }) : t("Word 批注");
       const dateTag = item.date ? ` (${item.date.slice(0, 10)})` : "";
       const rawBody = `[${authorTag}${dateTag}] ${item.text}`.trim();
       const body = [...rawBody].slice(0, 2000).join("");
@@ -800,16 +811,16 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       }));
     }
     const extras: string[] = [];
-    if (addedComments > 0) extras.push(`${addedComments} 条批注`);
-    if (result.footnotes?.length) extras.push(`${result.footnotes.length} 条脚注/尾注`);
-    if (headerText || footerText) extras.push("页眉/页脚（已同步至打印设置）");
+    if (addedComments > 0) extras.push(t("{n} 条批注", { n: addedComments }));
+    if (result.footnotes?.length) extras.push(t("{n} 条脚注/尾注", { n: result.footnotes.length }));
+    if (headerText || footerText) extras.push(t("页眉/页脚（已同步至打印设置）"));
     if (extras.length) {
-      setPageNotice({ ok: true, text: `已导入 Word 内容，包含 ${extras.join("、")}。` });
+      setPageNotice({ ok: true, text: t("已导入 Word 内容，包含 {items}。", { items: extras.join(t("、")) }) });
     }
   };
   const openPrintDialog = () => {
     if (!downloadAllowed) {
-      setExportNotice({ id, user: me.user.id, text: "当前文档已禁止下载与打印。" });
+      setExportNotice({ id, user: me.user.id, text: t("当前文档已禁止下载与打印。") });
       return;
     }
     const fallbackHeader = docxHeaderFooter.headerText || docTitle({ title, docType: meta.data?.docType });
@@ -825,7 +836,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   const confirmPrint = () => {
     if (!downloadAllowed) {
       setPrintOpen(false);
-      setExportNotice({ id, user: me.user.id, text: "当前文档已禁止下载与打印。" });
+      setExportNotice({ id, user: me.user.id, text: t("当前文档已禁止下载与打印。") });
       return;
     }
     printStyleCleanup.current?.();
@@ -848,7 +859,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     const d = sync.client.doc;
     if (!d) return;
     if (!sync.client.caughtUp || sync.client.blocked) {
-      setExportNotice({ id, user: me.user.id, text: "文档尚未完成同步，请同步完成后再导出。" });
+      setExportNotice({ id, user: me.user.id, text: t("文档尚未完成同步，请同步完成后再导出。") });
       return;
     }
     const view = d.view();
@@ -860,7 +871,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       const images = format === "docx" ? await fetchDocxImages(view.blocks) : undefined;
       const losses = format === "docx" ? docxExportLosses(view, { images, origin: location.origin }) : markdownExportLosses(view);
       const label = format === "docx" ? "Word" : "Markdown";
-      if (losses.length && !await ask(`${label} 导出可能丢失内容`, `${losses.join("；")}。仍要下载吗？`, false)) return;
+      if (losses.length && !await ask(t("{format} 导出可能丢失内容", { format: label }), t("{losses}。仍要下载吗？", { losses: losses.join(t("；")) }), false)) return;
       const before = exportContext.current;
       if (!before.mounted || before.id !== id || before.user !== me.user.id || before.client !== sync.client || before.client.doc !== d || !before.verified || !canCopyDocument(before.meta)) return;
       // Confirm access with the server after the dialog. The cached policy may
@@ -872,31 +883,31 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       if (!mayUseDownloadRecheck(id, before.meta, current.meta, latest)) {
         if (current.meta === before.meta && latest.id === id) {
           qc.setQueryData(docMetaKey(id, me.user.id), latest);
-          setExportNotice({ id, user: me.user.id, text: "下载权限已变化，无法导出。" });
+          setExportNotice({ id, user: me.user.id, text: t("下载权限已变化，无法导出。") });
         }
         return;
       }
       qc.setQueryData(docMetaKey(id, me.user.id), latest);
       if (!current.client.caughtUp || current.client.blocked) {
-        setExportNotice({ id, user: me.user.id, text: "文档同步状态已变化，请同步完成后重新导出。" });
+        setExportNotice({ id, user: me.user.id, text: t("文档同步状态已变化，请同步完成后重新导出。") });
         return;
       }
       if (JSON.stringify(d.view()) !== snapshot) {
-        setExportNotice({ id, user: me.user.id, text: "文档内容已变化，请重新导出并确认。" });
+        setExportNotice({ id, user: me.user.id, text: t("文档内容已变化，请重新导出并确认。") });
         return;
       }
-      const name = (title || current.meta?.title || "未命名").trim() || "未命名";
+      const name = (title || current.meta?.title || t("未命名")).trim() || t("未命名");
       const exportComments: DocxExportComment[] =
         format === "docx"
           ? printableCommentThreads.map(({ root, replies }) => ({
               id: root.id,
-              author: root.userName || "协作者",
+              author: root.userName || t("协作者"),
               date: root.createdAt,
               blockId: root.block || undefined,
               body: root.body,
               resolved: root.resolved,
               replies: replies.map((reply) => ({
-                author: reply.userName || "协作者",
+                author: reply.userName || t("协作者"),
                 date: reply.createdAt,
                 body: reply.body,
               })),
@@ -930,7 +941,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
         setTimeout(() => URL.revokeObjectURL(url), 0);
       }
     } catch {
-      if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setExportNotice({ id, user: me.user.id, text: "导出失败，请重试。" });
+      if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setExportNotice({ id, user: me.user.id, text: t("导出失败，请重试。") });
     } finally {
       exportingMarkdown.current = false;
     }
@@ -939,9 +950,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     const d = sync.client.doc;
     if (!d) return;
     let md: string;
-    try { md = await file.text(); } catch { setTemplateError("读取文件失败，请重试。"); return; }
-    if (!canEditRef.current) { setTemplateError("当前为只读状态，无法导入。"); return; }
-    if (!sync.client.caughtUp || sync.client.status !== "synced") { setTemplateError("请等待文档同步完成后再导入。"); return; }
+    try { md = await file.text(); } catch { setTemplateError(t("读取文件失败，请重试。")); return; }
+    if (!canEditRef.current) { setTemplateError(t("当前为只读状态，无法导入。")); return; }
+    if (!sync.client.caughtUp || sync.client.status !== "synced") { setTemplateError(t("请等待文档同步完成后再导入。")); return; }
     const ready = () => {
       const context = exportContext.current;
       return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && d === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && !!recordExternalUndo.current;
@@ -954,37 +965,37 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       });
     } catch {
       if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) {
-        setTemplateError("文档同步状态已改变，请重新导入。");
+        setTemplateError(t("文档同步状态已改变，请重新导入。"));
       }
       return;
     }
-    if (!imported.blocks.length) { setTemplateError("文件没有可导入的内容。"); return; }
-    if (!ready() || !recordExternalUndo.current) { setTemplateError("文档同步状态已改变，请重新导入。"); return; }
+    if (!imported.blocks.length) { setTemplateError(t("文件没有可导入的内容。")); return; }
+    if (!ready() || !recordExternalUndo.current) { setTemplateError(t("文档同步状态已改变，请重新导入。")); return; }
     const tx = appendBlocksOps(d, imported.blocks);
     if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
-    setTemplateError(imported.warnings.length ? imported.warnings.join("；") : "");
+    setTemplateError(imported.warnings.length ? imported.warnings.join(t("；")) : "");
   };
   const importWord = async (file: File) => {
     const d = sync.client.doc;
     if (!d || importingWord.current) return;
-    if (!canEditRef.current) { setTemplateError("当前为只读状态，无法导入。"); return; }
+    if (!canEditRef.current) { setTemplateError(t("当前为只读状态，无法导入。")); return; }
     importingWord.current = true;
     try {
       let result: DocxImportResult;
       try { result = await readDocxFile(file, { images: true }); } catch (error) { setTemplateError(docxImportErrorMessage(error)); return; }
-      if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
+      if (result.warnings.length && !await ask(t("Word 导入可能丢失内容"), t("{warnings}。仍要导入其余内容吗？", { warnings: result.warnings.join(t("；")) }), false)) return;
       const ready = () => {
         const context = exportContext.current;
         return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && d === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && !!recordExternalUndo.current;
       };
-      if (!ready()) { setTemplateError("请等待文档同步完成后再导入。"); return; }
+      if (!ready()) { setTemplateError(t("请等待文档同步完成后再导入。")); return; }
       let blocks;
       try { blocks = await uploadDocxImportImages(result, (image) => docsApi.uploadImportImage(id, image, me.user.id), ready); }
       catch {
-        if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setTemplateError("图片上传或文档状态异常，正文未导入；已上传的图片可能作为未引用附件保留，请检查后重试。");
+        if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) setTemplateError(t("图片上传或文档状态异常，正文未导入；已上传的图片可能作为未引用附件保留，请检查后重试。"));
         return;
       }
-      if (!ready() || !recordExternalUndo.current) { setTemplateError("文档状态已变化，正文未导入；已上传的图片可能作为未引用附件保留。"); return; }
+      if (!ready() || !recordExternalUndo.current) { setTemplateError(t("文档状态已变化，正文未导入；已上传的图片可能作为未引用附件保留。")); return; }
       const tx = appendBlocksOps(d, blocks);
       if (tx.ops.length) { recordExternalUndo.current(tx, { preserveCreatedBlocks: true }); sync.client.push(tx.ops); }
       const createdBlockIds = tx.items
@@ -1065,63 +1076,63 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     try {
       await suggestionsApi.create(id, { ...input, kind: "replace" });
       await qc.invalidateQueries({ queryKey: ["suggestions", id] });
-      setPageNotice({ ok: true, text: "已提交修订建议，等待审阅。" });
+      setPageNotice({ ok: true, text: t("已提交修订建议，等待审阅。") });
     } finally {
       setSuggestionBusy(false);
     }
-  }, [id, qc]);
+  }, [id, qc, t]);
   const handleAcceptSuggestion = useCallback(async (s: DocSuggestion) => {
     setSuggestionBusy(true);
     try {
       const updated = await suggestionsApi.accept(id, s.id);
       applyAcceptedSuggestionsToDoc([updated]);
       await qc.invalidateQueries({ queryKey: ["suggestions", id] });
-      setPageNotice({ ok: true, text: "已接受修订建议并写入正文。" });
+      setPageNotice({ ok: true, text: t("已接受修订建议并写入正文。") });
     } finally {
       setSuggestionBusy(false);
     }
-  }, [applyAcceptedSuggestionsToDoc, id, qc]);
+  }, [applyAcceptedSuggestionsToDoc, id, qc, t]);
   const handleRejectSuggestion = useCallback(async (s: DocSuggestion) => {
     setSuggestionBusy(true);
     try {
       await suggestionsApi.reject(id, s.id);
       await qc.invalidateQueries({ queryKey: ["suggestions", id] });
-      setPageNotice({ ok: true, text: "已拒绝该修订建议。" });
+      setPageNotice({ ok: true, text: t("已拒绝该修订建议。") });
     } finally {
       setSuggestionBusy(false);
     }
-  }, [id, qc]);
+  }, [id, qc, t]);
   const handleWithdrawSuggestion = useCallback(async (s: DocSuggestion) => {
     setSuggestionBusy(true);
     try {
       await suggestionsApi.withdraw(id, s.id);
       await qc.invalidateQueries({ queryKey: ["suggestions", id] });
-      setPageNotice({ ok: true, text: "已撤回修订建议。" });
+      setPageNotice({ ok: true, text: t("已撤回修订建议。") });
     } finally {
       setSuggestionBusy(false);
     }
-  }, [id, qc]);
+  }, [id, qc, t]);
   const handleAcceptAllSuggestions = useCallback(async () => {
     setSuggestionBusy(true);
     try {
       const updated = await suggestionsApi.acceptAll(id);
       applyAcceptedSuggestionsToDoc(updated);
       await qc.invalidateQueries({ queryKey: ["suggestions", id] });
-      setPageNotice({ ok: true, text: `已批量接受 ${updated.length} 条修订建议并写入正文。` });
+      setPageNotice({ ok: true, text: t("已批量接受 {n} 条修订建议并写入正文。", { n: updated.length }) });
     } finally {
       setSuggestionBusy(false);
     }
-  }, [applyAcceptedSuggestionsToDoc, id, qc]);
+  }, [applyAcceptedSuggestionsToDoc, id, qc, t]);
   const handleRejectAllSuggestions = useCallback(async () => {
     setSuggestionBusy(true);
     try {
       const updated = await suggestionsApi.rejectAll(id);
       await qc.invalidateQueries({ queryKey: ["suggestions", id] });
-      setPageNotice({ ok: true, text: `已批量拒绝 ${updated.length} 条修订建议。` });
+      setPageNotice({ ok: true, text: t("已批量拒绝 {n} 条修订建议。", { n: updated.length }) });
     } finally {
       setSuggestionBusy(false);
     }
-  }, [id, qc]);
+  }, [id, qc, t]);
   canEditRef.current = canEditContent;
   const [referenceVisibilityBusy, setReferenceVisibilityBusy] = useState(false);
   const [referenceVisibilityUncertain, setReferenceVisibilityUncertain] = useState(false);
@@ -1151,14 +1162,14 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       if (!current.mounted || current.id !== id || current.user !== me.user.id || !current.verified) return false;
       qc.setQueryData(referenceVisibilityKey, result);
       setReferenceVisibilityUncertain(false);
-      setPageNotice({ ok: true, text: visible ? "已显示文档引用。" : "已隐藏文档引用。" });
+      setPageNotice({ ok: true, text: visible ? t("已显示文档引用。") : t("已隐藏文档引用。") });
       return true;
     } catch {
       const current = exportContext.current;
       if (current.mounted && current.id === id && current.user === me.user.id) {
         referenceVisibilityBeforeFailure.current = referenceVisibility.dataUpdatedAt;
         setReferenceVisibilityUncertain(true);
-        setPageNotice({ ok: false, text: "显示设置未能确认，正在重新检查。" });
+        setPageNotice({ ok: false, text: t("显示设置未能确认，正在重新检查。") });
         void referenceVisibility.refetch();
       }
       return false;
@@ -1171,7 +1182,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     const client = sync.client;
     const notReady = (text: string) => Object.assign(new Error(text), { name: "VersionNotReady" });
     const point = namedVersionPoint(client, canEditRef.current, permissionsVerified);
-    if (!point) throw notReady("请确认编辑权限并等待文档同步完成后再保存。");
+    if (!point) throw notReady(t("请确认编辑权限并等待文档同步完成后再保存。"));
     const { seq, epoch } = point;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20_000);
@@ -1179,7 +1190,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       await docsApi.createVersionEntry(id, label, seq, epoch, requestId, me.user.id, controller.signal);
       await qc.invalidateQueries({ queryKey: ["versions", me.user.id, id] });
       const current = exportContext.current;
-      if (current.mounted && current.id === id && current.user === me.user.id && current.client === client && current.verified) setPageNotice({ ok: true, text: "已保存文档版本，可在已存版本中查看。" });
+      if (current.mounted && current.id === id && current.user === me.user.id && current.client === client && current.verified) setPageNotice({ ok: true, text: t("已保存文档版本，可在已存版本中查看。") });
     } finally { clearTimeout(timeout); }
   };
   const findDoc = sync.client.doc;
@@ -1284,7 +1295,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       const context = exportContext.current;
       return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && doc === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && sync.client.droppedOnResync === 0 && !!recordExternalUndo.current;
     };
-    if (!ready()) { setTemplateError("文档当前无法安全导入，请检查编辑权限和同步状态。"); return; }
+    if (!ready()) { setTemplateError(t("文档当前无法安全导入，请检查编辑权限和同步状态。")); return; }
     submittedStarter.current = true;
     try {
       let tx: Tx | null;
@@ -1295,12 +1306,12 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           uploadImage: (imgFile) => docsApi.upload(id, imgFile),
           canContinue: ready,
         });
-        if (!ready() || !recordExternalUndo.current) { submittedStarter.current = false; setTemplateError("文档当前无法安全导入，请检查编辑权限和同步状态。"); return; }
+        if (!ready() || !recordExternalUndo.current) { submittedStarter.current = false; setTemplateError(t("文档当前无法安全导入，请检查编辑权限和同步状态。")); return; }
         tx = insertStarterBlocks(doc, imported.blocks, true, true);
       } else {
         tx = insertStarterTemplate(doc, content.markdown);
       }
-      if (!tx || !recordExternalUndo.current) { submittedStarter.current = false; setTemplateError("文档已有内容或含不支持的内容，未导入。原文已保留。"); return; }
+      if (!tx || !recordExternalUndo.current) { submittedStarter.current = false; setTemplateError(t("文档已有内容或含不支持的内容，未导入。原文已保留。")); return; }
       recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
       setPendingSubmitted(true);
       setTemplateError("");
@@ -1308,7 +1319,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     } catch {
       submittedStarter.current = false;
       if (exportContext.current.mounted && exportContext.current.id === id && exportContext.current.user === me.user.id) {
-        setTemplateError("导入未完成，原文已保留，请检查文档状态后重试。");
+        setTemplateError(t("导入未完成，原文已保留，请检查文档状态后重试。"));
       }
     }
   };
@@ -1320,7 +1331,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       const context = exportContext.current;
       return context.mounted && context.id === id && context.user === me.user.id && context.client === sync.client && doc === sync.client.doc && canEditRef.current && sync.client.caughtUp && sync.client.status === "synced" && sync.client.droppedOnResync === 0 && !!recordExternalUndo.current && isEmptyStarterDocument(doc);
     };
-    if (!ready()) { setTemplateError("文档不为空或当前无法安全导入，原 Word 文件仍保存在本地。"); return; }
+    if (!ready()) { setTemplateError(t("文档不为空或当前无法安全导入，原 Word 文件仍保存在本地。")); return; }
     importingPendingWord.current = true; setPendingWordBusy(true); setTemplateError("");
     try {
       const parsed = await readDocxFile(file, { images: true });
@@ -1338,14 +1349,14 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       applyImportedWordMetadata(parsed, addedComments);
     } catch {
       const context = exportContext.current;
-      if (context.mounted && context.id === id && context.user === me.user.id) setTemplateError("导入未完成，原 Word 文件仍保存在本地；已上传的图片可能作为未引用附件保留，请检查文档后重试。");
+      if (context.mounted && context.id === id && context.user === me.user.id) setTemplateError(t("导入未完成，原 Word 文件仍保存在本地；已上传的图片可能作为未引用附件保留，请检查文档后重试。"));
     } finally { importingPendingWord.current = false; setPendingWordBusy(false); }
   };
   const applyStarter = (template: StarterTemplate) => {
     const doc = sync.client.doc;
     if (!doc || !canEditContent || !sync.caughtUp || sync.client.droppedOnResync > 0 || sync.status !== "synced" || !recordExternalUndo.current) return;
     const tx = insertStarterTemplate(doc, template.body);
-    if (!tx) { setTemplateError("文档已有内容，未插入模板。"); return; }
+    if (!tx) { setTemplateError(t("文档已有内容，未插入模板。")); return; }
     setTemplateError("");
     recordExternalUndo.current(tx, { preserveCreatedBlocks: true });
     sync.client.push(tx.ops);
@@ -1414,8 +1425,8 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     setTitleSyncRevision((n) => n + 1);
   };
   useEffect(() => {
-    document.title = `${title.trim() || "未命名文档"} - Jiange`;
-  }, [title]);
+    document.title = `${title.trim() || t("未命名文档")} - Jiange`;
+  }, [title, locale, t]);
 
   const downloadPending = () => {
     // Preserve the user's unacknowledged operations without embedding the
@@ -1435,16 +1446,16 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       a.download = `jiange-local-drafts-${id}.json`;
       a.click();
       URL.revokeObjectURL(a.href);
-    } catch { setRetrySyncError("无法读取本账号的本地草稿，请检查浏览器存储权限。"); }
+    } catch { setRetrySyncError(t("无法读取本账号的本地草稿，请检查浏览器存储权限。")); }
   };
   const showArchivedDraft = () => {
     const key = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.selected : "";
     if (!key) return;
     try {
       const saved = readRecoveryDraft(localStorage, me.user.id, id, key);
-      if (!saved) { setRetrySyncError("本地草稿不存在，请检查浏览器存储。"); return; }
+      if (!saved) { setRetrySyncError(t("本地草稿不存在，请检查浏览器存储。")); return; }
       setDraftPreview({ user: me.user.id, doc: id, ops: saved.ops, archived: true, archiveKey: key }); setRetrySyncError("");
-    } catch { setRetrySyncError("无法读取本地草稿；原始备份仍保存在浏览器中。"); }
+    } catch { setRetrySyncError(t("无法读取本地草稿；原始备份仍保存在浏览器中。")); }
   };
   const keepDraftAndContinue = () => {
     const client = sync.client;
@@ -1457,31 +1468,31 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       archived = true;
       const keys = recoveryDraftKeys(localStorage, me.user.id, id);
       setRecoveryState({ user: me.user.id, doc: id, keys, selected: key });
-      if (!client.discardQuarantined()) { setRetrySyncError("当前文档尚未同步完成；草稿已保留，请稍后重试。"); return; }
+      if (!client.discardQuarantined()) { setRetrySyncError(t("当前文档尚未同步完成；草稿已保留，请稍后重试。")); return; }
       setDraftPreview((old) => old?.user === me.user.id && old.doc === id && !old.archived ? { ...old, ops, archived: true, archiveKey: key } : old);
       setRetrySyncError("");
-    } catch { setRetrySyncError(archived ? "草稿副本已保存，但无法完成切换；请检查本地备份。" : "无法保存草稿副本，原草稿未清除；请先下载备份。"); }
+    } catch { setRetrySyncError(archived ? t("草稿副本已保存，但无法完成切换；请检查本地备份。") : t("无法保存草稿副本，原草稿未清除；请先下载备份。")); }
   };
   const deleteArchivedDraft = async () => {
     const key = recoveryState?.user === me.user.id && recoveryState.doc === id ? recoveryState.selected : "";
     if (!key) return;
     let raw: string | null;
-    try { raw = localStorage.getItem(key); } catch { setRetrySyncError("无法读取本地草稿，请检查浏览器存储。"); return; }
-    if (raw === null) { setRetrySyncError("本地草稿不存在，请刷新后重试。"); return; }
-    if (!await ask("删除本地草稿？", "删除后无法从本机恢复，请先下载备份。")) return;
+    try { raw = localStorage.getItem(key); } catch { setRetrySyncError(t("无法读取本地草稿，请检查浏览器存储。")); return; }
+    if (raw === null) { setRetrySyncError(t("本地草稿不存在，请刷新后重试。")); return; }
+    if (!await ask(t("删除本地草稿？"), t("删除后无法从本机恢复，请先下载备份。"))) return;
     const current = exportContext.current;
     if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client) return;
     try {
-      if (!removeRecoveryDraft(localStorage, me.user.id, id, key, raw)) { setRetrySyncError("草稿已变化或不存在，请重新查看后重试。"); return; }
+      if (!removeRecoveryDraft(localStorage, me.user.id, id, key, raw)) { setRetrySyncError(t("草稿已变化或不存在，请重新查看后重试。")); return; }
       const keys = recoveryDraftKeys(localStorage, me.user.id, id);
       setRecoveryState((old) => old?.user === me.user.id && old.doc === id ? { ...old, keys, selected: keys.includes(old.selected) ? old.selected : keys[0] ?? "" } : old);
       setDraftPreview((old) => old?.user === me.user.id && old.doc === id && old.archiveKey === key ? null : old);
       setRetrySyncError("");
-    } catch { setRetrySyncError("无法删除本地草稿，请检查浏览器存储后重试。"); }
+    } catch { setRetrySyncError(t("无法删除本地草稿，请检查浏览器存储后重试。")); }
   };
   const retryPending = async () => {
     if (sync.client.blocked === "missing_dependency" || sync.client.blocked === "invalid_history" || sync.client.blocked === "history_changed") {
-      setRetrySyncError("所需历史尚未恢复，请先下载本地备份并联系管理员。");
+      setRetrySyncError(t("所需历史尚未恢复，请先下载本地备份并联系管理员。"));
       return;
     }
     setRetryingSync(true);
@@ -1489,80 +1500,80 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     try {
       const result = await meta.refetch();
       if (result.isError || (result.data?.role !== "edit" && result.data?.role !== "manage")) {
-        setRetrySyncError(result.isError && !isDocAccessDenied(result.error) ? "暂时无法连接服务器，未同步内容仍保留在本地。" : "当前没有编辑权限，请联系文档所有者。未同步内容仍保留在本地。");
+        setRetrySyncError(result.isError && !isDocAccessDenied(result.error) ? t("暂时无法连接服务器，未同步内容仍保留在本地。") : t("当前没有编辑权限，请联系文档所有者。未同步内容仍保留在本地。"));
       } else if (!sync.client.caughtUp || sync.client.status === "offline" || sync.client.status === "connecting") {
-        setRetrySyncError("请等待连接和文档同步完成后重试。");
+        setRetrySyncError(t("请等待连接和文档同步完成后重试。"));
       } else sync.client.retryPending();
     } finally { setRetryingSync(false); }
   };
-  if (metadataState === "loading") return <div className="grid flex-1 place-items-center text-muted-foreground">正在加载文档…</div>;
+  if (metadataState === "loading") return <div className="grid flex-1 place-items-center text-muted-foreground">{t("正在加载文档…")}</div>;
   if (metadataState === "denied" || metadataState === "retry") {
     const hasPending = sync.client.unacked > 0;
     return <div className="grid flex-1 place-items-center px-6" role="alert">
       <div className="max-w-md text-center text-[14px] text-muted-foreground">
-        <p>{metadataState === "denied" ? "文档不存在或无权访问。" : "暂时无法连接服务器，请稍后重试。"}</p>
+        <p>{metadataState === "denied" ? t("文档不存在或无权访问。") : t("暂时无法连接服务器，请稍后重试。")}</p>
         <CommentAttemptRecovery store={commentAttempts} userId={me.user.id} />
-        {hasPending && <p className="mt-3">未同步的修改仍保留在本地，尚未保存到云端。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
-        {recoveryKeys.length > 0 && <p className="mt-3">本账号还有已保留的本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
-        {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，关闭页面后可能无法恢复。</p>}
-        {sync.otherPending && <p className="mt-3">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
-        {sync.legacyPending && <p className="mt-3">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
+        {hasPending && <p className="mt-3">{t("未同步的修改仍保留在本地，尚未保存到云端。")} <button type="button" onClick={downloadPending} className="text-primary underline">{t("下载本地备份")}</button></p>}
+        {recoveryKeys.length > 0 && <p className="mt-3">{t("本账号还有已保留的本地草稿。")} <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">{t("下载本账号草稿备份")}</button></p>}
+        {sync.storageError && <p className="mt-3">{t("浏览器存储不可用或本地草稿损坏，关闭页面后可能无法恢复。")}</p>}
+        {sync.otherPending && <p className="mt-3">{t("本账号还有其他本地草稿。")} <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">{t("下载本账号草稿备份")}</button></p>}
+        {sync.legacyPending && <p className="mt-3">{t("存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。")}</p>}
         {retrySyncError && <p className="mt-3">{retrySyncError}</p>}
-        <button type="button" className="mt-4 rounded-md border px-3 py-1.5 text-foreground hover:bg-hover" disabled={meta.isFetching} onClick={() => void meta.refetch()}>{meta.isFetching ? "正在重试…" : "重试"}</button>
+        <button type="button" className="mt-4 rounded-md border px-3 py-1.5 text-foreground hover:bg-hover" disabled={meta.isFetching} onClick={() => void meta.refetch()}>{meta.isFetching ? t("正在重试…") : t("重试")}</button>
       </div>
     </div>;
   }
   if (meta.data && meta.data.kind !== "doc") return <ResourceTypeNotice id={id} kind={meta.data.kind} verified={metadataState === "ready"}>
-    {sync.client.unacked > 0 && <p className="mt-3 text-[13px] text-muted-foreground">未同步的文档修改仍保留在本地。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
-    {sync.otherPending && <p className="mt-3 text-[13px] text-muted-foreground">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
-    {sync.storageError && <p className="mt-3 text-[13px] text-muted-foreground">浏览器存储不可用或本地草稿损坏，请检查后恢复。</p>}
-    {sync.legacyPending && <p className="mt-3 text-[13px] text-muted-foreground">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
+    {sync.client.unacked > 0 && <p className="mt-3 text-[13px] text-muted-foreground">{t("未同步的文档修改仍保留在本地。")} <button type="button" onClick={downloadPending} className="text-primary underline">{t("下载本地备份")}</button></p>}
+    {sync.otherPending && <p className="mt-3 text-[13px] text-muted-foreground">{t("本账号还有其他本地草稿。")} <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">{t("下载本账号草稿备份")}</button></p>}
+    {sync.storageError && <p className="mt-3 text-[13px] text-muted-foreground">{t("浏览器存储不可用或本地草稿损坏，请检查后恢复。")}</p>}
+    {sync.legacyPending && <p className="mt-3 text-[13px] text-muted-foreground">{t("存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。")}</p>}
     {retrySyncError && <p className="mt-3 text-[13px] text-muted-foreground">{retrySyncError}</p>}
   </ResourceTypeNotice>;
   if (sync.blocked === "table_unsupported") return <div className="grid flex-1 place-items-center px-6" role="alert" data-table-unsupported>
     <div className="max-w-md text-center text-[14px] text-muted-foreground">
-      <p>当前版本无法安全显示此文档中的表格内容，请更新应用或联系管理员。</p>
-      {sync.client.unacked > 0 && <p className="mt-3">未同步的修改仍保留在本地。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
-      {sync.otherPending && <p className="mt-3">本账号还有其他本地草稿。 <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">下载本账号草稿备份</button></p>}
-      {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，请先检查后恢复。</p>}
-      {sync.legacyPending && <p className="mt-3">存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。</p>}
+      <p>{t("当前版本无法安全显示此文档中的表格内容，请更新应用或联系管理员。")}</p>
+      {sync.client.unacked > 0 && <p className="mt-3">{t("未同步的修改仍保留在本地。")} <button type="button" onClick={downloadPending} className="text-primary underline">{t("下载本地备份")}</button></p>}
+      {sync.otherPending && <p className="mt-3">{t("本账号还有其他本地草稿。")} <button type="button" onClick={downloadStoredDrafts} className="text-primary underline">{t("下载本账号草稿备份")}</button></p>}
+      {sync.storageError && <p className="mt-3">{t("浏览器存储不可用或本地草稿损坏，请先检查后恢复。")}</p>}
+      {sync.legacyPending && <p className="mt-3">{t("存在无法确认账号归属的旧版离线记录，请联系管理员安全恢复。")}</p>}
     </div>
   </div>;
   if (sync.blocked === "projection_unavailable" || sync.blocked === "protocol_incompatible") return <div className="grid flex-1 place-items-center px-6" role="alert" data-projection-unavailable>
     <div className="max-w-md text-center text-[14px] text-muted-foreground">
-      <p>{sync.blocked === "protocol_incompatible" ? "服务端暂不支持安全同步，正在重新连接；如问题持续，请联系管理员更新服务。" : "文档暂时无法安全显示，正在重新连接；如问题持续，请联系文档所有者。"}</p>
-      {sync.client.unacked > 0 && <p className="mt-3">未同步的修改仍保留在本地。 <button type="button" onClick={downloadPending} className="text-primary underline">下载本地备份</button></p>}
-      {sync.storageError && <p className="mt-3">浏览器存储不可用或本地草稿损坏，请先检查后恢复。</p>}
+      <p>{sync.blocked === "protocol_incompatible" ? t("服务端暂不支持安全同步，正在重新连接；如问题持续，请联系管理员更新服务。") : t("文档暂时无法安全显示，正在重新连接；如问题持续，请联系文档所有者。")}</p>
+      {sync.client.unacked > 0 && <p className="mt-3">{t("未同步的修改仍保留在本地。")} <button type="button" onClick={downloadPending} className="text-primary underline">{t("下载本地备份")}</button></p>}
+      {sync.storageError && <p className="mt-3">{t("浏览器存储不可用或本地草稿损坏，请先检查后恢复。")}</p>}
     </div>
   </div>;
   const replaceFound = async (all: boolean) => {
     setFindPending(null);
     const doc = sync.client.doc;
     if (!doc || findUpdating || !currentFindResult || currentFindResult.doc !== doc || !canEditRef.current || sync.client.blocked || !sync.client.caughtUp || sync.client.status !== "synced" || sync.client.unacked !== 0 || !recordExternalUndo.current) {
-      setFindMessage("请等待文档同步完成并确认有编辑权限后重试。");
+      setFindMessage(t("请等待文档同步完成并确认有编辑权限后重试。"));
       return;
     }
     const { selected, skippedTitles, skippedMentions } = planFindReplacement(matches, activeMatch, all, { allowTitle: true });
-    if (!selected.length && (skippedMentions || skippedTitles)) { setFindMessage(skippedTitles ? "标题暂不支持替换。" : "提及成员和文档的内容不能替换。"); return; }
+    if (!selected.length && (skippedMentions || skippedTitles)) { setFindMessage(skippedTitles ? t("标题暂不支持替换。") : t("提及成员和文档的内容不能替换。")); return; }
     if (!selected.length) return;
-    const skippedMessage = `${skippedTitles ? `，跳过 ${skippedTitles} 处标题` : ""}${skippedMentions ? `，跳过 ${skippedMentions} 处提及内容` : ""}`;
+    const skippedMessage = `${skippedTitles ? t("，跳过 {n} 处标题", { n: skippedTitles }) : ""}${skippedMentions ? t("，跳过 {n} 处提及内容", { n: skippedMentions }) : ""}`;
     if (selected.some((match) => idKey(match.block) === idKey(TITLE))) {
-      if (titleSync.hasPending || !meta.data || !atomicFindReplace.current) { setFindMessage("请先等待标题及目录名称同步后重试。"); return; }
+      if (titleSync.hasPending || !meta.data || !atomicFindReplace.current) { setFindMessage(t("请先等待标题及目录名称同步后重试。")); return; }
       setFindAtomicAction(null);
       const message = { query: findQuery, replacement: findReplacement, skipped: skippedMentions }; atomicFindMessage.current = message;
-      setAtomicFindBusy(true); setFindMessage("正在准备安全替换…");
+      setAtomicFindBusy(true); setFindMessage(t("正在准备安全替换…"));
       try {
         const result = await atomicFindReplace.current(selected, findReplacement, meta.data.title);
         const current = exportContext.current;
         if (!current.mounted || current.id !== id || current.user !== me.user.id || current.client !== sync.client) return;
-        if (result.status === "submitted" || result.status === "pending") { if (atomicFindMessage.current === message) setFindMessage(`${result.status === "submitted" ? "替换已提交，正在核对保存结果" : "替换结果尚未确认，请核对状态"}${skippedMessage}。`); }
-        else if (result.status === "unchanged") setFindMessage(`${result.count} 处已是目标内容${skippedMessage}，文档未修改。`);
-        else if (result.status === "invalid_title") setFindMessage("替换后的标题不能有首尾空白、换行或超过 200 字；文档未修改。");
-        else if (result.status === "invalid_text") setFindMessage("替换内容包含无效字符；文档未修改。");
-        else if (result.status === "unsupported_title") setFindMessage("标题含有暂不支持的格式；文档未修改。");
-        else if (result.status === "stale") setFindMessage("内容或目录名称已变化，请检查名称并重新查找；文档未修改。");
-        else if (result.status === "size" || result.status === "work") setFindMessage("替换内容或范围过大，请缩小范围；文档未修改。");
-        else setFindMessage("当前无法安全替换，请检查同步状态或先核对待处理操作。");
+        if (result.status === "submitted" || result.status === "pending") { if (atomicFindMessage.current === message) setFindMessage(result.status === "submitted" ? t("替换已提交，正在核对保存结果{skipped}。", { skipped: skippedMessage }) : t("替换结果尚未确认，请核对状态{skipped}。", { skipped: skippedMessage })); }
+        else if (result.status === "unchanged") setFindMessage(t("{n} 处已是目标内容{skipped}，文档未修改。", { n: result.count, skipped: skippedMessage }));
+        else if (result.status === "invalid_title") setFindMessage(t("替换后的标题不能有首尾空白、换行或超过 200 字；文档未修改。"));
+        else if (result.status === "invalid_text") setFindMessage(t("替换内容包含无效字符；文档未修改。"));
+        else if (result.status === "unsupported_title") setFindMessage(t("标题含有暂不支持的格式；文档未修改。"));
+        else if (result.status === "stale") setFindMessage(t("内容或目录名称已变化，请检查名称并重新查找；文档未修改。"));
+        else if (result.status === "size" || result.status === "work") setFindMessage(t("替换内容或范围过大，请缩小范围；文档未修改。"));
+        else setFindMessage(t("当前无法安全替换，请检查同步状态或先核对待处理操作。"));
         if (result.status !== "submitted" && result.status !== "pending" && atomicFindMessage.current === message) atomicFindMessage.current = null;
         if (result.status === "submitted" || result.status === "pending" || result.status === "unchanged") requestFindScroll();
       } finally { const current = exportContext.current; if (current.mounted && current.id === id && current.user === me.user.id && current.client === sync.client) setAtomicFindBusy(false); }
@@ -1570,20 +1581,20 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     }
     if (all && selected.some((match) => match.table)) {
       const result = findBatchReplace.current?.(selected, findReplacement) ?? { status: "unavailable" as const, count: 0 };
-      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, skippedTitles, skippedMentions, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(`${result.count} 处已是目标内容${skippedMessage}，文档未修改。`); requestFindScroll(); }
-      else setFindMessage(result.status === "stale" ? "内容已变化，请重新查找；文档未修改。" : result.status === "size" || result.status === "work" ? "替换内容或范围过大，请缩小范围；文档未修改。" : "当前无法安全替换，请确认编辑权限和同步状态。");
+      if (result.status === "replaced" || result.status === "unchanged") { setFindIndex(0); if (result.status === "replaced") { setFindMessage(""); setFindPending({ count: result.count, skipped: 0, skippedTitles, skippedMentions, historyChanges: sync.client.droppedOnResync }); } else setFindMessage(t("{n} 处已是目标内容{skipped}，文档未修改。", { n: result.count, skipped: skippedMessage })); requestFindScroll(); }
+      else setFindMessage(result.status === "stale" ? t("内容已变化，请重新查找；文档未修改。") : result.status === "size" || result.status === "work" ? t("替换内容或范围过大，请缩小范围；文档未修改。") : t("当前无法安全替换，请确认编辑权限和同步状态。"));
       return;
     }
     if (!all && activeMatch?.table) {
       const outcome = tableFindReplace.current?.(activeMatch, findReplacement) ?? "unavailable";
       if (outcome === "replaced") { setFindMessage(""); setFindPending({ count: 1, skipped: 0, historyChanges: sync.client.droppedOnResync }); }
-      else setFindMessage(outcome === "unchanged" ? "该处已是目标内容，文档未修改。" : outcome === "stale" ? "表格已变化，请重新查找；未修改内容。" : outcome === "size" ? "替换内容或表格过大；未修改内容。" : "当前无法安全替换，请确认编辑权限和同步状态。");
+      else setFindMessage(outcome === "unchanged" ? t("该处已是目标内容，文档未修改。") : outcome === "stale" ? t("表格已变化，请重新查找；未修改内容。") : outcome === "size" ? t("替换内容或表格过大；未修改内容。") : t("当前无法安全替换，请确认编辑权限和同步状态。"));
       if (outcome === "replaced" || outcome === "unchanged") requestFindScroll();
       return;
     }
     const preflight = preflightFindReplace(doc, selected, findReplacement);
     if (!preflight.ok) {
-      setFindMessage(preflight.reason === "preflight" ? "无法安全检查替换内容，请重试；文档未修改。" : "替换内容或匹配范围过大，请缩小查找范围或缩短替换内容后重试；文档未修改。");
+      setFindMessage(preflight.reason === "preflight" ? t("无法安全检查替换内容，请重试；文档未修改。") : t("替换内容或匹配范围过大，请缩小查找范围或缩短替换内容后重试；文档未修改。"));
       return;
     }
     const tx = new Tx(doc);
@@ -1594,7 +1605,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
     }
     setFindIndex(all ? 0 : Math.max(activeFindIndex, 0));
     if (tx.ops.length) { setFindMessage(""); setFindPending({ count: result.replaced, skipped: result.skipped, skippedTitles, skippedMentions, historyChanges: sync.client.droppedOnResync }); }
-    else setFindMessage(result.skipped ? `${result.skipped} 处内容已变化并跳过${skippedMessage}；文档未修改。` : `${result.replaced} 处已是目标内容${skippedMessage}，文档未修改。`);
+    else setFindMessage(result.skipped ? t("{n} 处内容已变化并跳过{skipped}；文档未修改。", { n: result.skipped, skipped: skippedMessage }) : t("{n} 处已是目标内容{skipped}，文档未修改。", { n: result.replaced, skipped: skippedMessage }));
     if (result.replaced) requestFindScroll();
   };
 
@@ -1631,20 +1642,20 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
             const active = commentStorage.current;
             if (!active || active.doc !== doc || active.user !== user) {
-              setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
+              setCommentStorageNotice({ doc, user, text: t("无法清除本机草稿，请稍后重试。") });
               return;
             }
             try { active.value.write(commentDraftJournal.current.list(doc, user), []); }
-            catch { setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" }); return; }
+            catch { setCommentStorageNotice({ doc, user, text: t("无法清除本机草稿，请稍后重试。") }); return; }
             commentDraftJournal.current.dismiss(doc, user);
             void active.value.dismiss().then((complete) => {
               if (!matchesCommentTarget(commentIdentity.current, doc, user, session)) return;
               const values = mergeRecoveredCommentDrafts(commentDraftJournal.current.recovered(doc, user), active.value.read());
               setCommentRecovery(values.length ? { doc, user, values } : null);
               setCommentStorageDamaged(active.value.damaged().length ? { doc, user, count: active.value.damaged().length } : null);
-              setCommentStorageNotice(complete ? null : { doc, user, text: "部分草稿属于其他正在编辑的标签页或无法安全清除，已保留。" });
+              setCommentStorageNotice(complete ? null : { doc, user, text: t("部分草稿属于其他正在编辑的标签页或无法安全清除，已保留。") });
             }).catch(() => {
-              if (matchesCommentTarget(commentIdentity.current, doc, user, session)) setCommentStorageNotice({ doc, user, text: "无法清除本机草稿，请稍后重试。" });
+              if (matchesCommentTarget(commentIdentity.current, doc, user, session)) setCommentStorageNotice({ doc, user, text: t("无法清除本机草稿，请稍后重试。") });
             });
           }}
           onSnapshot={(value) => {
@@ -1748,7 +1759,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           metadataVerified={metadataVerified}
           meta={meta.data}
           title={title}
-          workspace={meta.data?.workspaceName || me.workspaces[0]?.name || "我的空间"}
+          workspace={meta.data?.workspaceName || me.workspaces[0]?.name || t("我的空间")}
           status={metadataVerified ? sync.status : "offline"}
           directorySync={titleSync.hasPending ? titleSyncNotice && !["retry", "waiting", "busy"].includes(titleSyncNotice) ? "blocked" : "pending" : undefined}
           draftConflict={sync.blocked === "history_changed"}
@@ -1761,11 +1772,11 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           <div role="status" data-doc-lock-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-[#DCE6FF] bg-[#F2F6FF] px-5 py-1.5 text-[12px] text-[#3370FF] dark:border-primary/30 dark:bg-primary/10">
             <span className="flex items-center gap-1.5">
               <Lock size={13} />
-              <span>当前文档已锁定，暂不可编辑，防止误操作修改内容。</span>
+              <span>{t("当前文档已锁定，暂不可编辑，防止误操作修改内容。")}</span>
             </span>
             {canEditContent && (
               <button type="button" onClick={() => updatePrefs({ locked: false })} data-doc-unlock-btn className="inline-flex items-center gap-1 rounded px-2 py-0.5 font-medium hover:bg-[#E1EAFF]">
-                <Unlock size={12} />解除锁定
+                <Unlock size={12} />{t("解除锁定")}
               </button>
             )}
           </div>
@@ -1774,11 +1785,11 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           <div role="status" data-suggest-banner className="flex flex-wrap items-center justify-between gap-2 border-b border-emerald-200 bg-emerald-50/80 px-5 py-2 text-[13px] text-emerald-900 dark:border-emerald-900 dark:bg-emerald-950/30 dark:text-emerald-200">
             <span className="flex items-center gap-2">
               <FileEdit size={15} className="text-emerald-600" />
-              <span>当前处于<strong>修订建议模式</strong>：在右侧面板或正文段落下方发起修订，审阅接受后将自动写入正文。</span>
+              <span>{t("当前处于修订建议模式：在右侧面板或正文段落下方发起修订，审阅接受后将自动写入正文。")}</span>
             </span>
             <span className="flex items-center gap-3">
-              {!suggestionsOpen && <button type="button" onClick={() => setSuggestionsOpen(true)} className="font-medium text-emerald-700 underline dark:text-emerald-300">打开修订面板 ({openSuggestionsCount})</button>}
-              {canEditRole && <button type="button" onClick={() => handleModeChange("edit")} className="text-emerald-700 hover:underline dark:text-emerald-300">退出修订模式</button>}
+              {!suggestionsOpen && <button type="button" onClick={() => setSuggestionsOpen(true)} className="font-medium text-emerald-700 underline dark:text-emerald-300">{t("打开修订面板 ({n})", { n: openSuggestionsCount })}</button>}
+              {canEditRole && <button type="button" onClick={() => handleModeChange("edit")} className="text-emerald-700 hover:underline dark:text-emerald-300">{t("退出修订模式")}</button>}
             </span>
           </div>
         )}
@@ -1800,14 +1811,14 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             </span>
           </div>
         )}
-        {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">新建文档失败，请稍后重试。</p>}
-        {metadataVerified && referenceVisibility.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">无法读取文档引用显示设置。<button type="button" className="ml-2 underline" onClick={() => void referenceVisibility.refetch()}>重试</button></p>}
+        {newDoc.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{t("新建文档失败，请稍后重试。")}</p>}
+        {metadataVerified && referenceVisibility.isError && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{t("无法读取文档引用显示设置。")}<button type="button" className="ml-2 underline" onClick={() => void referenceVisibility.refetch()}>{t("重试")}</button></p>}
         {pageNotice && <p role={pageNotice.ok ? "status" : "alert"} className={cn("border-b px-5 py-2 text-[13px]", pageNotice.ok ? "text-muted-foreground" : "text-destructive")} data-page-notice>{pageNotice.text}</p>}
-        {titleSyncNotice && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive" data-title-sync-notice>{titleSyncNotice === "conflict" ? "目录名称已变化，标题暂未同步。" : titleSyncNotice === "history_changed" ? "文档历史已变化，目录名称未自动同步。" : titleSyncNotice === "invalid" ? "目录名称暂未同步：标题不能有首尾空白、换行或超过 200 字。" : titleSyncNotice === "denied" ? "权限已变化，目录名称尚未同步。" : "目录名称同步结果尚未确认，正在重新核对。"} {(titleSyncNotice === "conflict" || titleSyncNotice === "history_changed") && <button type="button" className="text-primary underline" onClick={() => setTitleCheckTarget({ doc: id, user: me.user.id })}>检查文档名称</button>}</p>}
+        {titleSyncNotice && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive" data-title-sync-notice>{titleSyncNotice === "conflict" ? t("目录名称已变化，标题暂未同步。") : titleSyncNotice === "history_changed" ? t("文档历史已变化，目录名称未自动同步。") : titleSyncNotice === "invalid" ? t("目录名称暂未同步：标题不能有首尾空白、换行或超过 200 字。") : titleSyncNotice === "denied" ? t("权限已变化，目录名称尚未同步。") : t("目录名称同步结果尚未确认，正在重新核对。")} {(titleSyncNotice === "conflict" || titleSyncNotice === "history_changed") && <button type="button" className="text-primary underline" onClick={() => setTitleCheckTarget({ doc: id, user: me.user.id })}>{t("检查文档名称")}</button>}</p>}
         {exportNotice?.id === id && exportNotice.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-destructive">{exportNotice.text}</p>}
-        {metadataVerified && commentAccessDenied && <div role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论暂不可用。 <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>重新验证</button><CommentAttemptRecovery store={commentAttempts} userId={me.user.id} /></div>}
+        {metadataVerified && commentAccessDenied && <div role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{t("评论暂不可用。")} <button type="button" disabled={meta.isFetching} className="text-primary underline disabled:opacity-50" onClick={() => { commentRecoveryGate.current.reset(); revalidateCommentAccess(); }}>{t("重新验证")}</button><CommentAttemptRecovery store={commentAttempts} userId={me.user.id} /></div>}
         {metadataVerified && commentStorageNotice?.doc === id && commentStorageNotice.user === me.user.id && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageNotice.text}</p>}
-        {commentsAvailable && commentStorageDamaged?.doc === id && commentStorageDamaged.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{commentStorageDamaged.count} 条本机草稿数据损坏，原始数据已保留。 {commentDraftExportAllowed && <button type="button" className="text-primary underline" onClick={() => {
+        {commentsAvailable && commentStorageDamaged?.doc === id && commentStorageDamaged.user === me.user.id && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{t("{n} 条本机草稿数据损坏，原始数据已保留。", { n: commentStorageDamaged.count })} {commentDraftExportAllowed && <button type="button" className="text-primary underline" onClick={() => {
           if (!commentDraftExportAllowedRef.current || !matchesCommentTarget(commentIdentity.current, id, me.user.id, commentSession)) return;
           const active = commentStorage.current;
           if (!active || active.doc !== id || active.user !== me.user.id) return;
@@ -1815,28 +1826,28 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           a.href = URL.createObjectURL(new Blob([JSON.stringify(active.value.damaged())], { type: "application/json" }));
           a.download = `jiange-comment-damaged-${id}.json`;
           a.click(); URL.revokeObjectURL(a.href);
-        }}>导出原始数据</button>}</p>}
-        {metadataVerified && !commentAccessDenied && (comments.isError || members.isError) && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">评论加载失败。 <button type="button" className="text-primary underline" onClick={() => { void comments.refetch(); void members.refetch(); }}>重试</button></p>}
-        {metadataState === "offline" && <div role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">暂时无法连接服务器，正在显示本账号已加载的内容；权限待重新验证，编辑和分享暂不可用。 <button type="button" onClick={() => void meta.refetch()} disabled={meta.isFetching} className="underline disabled:opacity-50">{meta.isFetching ? "正在重试…" : "重试"}</button></div>}
+        }}>{t("导出原始数据")}</button>}</p>}
+        {metadataVerified && !commentAccessDenied && (comments.isError || members.isError) && <p role="alert" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{t("评论加载失败。")} <button type="button" className="text-primary underline" onClick={() => { void comments.refetch(); void members.refetch(); }}>{t("重试")}</button></p>}
+        {metadataState === "offline" && <div role="status" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">{t("暂时无法连接服务器，正在显示本账号已加载的内容；权限待重新验证，编辑和分享暂不可用。")} <button type="button" onClick={() => void meta.refetch()} disabled={meta.isFetching} className="underline disabled:opacity-50">{meta.isFetching ? t("正在重试…") : t("重试")}</button></div>}
         {(sync.blocked || (meta.isError && sync.client.unacked > 0)) && <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">
-          <span>{sync.blocked === "history_changed" ? "文档历史已变化或草稿版本无法确认，本地草稿没有自动合并；当前显示的是云端内容。" : sync.blocked === "missing_dependency" ? "本地修改依赖的历史尚不可用，暂无法自动合并；内容仍保留在本地。缺失历史恢复后会自动重试。" : sync.blocked === "invalid_history" ? "服务端文档历史不完整，无法确认同步状态；请联系管理员。" : `${sync.blocked === "read_only" ? "当前无编辑权限，" : meta.isError ? "暂时无法验证权限，" : "同步遇到冲突，"}未同步的修改保留在本地，尚未保存到云端。`}</span>{" "}
-          {sync.client.unacked > 0 && <button type="button" onClick={downloadPending} className="min-h-8 underline">下载本地备份</button>}
-          {sync.blocked === "history_changed" && <><button type="button" onClick={() => setDraftPreview({ user: me.user.id, doc: id, ops: sync.client.pendingOps(), archived: false })} className="min-h-8 underline" data-preview-pending-draft>查看本地草稿</button><button type="button" disabled={!sync.caughtUp || !metadataVerified} onClick={keepDraftAndContinue} className="min-h-8 underline disabled:opacity-50" data-keep-pending-draft>{canEditRole ? "保留草稿并继续编辑" : "保留草稿并查看文档"}</button></>}
-          {sync.blocked && sync.blocked !== "missing_dependency" && sync.blocked !== "invalid_history" && sync.blocked !== "history_changed" && <button type="button" disabled={retryingSync} onClick={() => void retryPending()} className="min-h-8 underline disabled:opacity-50">{retryingSync ? "检查中…" : "检查权限并重试"}</button>}
+          <span>{sync.blocked === "history_changed" ? t("文档历史已变化或草稿版本无法确认，本地草稿没有自动合并；当前显示的是云端内容。") : sync.blocked === "missing_dependency" ? t("本地修改依赖的历史尚不可用，暂无法自动合并；内容仍保留在本地。缺失历史恢复后会自动重试。") : sync.blocked === "invalid_history" ? t("服务端文档历史不完整，无法确认同步状态；请联系管理员。") : sync.blocked === "read_only" ? t("当前无编辑权限，未同步的修改保留在本地，尚未保存到云端。") : meta.isError ? t("暂时无法验证权限，未同步的修改保留在本地，尚未保存到云端。") : t("同步遇到冲突，未同步的修改保留在本地，尚未保存到云端。")}</span>{" "}
+          {sync.client.unacked > 0 && <button type="button" onClick={downloadPending} className="min-h-8 underline">{t("下载本地备份")}</button>}
+          {sync.blocked === "history_changed" && <><button type="button" onClick={() => setDraftPreview({ user: me.user.id, doc: id, ops: sync.client.pendingOps(), archived: false })} className="min-h-8 underline" data-preview-pending-draft>{t("查看本地草稿")}</button><button type="button" disabled={!sync.caughtUp || !metadataVerified} onClick={keepDraftAndContinue} className="min-h-8 underline disabled:opacity-50" data-keep-pending-draft>{canEditRole ? t("保留草稿并继续编辑") : t("保留草稿并查看文档")}</button></>}
+          {sync.blocked && sync.blocked !== "missing_dependency" && sync.blocked !== "invalid_history" && sync.blocked !== "history_changed" && <button type="button" disabled={retryingSync} onClick={() => void retryPending()} className="min-h-8 underline disabled:opacity-50">{retryingSync ? t("检查中…") : t("检查权限并重试")}</button>}
           {retrySyncError && <span className="ml-2">{retrySyncError}</span>}
         </div>}
         {recoveryKeys.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b bg-[#F6F8FF] px-5 py-2 text-[13px] text-muted-foreground dark:bg-surface" data-recovery-drafts>
-          <span>本机保留 {recoveryKeys.length} 份未合并草稿。</span>
-          {recoveryKeys.length > 1 && <FeishuSelect ariaLabel="选择本地草稿" value={recoveryState?.selected ?? ""} options={recoveryKeys.map((key, index) => ({ value: key, label: `草稿 ${index + 1}` }))} onChange={(val) => setRecoveryState((old) => old && old.user === me.user.id && old.doc === id ? { ...old, selected: val } : old)} className="h-7 max-w-36 border border-border bg-surface px-2 text-[12px]" chevronSize={11} menuMinWidth={112} />}
-          <button type="button" onClick={showArchivedDraft} className="text-primary hover:underline">查看</button>
-          <button type="button" onClick={downloadStoredDrafts} className="text-primary hover:underline">下载备份</button>
-          <button type="button" onClick={() => void deleteArchivedDraft()} className="text-muted-foreground hover:text-destructive hover:underline" data-delete-recovery-draft>删除本地副本</button>
+          <span>{t("本机保留 {n} 份未合并草稿。", { n: recoveryKeys.length })}</span>
+          {recoveryKeys.length > 1 && <FeishuSelect ariaLabel={t("选择本地草稿")} value={recoveryState?.selected ?? ""} options={recoveryKeys.map((key, index) => ({ value: key, label: t("草稿 {n}", { n: index + 1 }) }))} onChange={(val) => setRecoveryState((old) => old && old.user === me.user.id && old.doc === id ? { ...old, selected: val } : old)} className="h-7 max-w-36 border border-border bg-surface px-2 text-[12px]" chevronSize={11} menuMinWidth={112} />}
+          <button type="button" onClick={showArchivedDraft} className="text-primary hover:underline">{t("查看")}</button>
+          <button type="button" onClick={downloadStoredDrafts} className="text-primary hover:underline">{t("下载备份")}</button>
+          <button type="button" onClick={() => void deleteArchivedDraft()} className="text-muted-foreground hover:text-destructive hover:underline" data-delete-recovery-draft>{t("删除本地副本")}</button>
           {retrySyncError && <span role="alert">{retrySyncError}</span>}
         </div>}
         {draftPreview?.user === me.user.id && draftPreview.doc === id && <PendingDraftPreview ops={draftPreview.ops} onClose={() => setDraftPreview(null)} onDownload={draftPreview.archived ? downloadStoredDrafts : downloadPending} />}
-        {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">下载本地备份</button></>}</p>}
-        {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。</p>}
-        {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">本账号还有其他标签页或旧会话的本地草稿，未自动合并。 <button type="button" onClick={downloadStoredDrafts} className="underline">下载本账号草稿备份</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
+        {sync.storageError && <p role="alert" className="border-b border-amber-200 bg-amber-50 px-5 py-2 text-[13px] text-amber-900">{t("本地草稿无法安全读取或保存，未同步内容可能无法在关闭页面后恢复。")}{sync.client.unacked > 0 && <> <button type="button" onClick={downloadPending} className="underline">{t("下载本地备份")}</button></>}</p>}
+        {sync.legacyPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{t("发现旧版未按账号区分的离线记录，无法安全确认归属，因此未自动加载。原记录仍保留在浏览器中，请联系管理员安全恢复。")}</p>}
+        {sync.otherPending && <p role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{t("本账号还有其他标签页或旧会话的本地草稿，未自动合并。")} <button type="button" onClick={downloadStoredDrafts} className="underline">{t("下载本账号草稿备份")}</button>{retrySyncError && <span className="ml-2">{retrySyncError}</span>}</p>}
         <div className="relative flex min-h-0 flex-1 flex-col">
         {followedPeer && <FollowBanner peer={followedPeer} onExit={exitFollowMode} />}
         {!followedPeer && followNotice && <FollowToast message={followNotice} />}
@@ -1890,7 +1901,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               me={presence}
               singleLine
               readOnly={!canEditContent || prefs.locked || !!history || presenting}
-              placeholder="请输入标题"
+              placeholder={t("请输入标题")}
               onLocalEdit={onTitle}
               findMatches={displayedMatches}
               activeFindMatch={activeMatch}
@@ -1946,9 +1957,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 } : undefined}
                 onPreviewImage={(src, alt, mime) => setPreview({ src, alt, mime })}
                 ai={runAI}
-                onShareBlock={metadataVerified ? (link) => { void navigator.clipboard?.writeText(link).catch(() => {}); setSharing(true); setPageNotice({ ok: true, text: "已复制该段落的链接，可在分享面板中设置访问权限。" }); } : undefined}
+                onShareBlock={metadataVerified ? (link) => { void navigator.clipboard?.writeText(link).catch(() => {}); setSharing(true); setPageNotice({ ok: true, text: t("已复制该段落的链接，可在分享面板中设置访问权限。") }); } : undefined}
                 onSaveTemplate={aiAvailable ? (md) => void saveTemplate(md) : undefined}
-                people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name, email: m.email || undefined, role: m.id === meta.data?.creatorId ? "所有者" : "协作者" }))}
+                people={(commentsAvailable && members.isSuccess ? members.data : []).map((m) => ({ id: m.id, name: m.name, email: m.email || undefined, role: m.id === meta.data?.creatorId ? t("所有者") : t("协作者") }))}
                 trackChangesMode={trackChangesActive}
                 openSuggestions={trackChangesActive ? openSuggestionsList : undefined}
                 canAcceptSuggestions={canEditRole && !sync.blocked && !sync.client.projectionOnly && !prefs.locked}
@@ -1960,20 +1971,20 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               />
             </div>
             {pendingStarter && <div className="mt-4 rounded-md border bg-sidebar/50 p-3 text-[13px]" role="status">
-              <p className="text-muted-foreground">{pendingSubmitted ? "导入操作已发送，请核对内容；原文仍暂存在当前标签页。" : "待导入内容已准备好。请确认文档为空后导入。"}{!pendingStarter.persistent && " 浏览器暂存不可用，请勿刷新或关闭页面。"}</p>
+              <p className="text-muted-foreground">{pendingSubmitted ? t("导入操作已发送，请核对内容；原文仍暂存在当前标签页。") : t("待导入内容已准备好。请确认文档为空后导入。")}{!pendingStarter.persistent && ` ${t("浏览器暂存不可用，请勿刷新或关闭页面。")}`}</p>
               <div className="mt-2 flex flex-wrap items-center gap-3">
-                {!pendingSubmitted && <button type="button" disabled={!canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={() => void applyPendingStarter()} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">导入内容</button>}
-                <button type="button" className="text-primary hover:underline" onClick={() => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([pendingStarter.markdown], { type: "text/markdown" })); a.download = "待导入内容.md"; a.click(); URL.revokeObjectURL(a.href); }}>下载原文</button>
-                <button type="button" className="text-muted-foreground hover:underline" onClick={() => { takeStarter(me.user.id, id); submittedStarter.current = false; setPendingSubmitted(false); setPendingRevision((n) => n + 1); setTemplateError(""); }}>清除暂存</button>
+                {!pendingSubmitted && <button type="button" disabled={!canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={() => void applyPendingStarter()} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">{t("导入内容")}</button>}
+                <button type="button" className="text-primary hover:underline" onClick={() => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([pendingStarter.markdown], { type: "text/markdown" })); a.download = `${t("待导入内容")}.md`; a.click(); URL.revokeObjectURL(a.href); }}>{t("下载原文")}</button>
+                <button type="button" className="text-muted-foreground hover:underline" onClick={() => { takeStarter(me.user.id, id); submittedStarter.current = false; setPendingSubmitted(false); setPendingRevision((n) => n + 1); setTemplateError(""); }}>{t("清除暂存")}</button>
               </div>
             </div>}
             {metadataVerified && pendingWordError && <p role="alert" className="mt-4 text-[13px] text-destructive">{pendingWordError}</p>}
             {metadataVerified && pendingWord && <div className="mt-4 rounded-md border bg-sidebar/50 p-3 text-[13px]" role="status" data-pending-word>
-              <p className="text-muted-foreground">{pendingWord.missing ? "本地暂存已失效，请使用原文件重新导入。" : pendingWordSubmitted ? "导入操作已发送，请核对内容；原 Word 文件仍暂存在本地。" : !sync.ready || !sync.caughtUp ? "正在检查文档状态，原 Word 文件仍暂存在本地。" : !blankBody ? "文档已有内容，请核对是否已导入；原 Word 文件仍暂存在本地。" : `待导入 Word：${pendingWord.name}。确认文档为空后导入。`}{!pendingWord.persistent && !pendingWord.missing && " 浏览器持久暂存不可用，请勿刷新或关闭页面。"}</p>
+              <p className="text-muted-foreground">{pendingWord.missing ? t("本地暂存已失效，请使用原文件重新导入。") : pendingWordSubmitted ? t("导入操作已发送，请核对内容；原 Word 文件仍暂存在本地。") : !sync.ready || !sync.caughtUp ? t("正在检查文档状态，原 Word 文件仍暂存在本地。") : !blankBody ? t("文档已有内容，请核对是否已导入；原 Word 文件仍暂存在本地。") : t("待导入 Word：{name}。确认文档为空后导入。", { name: pendingWord.name })}{!pendingWord.persistent && !pendingWord.missing && ` ${t("浏览器持久暂存不可用，请勿刷新或关闭页面。")}`}</p>
               <div className="mt-2 flex flex-wrap items-center gap-3">
-                {!pendingWordSubmitted && pendingWord.file && <button type="button" disabled={pendingWordBusy || !canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={() => void applyPendingWord()} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">{pendingWordBusy ? "正在导入…" : "导入内容"}</button>}
-                {pendingWord.file && <button type="button" disabled={pendingWordBusy || !downloadAllowed} className="text-primary hover:underline disabled:opacity-50" onClick={() => { const a = document.createElement("a"); const url = URL.createObjectURL(pendingWord.file!); a.href = url; a.download = pendingWord.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }}>下载原 Word</button>}
-                <button type="button" disabled={pendingWordBusy} className="text-muted-foreground hover:underline disabled:opacity-50" onClick={() => { void clearPendingWord(me.user.id, id, pendingWord).then(() => { const current = exportContext.current; if (current.mounted && current.user === me.user.id && current.id === id) { setPendingWordState(null); setPendingWordSubmitted(false); setTemplateError(""); } }).catch(() => { const current = exportContext.current; if (current.mounted && current.user === me.user.id && current.id === id) setTemplateError("无法清除本地暂存，请检查浏览器存储后重试。"); }); }}>清除暂存</button>
+                {!pendingWordSubmitted && pendingWord.file && <button type="button" disabled={pendingWordBusy || !canEditContent || !blankBody || !sync.caughtUp || sync.status !== "synced"} onClick={() => void applyPendingWord()} className="rounded-md bg-primary px-3 py-1 text-white disabled:opacity-50">{pendingWordBusy ? t("正在导入…") : t("导入内容")}</button>}
+                {pendingWord.file && <button type="button" disabled={pendingWordBusy || !downloadAllowed} className="text-primary hover:underline disabled:opacity-50" onClick={() => { const a = document.createElement("a"); const url = URL.createObjectURL(pendingWord.file!); a.href = url; a.download = pendingWord.name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 0); }}>{t("下载原 Word")}</button>}
+                <button type="button" disabled={pendingWordBusy} className="text-muted-foreground hover:underline disabled:opacity-50" onClick={() => { void clearPendingWord(me.user.id, id, pendingWord).then(() => { const current = exportContext.current; if (current.mounted && current.user === me.user.id && current.id === id) { setPendingWordState(null); setPendingWordSubmitted(false); setTemplateError(""); } }).catch(() => { const current = exportContext.current; if (current.mounted && current.user === me.user.id && current.id === id) setTemplateError(t("无法清除本地暂存，请检查浏览器存储后重试。")); }); }}>{t("清除暂存")}</button>
               </div>
             </div>}
             {templateError && <p role="alert" className="mt-3 text-[13px] text-destructive">{templateError}</p>}
@@ -1984,19 +1995,19 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                 me={{ id: me.user.id, name: me.user.name }}
                 readers={[
                   ...(meta.data ? [{ id: meta.data.creatorId, name: meta.data.creatorName, viewedAt: meta.data.updatedAt ? formatEditDay(meta.data.updatedAt) : undefined }] : []),
-                  ...sync.peers.map((p) => ({ id: p.clientId, name: p.state.name, viewedAt: "在线" })),
+                  ...sync.peers.map((p) => ({ id: p.clientId, name: p.state.name, viewedAt: t("在线") })),
                 ]}
               />
             )}
             {downloadAllowed && printSettings.includeComments && printableCommentThreads.length > 0 && (
               <section data-doc-print-comments className="mt-10 border-t border-[#DEE0E3] pt-5">
-                <h2 className="mb-3 text-[15px] font-semibold text-[#1F2329]">评论附录（共 {printableCommentThreads.length} 条线程）</h2>
+                <h2 className="mb-3 text-[15px] font-semibold text-[#1F2329]">{t("评论附录（共 {n} 条线程）", { n: printableCommentThreads.length })}</h2>
                 <div className="space-y-3">
                   {printableCommentThreads.map(({ root, replies }) => (
                     <div key={root.id} data-doc-print-comment-item className="rounded-md border border-[#DEE0E3] bg-[#F7F8FA] p-3 text-[12px] text-[#1F2329]">
                       <div className="flex items-center justify-between gap-2 text-[11px] text-[#646A73]">
-                        <span className="font-medium text-[#1F2329]">{root.userName || "协作者"}</span>
-                        <span>{formatEditTime(root.createdAt)}{root.resolved ? " · 已解决" : ""}</span>
+                        <span className="font-medium text-[#1F2329]">{root.userName || t("协作者")}</span>
+                        <span>{formatEditTime(root.createdAt)}{root.resolved ? t(" · 已解决") : ""}</span>
                       </div>
                       {root.quote && (
                         <blockquote className="mt-1.5 border-l-2 border-[#3370FF] pl-2 text-[11px] text-[#4E5969]">
@@ -2008,7 +2019,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
                         <div className="mt-2 space-y-1.5 border-t border-[#E5E6EB] pt-2 pl-3">
                           {replies.map((reply) => (
                             <div key={reply.id} className="text-[11px] leading-relaxed">
-                              <span className="font-medium text-[#1F2329]">{reply.userName || "协作者"}</span>
+                              <span className="font-medium text-[#1F2329]">{reply.userName || t("协作者")}</span>
                               <span className="ml-1.5 text-[#8F959E]">{formatEditTime(reply.createdAt)}</span>
                               <p className="mt-0.5 whitespace-pre-wrap text-[#1F2329]">{reply.body}</p>
                             </div>
@@ -2051,10 +2062,15 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             canReplaceAll={findCanReplace && replacementPlan.selected.length > 0 && (!replacementPlan.selected.some((match) => idKey(match.block) === idKey(TITLE)) || !titleSync.hasPending)}
             caseSensitive={findCaseSensitive}
             includeMath={findIncludeMath}
-            scopeNotice={findIncludeMath ? "搜索标题、正文、分栏、表格与公式源码。" : "搜索标题、正文、分栏和表格；勾选「包含公式」可查找替换公式源码。"}
-            warningMessage={`${replacementPlan.skippedTitles && findMode === "replace" ? `标题中的 ${replacementPlan.skippedTitles} 处结果暂不支持替换，全部替换时将跳过。` : ""}${replacementPlan.skippedMentions && findMode === "replace" ? `提及成员或文档的 ${replacementPlan.skippedMentions} 处结果不可替换，全部替换时将跳过。` : ""}${matches.length > 500 ? "结果较多，仅高亮当前项。" : ""}${!sync.caughtUp ? "文档尚未同步完成，结果可能不完整。" : ""}`}
-            statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? "搜索结果正在更新，暂时无法替换。" : findMessage}
-            historyAction={findAtomicHistory ? { label: findAtomicHistory === "undo" ? "撤销本次替换" : "重做本次替换", disabled: atomicFindBusy, onClick: () => { const redo = findAtomicHistory === "redo"; setAtomicFindBusy(true); setFindMessage(redo ? "正在重做…" : "正在撤销…"); if (!atomicFindHistoryControl.current?.step(redo)) { setAtomicFindBusy(false); setFindMessage("最近操作已变化，请先处理较新的文档操作。"); } } } : undefined}
+            scopeNotice={findIncludeMath ? t("搜索标题、正文、分栏、表格与公式源码。") : t("搜索标题、正文、分栏和表格；勾选「包含公式」可查找替换公式源码。")}
+            warningMessage={[
+              replacementPlan.skippedTitles && findMode === "replace" ? t("标题中的 {n} 处结果暂不支持替换，全部替换时将跳过。", { n: replacementPlan.skippedTitles }) : "",
+              replacementPlan.skippedMentions && findMode === "replace" ? t("提及成员或文档的 {n} 处结果不可替换，全部替换时将跳过。", { n: replacementPlan.skippedMentions }) : "",
+              matches.length > 500 ? t("结果较多，仅高亮当前项。") : "",
+              !sync.caughtUp ? t("文档尚未同步完成，结果可能不完整。") : "",
+            ].filter(Boolean).join(locale === "en" ? " " : "")}
+            statusMessage={findPending ? replacementSyncNotice(findPending, sync.client) : findUpdating ? t("搜索结果正在更新，暂时无法替换。") : findMessage}
+            historyAction={findAtomicHistory ? { label: findAtomicHistory === "undo" ? t("撤销本次替换") : t("重做本次替换"), disabled: atomicFindBusy, onClick: () => { const redo = findAtomicHistory === "redo"; setAtomicFindBusy(true); setFindMessage(redo ? t("正在重做…") : t("正在撤销…")); if (!atomicFindHistoryControl.current?.step(redo)) { setAtomicFindBusy(false); setFindMessage(t("最近操作已变化，请先处理较新的文档操作。")); } } } : undefined}
             onModeChange={setFindMode}
             onQueryChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindQuery(value); setFindIndex(0); setFindMessage(""); setFindPending(null); requestFindScroll(); }}
             onReplacementChange={(value) => { atomicFindMessage.current = null; setFindAtomicAction(null); setAtomicFindBusy(false); setFindReplacement(value); setFindMessage(""); setFindPending(null); }}
@@ -2183,11 +2199,11 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
   );
 }
 
-const STATUS: Record<SyncStatus, { label: string; color: string }> = {
-  synced: { label: "已同步", color: "#00B42A" },
-  syncing: { label: "同步中…", color: "#3370FF" },
-  connecting: { label: "连接中…", color: "#FF8800" },
-  offline: { label: "离线，恢复后自动同步", color: "#8F959E" },
+const STATUS: Record<SyncStatus, { color: string }> = {
+  synced: { color: "#00B42A" },
+  syncing: { color: "#3370FF" },
+  connecting: { color: "#FF8800" },
+  offline: { color: "#8F959E" },
 };
 
 export function FollowBanner({ peer, onExit }: { peer: RemotePeer; onExit: () => void }) {
@@ -2412,8 +2428,8 @@ function TopBar({
       return next === prev ? prev : { ...next, doc: meta?.id };
     });
   }, [status, meta?.id]);
-  const metaText = draftConflict ? "本地草稿待处理" : status === "synced" && directorySync ? directorySync === "blocked" ? "目录名称未同步" : "正在同步目录名称…" : headerMetaText(status, savedFlag.saved, meta?.updatedAt);
-  const metaTitle = meta ? `创建者：${meta.creatorName}${meta.updatedAt ? ` · 最近修改：${formatEditTime(meta.updatedAt)}` : ""}` : undefined;
+  const metaText = draftConflict ? t("本地草稿待处理") : status === "synced" && directorySync ? directorySync === "blocked" ? t("目录名称未同步") : t("正在同步目录名称…") : headerMetaText(status, savedFlag.saved, meta?.updatedAt);
+  const metaTitle = meta ? (meta.updatedAt ? t("创建者：{creator} · 最近修改：{time}", { creator: meta.creatorName, time: formatEditTime(meta.updatedAt) }) : t("创建者：{creator}", { creator: meta.creatorName })) : undefined;
   return (
     <header className={cn("flex h-14 shrink-0 items-center gap-1 border-b border-[#E5E6EB] bg-surface pl-14 pr-2 sm:gap-2.5 md:pr-5 dark:border-border", sidebarDocked && "md:pl-5")}>
       <div className="min-w-0 flex-1">
@@ -2439,22 +2455,22 @@ function TopBar({
       <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict || directorySync === "blocked" ? "#D83931" : directorySync === "pending" ? "#FF8800" : s.color }} />{metaText}</span>
       </div>
       <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-1.5">
-        {readOnly && <span className="hidden rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground sm:inline">只读</span>}
+        {readOnly && <span className="hidden rounded bg-hover px-2 py-0.5 text-xs text-muted-foreground sm:inline">{t("只读")}</span>}
         {prefs.locked && (
-          <button type="button" onClick={() => canLock && onPrefsChange({ locked: false })} title={canLock ? "已锁定，点击解锁" : "文档已锁定"} data-doc-locked-pill className="hidden h-7 items-center gap-1 rounded-md border border-[#BACEFD] bg-[#EBF2FF] px-2 text-[12px] font-medium text-[#3370FF] hover:bg-[#DCE8FF] sm:inline-flex">
-            <Lock size={12} />已锁定
+          <button type="button" onClick={() => canLock && onPrefsChange({ locked: false })} title={canLock ? t("已锁定，点击解锁") : t("文档已锁定")} data-doc-locked-pill className="hidden h-7 items-center gap-1 rounded-md border border-[#BACEFD] bg-[#EBF2FF] px-2 text-[12px] font-medium text-[#3370FF] hover:bg-[#DCE8FF] sm:inline-flex">
+            <Lock size={12} />{t("已锁定")}
           </button>
         )}
         <Button ref={shareAnchor} size="sm" disabled={!meta || !metadataVerified} className="h-8 gap-1.5 bg-[#3370ff] px-2.5 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3" onClick={onShare}>
-          <BuildingIcon className="size-4" />分享
+          <BuildingIcon className="size-4" />{t("分享")}
         </Button>
         {!readOnly && <ModeMenu mode={docMode} onChange={onDocModeChange} />}
         <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
         <DocMenu userId={userId} onAI={onAI} onToggleSuggestions={onToggleSuggestions} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} prefs={prefs} onPrefsChange={onPrefsChange} canLock={canLock} onComments={onComments} onFind={onFind} onPrint={onPrint} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
-        <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
-        <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
-        {onAI && <button onClick={onAI} title="AI 助手" aria-label="AI 助手" aria-pressed={!!aiOpen} className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", aiOpen ? "text-primary" : "text-muted-foreground")} data-doc-ai><Sparkles size={16} /><span className="hidden text-[13px] xl:inline">AI</span></button>}
+        <button onClick={onGlobalSearch} title={t("搜索文档")} aria-label={t("搜索文档")} className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
+        <button onClick={onCreate} disabled={creating} title={t("新建文档")} aria-label={t("新建文档")} className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
+        {onAI && <button onClick={onAI} title={t("AI 助手")} aria-label={t("AI 助手")} aria-pressed={!!aiOpen} className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", aiOpen ? "text-primary" : "text-muted-foreground")} data-doc-ai><Sparkles size={16} /><span className="hidden text-[13px] xl:inline">AI</span></button>}
         <button
           type="button"
           onClick={onToggleTrackChanges}
@@ -2485,10 +2501,10 @@ function TopBar({
             </span>
           )}
         </button>
-        <button onClick={onToggleSuggestions} title="修订建议" aria-label="修订建议" aria-pressed={suggestionsOpen} data-doc-suggestions-btn className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", suggestionsOpen ? "text-emerald-600" : "text-muted-foreground")}><FileEdit size={16} /><span className="hidden text-[13px] xl:inline">修订</span>{openSuggestionsCount > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{openSuggestionsCount}</span>}</button>
-        <button onClick={onComments} title="评论" aria-label="评论" className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">评论</span></button>
-        <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label="协作者">
-          <Avatar name={me.name} color={me.color} size={26} ring title={`${me.name}（你）`} />
+        <button onClick={onToggleSuggestions} title={t("修订建议")} aria-label={t("修订建议")} aria-pressed={suggestionsOpen} data-doc-suggestions-btn className={cn("hidden h-8 items-center gap-1 rounded-md px-1.5 hover:bg-hover sm:flex", suggestionsOpen ? "text-emerald-600" : "text-muted-foreground")}><FileEdit size={16} /><span className="hidden text-[13px] xl:inline">{t("修订")}</span>{openSuggestionsCount > 0 && <span className="rounded-full bg-amber-100 px-1.5 text-[11px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{openSuggestionsCount}</span>}</button>
+        <button onClick={onComments} title={t("评论")} aria-label={t("评论")} className="hidden h-8 items-center gap-1 rounded-md px-1.5 text-muted-foreground hover:bg-hover sm:flex"><MessageSquare size={17} /><span className="hidden text-[13px] xl:inline">{t("评论")}</span></button>
+        <div className="ml-1 hidden items-center -space-x-1.5 sm:flex" aria-label={t("协作者")}>
+          <Avatar name={me.name} color={me.color} size={26} ring title={t("{name}（你）", { name: me.name })} />
           {peers.slice(0, 5).map((p) => (
             <FollowPeerButton
               key={p.clientId}
@@ -2506,6 +2522,7 @@ function TopBar({
 
 /** 飞书标题下的作者行：头像 + 创建者 | 修改日期。 */
 function DocAuthorLine({ name, seed, updatedAt }: { name: string; seed: number; updatedAt?: string }) {
+  useI18n();
   const day = updatedAt ? formatEditDay(updatedAt) : "";
   return <div contentEditable={false} className="mt-[19px] flex h-5 select-none items-center text-[12px] leading-5 text-subtle" data-doc-author>
     <span className="flex min-w-0 items-center gap-1"><Avatar name={name || "?"} color={colorFor(seed)} size={20} /><span className="truncate">{name}</span></span>
@@ -2514,6 +2531,7 @@ function DocAuthorLine({ name, seed, updatedAt }: { name: string; seed: number; 
 }
 
 function ModeMenu({ mode, onChange }: { mode: "edit" | "suggest" | "read"; onChange: (mode: "edit" | "suggest" | "read") => void }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -2523,15 +2541,15 @@ function ModeMenu({ mode, onChange }: { mode: "edit" | "suggest" | "read"; onCha
     document.addEventListener("mousedown", outside); document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("mousedown", outside); document.removeEventListener("keydown", escape); };
   }, [open]);
-  const label = mode === "read" ? "阅读" : mode === "suggest" ? "建议" : "编辑";
-  const aria = mode === "read" ? "阅读模式" : mode === "suggest" ? "修订建议模式" : "编辑模式";
+  const label = mode === "read" ? t("阅读") : mode === "suggest" ? t("建议") : t("编辑");
+  const aria = mode === "read" ? t("阅读模式") : mode === "suggest" ? t("修订建议模式") : t("编辑模式");
   return <div ref={ref} className="relative">
     <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu" aria-label={aria} data-doc-mode-trigger className={cn("flex h-8 items-center gap-1 rounded-md border px-2 text-[13px] hover:bg-hover sm:px-2.5", mode === "suggest" ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "text-foreground")}>{mode === "suggest" ? <FileEdit size={14} /> : <EditIcon className="size-[14px]" />}<span className="hidden sm:inline">{label}</span><DownBoldIcon className={cn("size-3 transition-transform", open && "rotate-180")} /></button>
     {open && <div role="menu" className="absolute right-0 top-9 z-30 w-[216px] rounded-md border bg-surface p-1 shadow-lg">
       {([
-        { value: "edit", label: "编辑", description: "直接编辑文档内容", icon: <EditIcon className="size-[15px]" /> },
-        { value: "suggest", label: "建议", description: "修订模式，修改将以建议呈现供审阅", icon: <FileEdit size={15} /> },
-        { value: "read", label: "阅读", description: "仅查看或评论文档", icon: <Eye size={15} /> },
+        { value: "edit", label: t("编辑"), description: t("直接编辑文档内容"), icon: <EditIcon className="size-[15px]" /> },
+        { value: "suggest", label: t("建议"), description: t("修订模式，修改将以建议呈现供审阅"), icon: <FileEdit size={15} /> },
+        { value: "read", label: t("阅读"), description: t("仅查看或评论文档"), icon: <Eye size={15} /> },
       ] as const).map((item) => <button key={item.value} type="button" role="menuitemradio" aria-checked={mode === item.value} data-doc-mode={item.value} onClick={() => { if (mode !== item.value) onChange(item.value); setOpen(false); }} className="flex w-full items-start gap-2 rounded px-2 py-2 text-left hover:bg-hover"><span className={cn("mt-0.5", mode === item.value ? "text-primary" : "text-muted-foreground")}>{item.icon}</span><span className="min-w-0 flex-1"><span className={cn("block text-[13px]", mode === item.value && "text-primary")}>{item.label}</span><span className="block text-[12px] text-subtle">{item.description}</span></span>{mode === item.value && <Check size={14} className="mt-0.5 text-primary" />}</button>)}
     </div>}
   </div>;
@@ -2539,14 +2557,15 @@ function ModeMenu({ mode, onChange }: { mode: "edit" | "suggest" | "read"; onCha
 
 /** 收藏星标：同步 favorites 查询缓存。 */
 function StarButton({ docId }: { docId: number }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const favs = useQuery({ queryKey: ["favorites"], queryFn: () => extrasApi.favorites() });
   const starred = favs.data?.some((d) => d.id === docId) ?? false;
   return (
     <button
       className={cn("hidden size-6 shrink-0 place-items-center rounded hover:bg-hover sm:grid", starred ? "text-[#ffc60a]" : "text-subtle hover:text-foreground")}
-      title={starred ? "取消收藏" : "收藏"}
-      aria-label={starred ? "取消收藏" : "收藏"}
+      title={starred ? t("取消收藏") : t("收藏")}
+      aria-label={starred ? t("取消收藏") : t("收藏")}
       aria-pressed={starred}
       onClick={() => {
         (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] }));
@@ -2559,10 +2578,11 @@ function StarButton({ docId }: { docId: number }) {
 }
 
 function StarMenuItem({ docId, onDone }: { docId: number; onDone: () => void }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const favs = useQuery({ queryKey: ["favorites"], queryFn: extrasApi.favorites });
   const starred = favs.data?.some((d) => d.id === docId) ?? false;
-  return <button className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover" onClick={() => { (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] })); onDone(); }}><Star size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground" />{starred ? "取消收藏" : "添加到收藏"}</button>;
+  return <button className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover" onClick={() => { (starred ? extrasApi.unstar(docId) : extrasApi.star(docId)).then(() => qc.invalidateQueries({ queryKey: ["favorites"] })); onDone(); }}><Star size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground" />{starred ? t("取消收藏") : t("添加到收藏")}</button>;
 }
 
 function PinMenuItem({ docId, userId, onDone }: { docId: number; userId: number; onDone: () => void }) {
@@ -2586,7 +2606,7 @@ function PinMenuItem({ docId, userId, onDone }: { docId: number; userId: number;
       if (live.current) setError(t("置顶状态未能确认，请重新检查后再试。"));
     } finally { locked.current = false; if (live.current) setPending(false); }
   };
-  return <div><button type="button" disabled={pending || pins.isPending || pins.isFetching || pins.isError || !!error} onClick={() => void toggle()} className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover disabled:opacity-50"><Pin size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground"/>{t(pinned ? "从“置顶”移除" : "添加到“置顶”")}</button>{(pins.isError || error) && <p role="alert" className="px-3 pb-2 text-[12px] text-destructive">{error || t("无法读取置顶状态。")} <button type="button" className="underline" onClick={() => { setError(""); void pins.refetch(); }}>{t("重新检查")}</button></p>}</div>;
+  return <div><button type="button" disabled={pending || pins.isPending || pins.isFetching || pins.isError || !!error} onClick={() => void toggle()} className="flex h-8 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-hover disabled:opacity-50"><Pin size={15} className="shrink-0 text-[#646A73] dark:text-muted-foreground"/>{pinned ? t("从“置顶”移除") : t("添加到“置顶”")}</button>{(pins.isError || error) && <p role="alert" className="px-3 pb-2 text-[12px] text-destructive">{error || t("无法读取置顶状态。")} <button type="button" className="underline" onClick={() => { setError(""); void pins.refetch(); }}>{t("重新检查")}</button></p>}</div>;
 }
 
 function DocMenu({
@@ -2694,7 +2714,7 @@ function DocMenu({
       // Do not navigate if the user left the document or lost verified access
       // while the request was running.
       if (live.current && currentMeta.current?.id === sourceId && canCopyDocument(currentMeta.current)) go(hrefOf(nd));
-      else if (live.current) setCopyNotice("副本已创建，请在主页查看。");
+      else if (live.current) setCopyNotice(t("副本已创建，请在主页查看。"));
     } catch (error) {
       if (live.current) setCopyError(copyErrorMessage(error));
     } finally {
@@ -2704,12 +2724,12 @@ function DocMenu({
   };
   return (
     <div className="relative" ref={menuRoot}>
-      <button ref={menuTrigger} className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title="更多" aria-label="更多" aria-expanded={open} aria-haspopup="menu" onClick={() => { setOpen((o) => !o); setSub(null); }} data-more-menu>
+      <button ref={menuTrigger} className="grid size-9 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground sm:size-8" title={t("更多")} aria-label={t("更多")} aria-expanded={open} aria-haspopup="menu" onClick={() => { setOpen((o) => !o); setSub(null); }} data-more-menu>
         <MoreIcon className="size-4" />
       </button>
-      {copyPending && <span role="status" className="absolute right-0 top-9 z-40 whitespace-nowrap rounded-md border bg-surface px-3 py-2 text-[13px] text-muted-foreground shadow-lg">正在创建副本…</span>}
-      {copyNotice && <div role="status" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] shadow-lg"><span className="min-w-0 flex-1">{copyNotice}</span><button type="button" aria-label="关闭提示" onClick={() => setCopyNotice("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
-      {copyError && <div role="alert" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] text-destructive shadow-lg"><span className="min-w-0 flex-1">{copyError}</span><button type="button" aria-label="关闭错误提示" onClick={() => setCopyError("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
+      {copyPending && <span role="status" className="absolute right-0 top-9 z-40 whitespace-nowrap rounded-md border bg-surface px-3 py-2 text-[13px] text-muted-foreground shadow-lg">{t("正在创建副本…")}</span>}
+      {copyNotice && <div role="status" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] shadow-lg"><span className="min-w-0 flex-1">{copyNotice}</span><button type="button" aria-label={t("关闭提示")} onClick={() => setCopyNotice("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
+      {copyError && <div role="alert" className="absolute right-0 top-9 z-40 flex w-64 items-start gap-2 rounded-md border bg-surface px-3 py-2 text-[13px] text-destructive shadow-lg"><span className="min-w-0 flex-1">{copyError}</span><button type="button" aria-label={t("关闭错误提示")} onClick={() => setCopyError("")} className="text-muted-foreground hover:text-foreground">×</button></div>}
       {open && (
         <div className="absolute right-0 top-9 z-30 w-[min(240px,calc(100vw-24px))] max-h-[calc(100dvh-4rem)] sm:w-[176px] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border sm:max-h-none sm:overflow-visible" data-doc-more-menu>
           {/* 飞书「…」菜单分组（2026-11-11 实测）：页宽 / 查找 / 收藏与位置 / 模板、副本、下载 / 打印 / 文档信息与历史 / 删除 */}
@@ -2717,7 +2737,7 @@ function DocMenu({
             {onWidthChange && width && (
               <div className="relative" data-doc-width-menu onMouseEnter={() => { if (window.matchMedia("(hover: hover)").matches) setSub("width"); }} onMouseLeave={() => setSub((value) => value === "width" ? null : value)}>
                 <button className={cn(row, sub === "width" && "bg-hover")} type="button" aria-haspopup="true" aria-expanded={sub === "width"} onClick={() => setSub("width")}>
-                  <PanelsTopLeft size={15} className={icon} /><span className="flex-1">页面设置</span><ChevronRight size={14} className="text-subtle" />
+                  <PanelsTopLeft size={15} className={icon} /><span className="flex-1">{t("页面设置")}</span><ChevronRight size={14} className="text-subtle" />
                 </button>
                 {sub === "width" && <div className="px-2 pb-2 sm:absolute sm:right-full sm:top-0 sm:z-40 sm:p-0">
                   <DocWidthOptions width={width} onChange={(value) => onWidthChange(value)} prefs={prefs} onPrefsChange={onPrefsChange} />
@@ -2727,18 +2747,18 @@ function DocMenu({
             {canLock && prefs && onPrefsChange && (
               <button type="button" className={row} data-doc-lock-toggle onClick={() => { onPrefsChange({ locked: !prefs.locked }); close(); }}>
                 {prefs.locked ? <Unlock size={15} className="shrink-0 text-[#3370FF]" /> : <Lock size={15} className={icon} />}
-                <span className="flex-1">{prefs.locked ? "解除文档锁定" : "锁定文档"}</span>
+                <span className="flex-1">{prefs.locked ? t("解除文档锁定") : t("锁定文档")}</span>
               </button>
             )}
-            {onPresentation && <button className={row} onClick={() => { close(); onPresentation(); }} data-document-present><Presentation size={15} className={icon} />演示模式</button>}
+            {onPresentation && <button className={row} onClick={() => { close(); onPresentation(); }} data-document-present><Presentation size={15} className={icon} />{t("演示模式")}</button>}
           </div>
           <div className={group}>
-            <button className={row} onClick={() => { close(); onFind(); }}><Search size={15} className={icon} />查找和替换</button>
-            <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />目录</button>
-            {onShowReferences && <button className={row} onClick={() => { close(); onShowReferences(); }} data-show-references><Link2 size={15} className={icon} />显示双向链接</button>}
-            {onAI && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onAI(); }}><Sparkles size={15} className={icon} />AI 助手</button>}
-            {onToggleSuggestions && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onToggleSuggestions(); }}><FileEdit size={15} className={icon} />修订建议</button>}
-            <button className={cn(row, "sm:hidden")} onClick={() => { close(); onComments(); }}><MessageSquare size={15} className={icon} />评论</button>
+            <button className={row} onClick={() => { close(); onFind(); }}><Search size={15} className={icon} />{t("查找和替换")}</button>
+            <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />{t("目录")}</button>
+            {onShowReferences && <button className={row} onClick={() => { close(); onShowReferences(); }} data-show-references><Link2 size={15} className={icon} />{t("显示双向链接")}</button>}
+            {onAI && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onAI(); }}><Sparkles size={15} className={icon} />{t("AI 助手")}</button>}
+            {onToggleSuggestions && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onToggleSuggestions(); }}><FileEdit size={15} className={icon} />{t("修订建议")}</button>}
+            <button className={cn(row, "sm:hidden")} onClick={() => { close(); onComments(); }}><MessageSquare size={15} className={icon} />{t("评论")}</button>
           </div>
           {meta && <div className={group}>
             {meta.role === "manage" && <button className={row} onClick={() => { close(); setMoveOpen(true); }}><FolderInput size={15} className={icon} />{t("移动到")}</button>}
@@ -2746,42 +2766,42 @@ function DocMenu({
             {meta && <StarMenuItem docId={meta.id} onDone={close} />}
           </div>}
           <div className={group}>
-            {onSaveTemplate && <button className={row} onClick={() => { close(); onSaveTemplate(); }} data-save-template><LayoutTemplate size={15} className={icon} />保存为模板</button>}
-            {canCopyDocument(meta) && <button className={cn(row, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate><Copy size={15} className={icon} />创建副本</button>}
+            {onSaveTemplate && <button className={row} onClick={() => { close(); onSaveTemplate(); }} data-save-template><LayoutTemplate size={15} className={icon} />{t("保存为模板")}</button>}
+            {canCopyDocument(meta) && <button className={cn(row, "disabled:opacity-50")} disabled={copyPending} onClick={() => void duplicate()} data-duplicate><Copy size={15} className={icon} />{t("创建副本")}</button>}
             {<div className="relative" onMouseEnter={() => setSub("download")} onMouseLeave={() => setSub(null)}>
-              <button className={cn(row, sub === "download" && "bg-hover")} aria-haspopup="menu" aria-expanded={sub === "download"} onClick={() => setSub("download")} data-download-menu><Download size={15} className={icon} /><span className="flex-1">下载为</span><ChevronRight size={14} className="text-subtle" /></button>
+              <button className={cn(row, sub === "download" && "bg-hover")} aria-haspopup="menu" aria-expanded={sub === "download"} onClick={() => setSub("download")} data-download-menu><Download size={15} className={icon} /><span className="flex-1">{t("下载为")}</span><ChevronRight size={14} className="text-subtle" /></button>
               <div role="menu" className={cn("mx-2 mb-2 rounded-lg border border-[#DEE0E3] bg-surface py-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border sm:absolute sm:right-full sm:top-0 sm:z-40 sm:mx-0 sm:mb-0 sm:w-44", sub !== "download" && "hidden")}>
-                {onExport && <button className={row} onClick={() => { close(); onExport("md"); }}><FileText size={15} className={icon} />导出 Markdown</button>}
-                {onExport && <button className={row} onClick={() => { close(); onExport("docx"); }} data-export-docx><FileType size={15} className={icon} />导出 Word（.docx）</button>}
-                {<button className={row} onClick={() => { close(); onPrint(); }} data-export-pdf><FileDown size={15} className={icon} />导出 PDF（打印）</button>}
+                {onExport && <button className={row} onClick={() => { close(); onExport("md"); }}><FileText size={15} className={icon} />{t("导出 Markdown")}</button>}
+                {onExport && <button className={row} onClick={() => { close(); onExport("docx"); }} data-export-docx><FileType size={15} className={icon} />{t("导出 Word（.docx）")}</button>}
+                {<button className={row} onClick={() => { close(); onPrint(); }} data-export-pdf><FileDown size={15} className={icon} />{t("导出 PDF（打印）")}</button>}
               </div>
             </div>}
             {onImport && (
               <label className={cn(row, "cursor-pointer")} data-import-md>
-                <FileUp size={15} className={icon} />导入 Markdown
+                <FileUp size={15} className={icon} />{t("导入 Markdown")}
                 <input type="file" accept=".md,.markdown,text/markdown" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; close(); }} />
               </label>
             )}
             {onImport && (
               <label className={cn(row, "cursor-pointer")} data-import-docx>
-                <FileUp size={15} className={icon} />导入 Word
+                <FileUp size={15} className={icon} />{t("导入 Word")}
                 <input type="file" accept={`.docx,${DOCX_MIME}`} className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ""; close(); }} />
               </label>
             )}
           </div>
-          {<div className={group}><button className={row} onClick={() => { close(); onPrint(); }}><Printer size={15} className={icon} />打印</button></div>}
-          {onCreateVersion && <div className={group}><button className={row} onClick={() => { close(); onCreateVersion(); }} data-save-named-version><FileText size={15} className={icon} />另存为版本</button></div>}
+          {<div className={group}><button className={row} onClick={() => { close(); onPrint(); }}><Printer size={15} className={icon} />{t("打印")}</button></div>}
+          {onCreateVersion && <div className={group}><button className={row} onClick={() => { close(); onCreateVersion(); }} data-save-named-version><FileText size={15} className={icon} />{t("另存为版本")}</button></div>}
           <div className={group}>
-            {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />文档信息</button>}
+            {onDocumentInfo && <button className={row} onClick={() => { close(); onDocumentInfo(); }} data-document-info><Info size={15} className={icon} />{t("文档信息")}</button>}
             {onMentionedPeople && <button className={row} onClick={() => { close(); onMentionedPeople(); }} data-document-mentions><AtSign size={15} className={icon} />{t("提及的人")}</button>}
-            {onSavedVersions && <button className={row} onClick={() => { close(); onSavedVersions(); }} data-view-saved-versions><FileText size={15} className={icon} />查看已存版本</button>}
-            {onHistory && <button className={row} onClick={() => { close(); onHistory(); }} data-doc-history><History size={15} className={icon} />历史记录</button>}
+            {onSavedVersions && <button className={row} onClick={() => { close(); onSavedVersions(); }} data-view-saved-versions><FileText size={15} className={icon} />{t("查看已存版本")}</button>}
+            {onHistory && <button className={row} onClick={() => { close(); onHistory(); }} data-doc-history><History size={15} className={icon} />{t("历史记录")}</button>}
             {onCommentHistory && <button className={row} onClick={() => { close(); onCommentHistory(); }} data-comment-history-entry><MessageSquare size={15} className={icon} />{t("历史评论")}</button>}
-            {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />检查文档名称</button>}
-            <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />AI 设置</button>
+            {onTitleCheck && <button className={row} onClick={() => { close(); onTitleCheck(); }}><SpellCheck size={15} className={icon} />{t("检查文档名称")}</button>}
+            <button className={row} onClick={() => { close(); openAISettings(); }} data-ai-settings-entry><Sparkles size={15} className={icon} />{t("AI 设置")}</button>
           </div>
           {meta?.role === "manage" && <div className={group}>
-            <button className={cn(row, "text-destructive")} onClick={trash}><Trash2 size={15} />删除（移到回收站）</button>
+            <button className={cn(row, "text-destructive")} onClick={trash}><Trash2 size={15} />{t("删除（移到回收站）")}</button>
           </div>}
         </div>
       )}

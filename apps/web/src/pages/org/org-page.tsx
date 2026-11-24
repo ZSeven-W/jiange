@@ -265,7 +265,7 @@ export function OrgPage({ me }: { me: Me }) {
           </div>
         </header>
 
-        <div className="mobile-scroll-x flex items-center gap-1 border-b bg-surface px-4 md:px-7">
+        <div className="flex flex-wrap items-center gap-x-0.5 gap-y-0 border-b bg-surface px-4 md:px-7">
           {([
             ["departments", t("部门架构")],
             ["groups", t("用户组")],
@@ -284,7 +284,7 @@ export function OrgPage({ me }: { me: Me }) {
               aria-selected={tab === key}
               onClick={() => setTab(key)}
               className={cn(
-                "shrink-0 border-b-2 px-3 py-2.5 text-[14px] font-medium transition-colors",
+                "shrink-0 border-b-2 px-2.5 py-2.5 text-[13px] font-medium transition-colors",
                 tab === key ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground",
               )}
             >

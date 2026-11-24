@@ -1,4 +1,5 @@
 import type { DriveEntry } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 export type FolderSortField = "created" | "updated" | "name";
 export type FolderSortDirection = "asc" | "desc";
@@ -46,7 +47,7 @@ export function formatDriveTime(value: string | undefined, now = new Date()): st
   const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
   const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
   const time = `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  if (dateDay === today.getTime()) return `今天 ${time}`;
-  if (dateDay === yesterday.getTime()) return `昨天 ${time}`;
-  return `${date.getFullYear()}年${date.getMonth() + 1}月${date.getDate()}日`;
+  if (dateDay === today.getTime()) return t("今天 {time}", { time });
+  if (dateDay === yesterday.getTime()) return t("昨天 {time}", { time });
+  return t("{y}年{m}月{d}日", { y: date.getFullYear(), m: date.getMonth() + 1, d: date.getDate() });
 }

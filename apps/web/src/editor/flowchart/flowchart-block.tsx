@@ -2449,7 +2449,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
           />
         );
       })()}
-      {!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !frames.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 grid place-items-center">
+      {!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !frames.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
         <div className={cn("pointer-events-auto w-[min(560px,calc(100%-32px))] overflow-y-auto rounded-xl border border-[#DEE0E3] bg-surface p-4 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "max-h-[calc(100%-24px)]" : "max-h-[calc(100%-190px)]")} style={{ touchAction: "pan-y" }} onPointerDown={(e) => e.stopPropagation()} data-flow-template-picker>
           <div className="mb-3 flex items-center text-[14px] font-medium">从模板创建<button type="button" aria-label="关闭模板" onClick={() => setShowStarter(false)} className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover"><X size={16}/></button></div>
           <div className="grid grid-cols-2 gap-2 md:grid-cols-5">{FLOW_TEMPLATES.map((t) => <button key={t.id} type="button" onClick={() => applyTemplate(t)} className="rounded-lg border border-[#DEE0E3] p-2 text-left hover:border-primary dark:border-border" data-flow-template={t.id}><div className="text-[13px] font-medium">{t.label}</div><div className="mt-1 text-[11px] leading-4 text-subtle">{t.desc}</div></button>)}</div>
