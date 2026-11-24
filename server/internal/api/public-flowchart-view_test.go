@@ -427,3 +427,211 @@ func TestPublicFlowProjectionFramesAndRelationsOnPublicLink(t *testing.T) {
 		t.Fatalf("public view leaked hidden metadata: %s", body)
 	}
 }
+
+func TestPublicFlowProjectionStickyVotesAndMindExtras(t *testing.T) {
+	input := map[string]string{
+		"fc.theme": "feishu",
+		// Sticky note + normal node
+		"fc.n.st1": `{"shape":"sticky","x":40,"y":60,"w":180,"h":150,"text":"核心想法","fill":"#fff3b0","stroke":"#e6c963","private":"HIDDEN-STICKY-EXTRA"}`,
+		"fc.n.n1":  `{"shape":"rect","x":300,"y":60,"w":140,"h":60,"text":"节点一"}`,
+		// Valid & invalid votes
+		"fc.vt.st1":     `{"voters":["u2","u1","u1"," u3 ","bad id!"],"secret":"HIDDEN-VOTE-SECRET"}`,
+		"fc.vt.n1":      `{"voters":[]}`,
+		"fc.vt.missing": `{"voters":["u1"]}`,
+		"fc.vt.bad!":    `{"voters":["u1"]}`,
+		"fc.vt.corrupt": `{bad`,
+		// Live mind topics + orphan
+		"fc.m.root":   `{"parent":null,"order":0,"text":"方案评审","x":100,"y":100}`,
+		"fc.m.b1":     `{"parent":"root","order":0,"text":"前端改造"}`,
+		"fc.m.b2":     `{"parent":"root","order":1,"text":"后端接口"}`,
+		"fc.m.orphan": `{"parent":"ghost","order":0,"text":"HIDDEN-ORPHAN"}`,
+		// Existing MindStyle fc.ms.* MUST remain intact alongside fc.msu.* summary!
+		"fc.ms.b1": `{"shape":"rect","size":16,"color":"#3370ff"}`,
+		// Valid & invalid boundaries (fc.mb.*)
+		"fc.mb.b1":      `{"label":"  阶段一  ","color":"#3370FF","secret":"HIDDEN-BOUNDARY-SECRET"}`,
+		"fc.mb.b2":      `{"color":"#2ea121"}`,
+		"fc.mb.orphan":  `{"label":"HIDDEN-ORPHAN-MB","color":"#3370ff"}`,
+		"fc.mb.badcol":  `{"label":"bad","color":"red"}`,
+		"fc.mb.longlbl": `{"label":"` + strings.Repeat("字", 41) + `","color":"#3370ff"}`,
+		"fc.mb.corrupt": `{bad`,
+		// Valid & invalid summaries (fc.msu.*)
+		"fc.msu.root":    `{"label":"  核心结论  ","color":"#722ED1","secret":"HIDDEN-SUMMARY-SECRET"}`,
+		"fc.msu.b1":      `{"label":""}`,
+		"fc.msu.orphan":  `{"label":"HIDDEN-ORPHAN-MSU","color":"#722ed1"}`,
+		"fc.msu.badcol":  `{"label":"ok","color":"not-hex"}`,
+		"fc.msu.longlbl": `{"label":"` + strings.Repeat("总", 81) + `","color":"#722ed1"}`,
+		// Valid & invalid badges (fc.mg.*)
+		"fc.mg.b1":       `{"priority":1,"progress":50,"tag":"  核心  ","secret":"HIDDEN-BADGE-SECRET"}`,
+		"fc.mg.b2":       `{"progress":100}`,
+		"fc.mg.root":     `{}`,
+		"fc.mg.orphan":   `{"priority":2,"tag":"HIDDEN-ORPHAN-MG"}`,
+		"fc.mg.badprio":  `{"priority":9}`,
+		"fc.mg.badprog":  `{"progress":33}`,
+		"fc.mg.longtag":  `{"tag":"` + strings.Repeat("标", 17) + `"}`,
+		"fc.mg.corrupt":  `[]`,
+	}
+
+	out := publicFlowProps(input)
+	encoded, _ := json.Marshal(out)
+	if strings.Contains(string(encoded), "HIDDEN-") {
+		t.Fatalf("hidden data leaked: %s", encoded)
+	}
+
+	// Sticky shape preserved
+	var st1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.n.st1"]), &st1); err != nil {
+		t.Fatalf("missing sticky node: %v", err)
+	}
+	if st1["shape"] != "sticky" || st1["fill"] != "#fff3b0" || st1["text"] != "核心想法" {
+		t.Fatalf("unexpected sticky node projection: %#v", st1)
+	}
+
+	// Votes deduplicated, sorted, sanitized
+	var vt1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.vt.st1"]), &vt1); err != nil {
+		t.Fatalf("missing fc.vt.st1: %v", err)
+	}
+	wantVt := map[string]any{"voters": []any{"u1", "u2", "u3"}}
+	if !reflect.DeepEqual(vt1, wantVt) {
+		t.Fatalf("fc.vt.st1 mismatch:\n got %#v\nwant %#v", vt1, wantVt)
+	}
+
+	// Existing MindStyle fc.ms.b1 preserved untouched
+	if out["fc.ms.b1"] == "" {
+		t.Fatalf("existing fc.ms.b1 MindStyle was dropped")
+	}
+
+	// Boundaries
+	var mb1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.mb.b1"]), &mb1); err != nil {
+		t.Fatalf("missing fc.mb.b1: %v", err)
+	}
+	if !reflect.DeepEqual(mb1, map[string]any{"label": "阶段一", "color": "#3370ff"}) {
+		t.Fatalf("fc.mb.b1 mismatch: %#v", mb1)
+	}
+	var mb2 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.mb.b2"]), &mb2); err != nil {
+		t.Fatalf("missing fc.mb.b2: %v", err)
+	}
+	if !reflect.DeepEqual(mb2, map[string]any{"color": "#2ea121"}) {
+		t.Fatalf("fc.mb.b2 mismatch: %#v", mb2)
+	}
+
+	// Summaries
+	var msuRoot map[string]any
+	if err := json.Unmarshal([]byte(out["fc.msu.root"]), &msuRoot); err != nil {
+		t.Fatalf("missing fc.msu.root: %v", err)
+	}
+	if !reflect.DeepEqual(msuRoot, map[string]any{"label": "核心结论", "color": "#722ed1"}) {
+		t.Fatalf("fc.msu.root mismatch: %#v", msuRoot)
+	}
+	var msuB1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.msu.b1"]), &msuB1); err != nil {
+		t.Fatalf("missing fc.msu.b1: %v", err)
+	}
+	if !reflect.DeepEqual(msuB1, map[string]any{"label": "概要", "color": "#722ed1"}) {
+		t.Fatalf("fc.msu.b1 mismatch: %#v", msuB1)
+	}
+
+	// Badges
+	var mg1 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.mg.b1"]), &mg1); err != nil {
+		t.Fatalf("missing fc.mg.b1: %v", err)
+	}
+	if !reflect.DeepEqual(mg1, map[string]any{"priority": float64(1), "progress": float64(50), "tag": "核心"}) {
+		t.Fatalf("fc.mg.b1 mismatch: %#v", mg1)
+	}
+	var mg2 map[string]any
+	if err := json.Unmarshal([]byte(out["fc.mg.b2"]), &mg2); err != nil {
+		t.Fatalf("missing fc.mg.b2: %v", err)
+	}
+	if !reflect.DeepEqual(mg2, map[string]any{"progress": float64(100)}) {
+		t.Fatalf("fc.mg.b2 mismatch: %#v", mg2)
+	}
+
+	// Invalid / orphan / empty entries stripped
+	for _, key := range []string{
+		"fc.vt.n1", "fc.vt.missing", "fc.vt.bad!", "fc.vt.corrupt",
+		"fc.mb.orphan", "fc.mb.badcol", "fc.mb.longlbl", "fc.mb.corrupt",
+		"fc.msu.orphan", "fc.msu.badcol", "fc.msu.longlbl",
+		"fc.mg.root", "fc.mg.orphan", "fc.mg.badprio", "fc.mg.badprog", "fc.mg.longtag", "fc.mg.corrupt",
+	} {
+		if out[key] != "" {
+			t.Errorf("expected invalid/orphan prop %s to be stripped, got %q", key, out[key])
+		}
+	}
+}
+
+func TestPublicFlowProjectionExtrasOnPublicLink(t *testing.T) {
+	ctx := context.Background()
+	e := newCopyTestEnv(t)
+	e.share(t)
+	doc, _, err := StateAtHead(ctx, e.store, e.source.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := doc.CreateBlock(31, collab.Root, "Z", "flowchart")
+	ops := []collab.Op{create}
+	props := map[string]string{
+		"fc.v":          "1",
+		"fc.theme":      "feishu",
+		"fc.n.st1":      `{"shape":"sticky","x":20,"y":20,"w":180,"h":150,"text":"头脑风暴便利贴","fill":"#fff3b0","secret":"HIDDEN-ST"}`,
+		"fc.vt.st1":     `{"voters":["u1","u2"],"secret":"HIDDEN-VT"}`,
+		"fc.m.root":     `{"parent":null,"order":0,"text":"季度规划","x":80,"y":80}`,
+		"fc.m.c1":       `{"parent":"root","order":0,"text":"目标拆解"}`,
+		"fc.m.c2":       `{"parent":"root","order":1,"text":"里程碑"}`,
+		"fc.mb.c1":      `{"label":"关键阶段","color":"#3370ff","secret":"HIDDEN-MB"}`,
+		"fc.msu.root":   `{"label":"季度总结","color":"#722ed1","secret":"HIDDEN-MSU"}`,
+		"fc.mg.c1":      `{"priority":1,"progress":75,"tag":"高优","secret":"HIDDEN-MG"}`,
+		"fc.mb.ghost":   `{"label":"HIDDEN-GHOST-MB","color":"#3370ff"}`,
+		"fc.vt.ghost":   `{"voters":["HIDDEN-GHOST-VT"]}`,
+	}
+	keys := make([]string, 0, len(props))
+	for k := range props {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		val := props[k]
+		op := collab.Op{T: collab.TBlockSet, ID: collab.OpID{Client: 31, Clock: doc.Clock() + 1}, Block: create.ID, Key: k, Value: &val}
+		if !doc.Apply(op) {
+			t.Fatalf("apply %s", k)
+		}
+		ops = append(ops, op)
+	}
+	rows := make([]store.RawOp, 0, len(ops))
+	for _, op := range ops {
+		data, err := collab.EncodeOps([]collab.Op{op})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows = append(rows, store.RawOp{ClientID: int64(op.ID.Client), Clock: int64(op.ID.Clock), Bytes: data})
+	}
+	if _, err = e.store.AppendOps(ctx, e.source.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	r := send(t, e.owner, "PUT", e.url()+"/link", map[string]string{"role": "anon"})
+	var link store.Link
+	if err = json.NewDecoder(r.Body).Decode(&link); err != nil || r.StatusCode != 200 {
+		t.Fatalf("link: %d %v", r.StatusCode, err)
+	}
+	r.Body.Close()
+
+	resp, err := (&http.Client{}).Get(e.server.URL + "/api/public/" + link.Token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		t.Fatalf("public view failed: %d %s", resp.StatusCode, body)
+	}
+	for _, want := range []string{"sticky", "头脑风暴便利贴", "关键阶段", "季度总结", "高优"} {
+		if !bytes.Contains(body, []byte(want)) {
+			t.Fatalf("public view missing %q: %s", want, body)
+		}
+	}
+	if bytes.Contains(body, []byte("HIDDEN-")) {
+		t.Fatalf("public view leaked hidden metadata: %s", body)
+	}
+}

@@ -9,7 +9,7 @@ import { canonicalMindDescription, canonicalMindDescriptionStyle, canonicalMindP
  */
 
 export type Shape = "rect" | "round" | "diamond" | "ellipse" | "terminator" | "parallelogram" | "document" | "cylinder" | "hexagon" | "text"
-  | "triangle" | "note" | "swimlane" | "swimlaneV" | "class" | "actor" | "lifeline" | "image";
+  | "triangle" | "note" | "sticky" | "swimlane" | "swimlaneV" | "class" | "actor" | "lifeline" | "image";
 export type TextAlign = "left" | "center" | "right";
 export type Port = "top" | "right" | "bottom" | "left";
 export type EdgeKind = "orthogonal" | "straight" | "curve";
@@ -42,6 +42,7 @@ export const SHAPES: { id: Shape; label: string; w: number; h: number }[] = [
   { id: "text", label: "文本", w: 120, h: 36 },
   { id: "triangle", label: "三角形", w: 100, h: 86 },
   { id: "note", label: "便签", w: 140, h: 90 },
+  { id: "sticky", label: "便利贴", w: 180, h: 150 },
   { id: "swimlane", label: "横向泳道", w: 640, h: 160 },
   { id: "swimlaneV", label: "纵向泳道", w: 220, h: 480 },
   { id: "class", label: "类", w: 180, h: 120 },
@@ -622,7 +623,7 @@ export function measureLabel(text: string, minW: number): number {
 /** Mermaid text for Markdown export (shapes mapped to the closest Mermaid node syntax). */
 export function toMermaid(graph: FlowGraph): string {
   const q = (s: string) => `"${s.replace(/"/g, "'").replace(/\n/g, "<br/>")}"`;
-  const wrap: Record<Shape, [string, string]> = { rect: ["[", "]"], round: ["(", ")"], terminator: ["([", "])"], diamond: ["{", "}"], parallelogram: ["[/", "/]"], ellipse: ["((", "))"], document: ["[", "]"], cylinder: ["[(", ")]"], hexagon: ["{{", "}}"], text: ["[", "]"], triangle: ["[", "]"], note: ["[", "]"], swimlane: ["[", "]"], swimlaneV: ["[", "]"], class: ["[", "]"], actor: ["((", "))"], lifeline: ["[", "]"], image: ["[", "]"] };
+  const wrap: Record<Shape, [string, string]> = { rect: ["[", "]"], round: ["(", ")"], terminator: ["([", "])"], diamond: ["{", "}"], parallelogram: ["[/", "/]"], ellipse: ["((", "))"], document: ["[", "]"], cylinder: ["[(", ")]"], hexagon: ["{{", "}}"], text: ["[", "]"], triangle: ["[", "]"], note: ["[", "]"], sticky: ["[", "]"], swimlane: ["[", "]"], swimlaneV: ["[", "]"], class: ["[", "]"], actor: ["((", "))"], lifeline: ["[", "]"], image: ["[", "]"] };
   const ids = new Map(graph.nodes.map((n, i) => [n.id, `N${i + 1}`]));
   const lines = ["flowchart TD"];
   for (const n of graph.nodes) { const [a, b] = wrap[n.shape]; lines.push(`  ${ids.get(n.id)}${a}${q(n.text || (n.shape === "image" ? "图片" : " "))}${b}`); }

@@ -9,11 +9,29 @@ export interface SlideFieldTextStyleMeta {
   align?: "left" | "center" | "right";
 }
 
+export type SlideShapeAnimationEffect =
+  | "fade-in"
+  | "slide-up"
+  | "zoom-in"
+  | "bounce"
+  | "pulse"
+  | "fade-out";
+
+export type SlideShapeAnimationTrigger = "click" | "with_prev" | "after_prev";
+
+export interface SlideShapeAnimation {
+  effect: SlideShapeAnimationEffect;
+  order: number;
+  durationMs?: number;
+  trigger?: SlideShapeAnimationTrigger;
+}
+
 export interface SlidePageMeta {
   titleStyle?: SlideFieldTextStyleMeta;
   bodyStyle?: SlideFieldTextStyleMeta;
   transition?: "none" | "fade" | "push" | "wipe";
   shapeGroups?: Record<string, string[]>;
+  animations?: Record<string, SlideShapeAnimation>;
 }
 
 export type SlidesPage = SdkSlidesPage & {
@@ -1160,7 +1178,7 @@ export const driveApi = {
   trashList: () => request<{ docs: DocMeta[] }>("GET", "/api/trash").then((r) => r.docs),
 };
 
-const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "line", "line-arrow", "line-arrow-filled", "line-dot", "line-double-arrow", "text", "image"]);
+const slideShapeKinds = new Set(["rectangle", "ellipse", "triangle", "rounded-rectangle", "right-triangle", "diamond", "pentagon", "hexagon", "star", "parallelogram", "trapezoid", "arrow-right", "line", "line-arrow", "line-arrow-filled", "line-dot", "line-double-arrow", "text", "image", "table", "chart"]);
 export const slidesApi = {
   duplicateDeck: (id: number, userId: number, signal: AbortSignal) => request<DocMeta>("POST", `/api/docs/${id}/duplicate`, undefined, signal, { "X-Jiange-User-Id": String(userId) }),
   pages: (deckId: number, userId: number) => request<{ pages: SlidesPage[]; presentationProtocol?: number }>("GET", `/api/slides/${deckId}/pages`, undefined, undefined, { "X-Jiange-Slides-Version": "5", "X-Jiange-User-Id": String(userId) }).then((r) => {

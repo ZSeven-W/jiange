@@ -22,6 +22,7 @@ func TestValidateAndNormalizeSlidePageMeta(t *testing.T) {
 			" { } ",
 			`{"titleStyle":{},"bodyStyle":{},"transition":"none","shapeGroups":{}}`,
 			`{"shapeGroups":{"g1":[]}}`,
+			`{"animations":{}}`,
 		} {
 			got, err := store.ValidateAndNormalizeSlidePageMeta(json.RawMessage(raw))
 			if err != nil {
@@ -38,7 +39,12 @@ func TestValidateAndNormalizeSlidePageMeta(t *testing.T) {
 			"titleStyle": {"fontSize": 48, "bold": true, "italic": false, "color": "#3370ff", "align": "center"},
 			"bodyStyle": {"fontSize": 22, "color": "#4e5969", "align": "left"},
 			"transition": "wipe",
-			"shapeGroups": {"grp-1": ["s1", "s2", "s1"], "grp_2": ["a", "b"]}
+			"shapeGroups": {"grp-1": ["s1", "s2", "s1"], "grp_2": ["a", "b"]},
+			"animations": {
+				"s1": {"effect": "fade-in", "order": 1},
+				"s2": {"effect": "slide-up", "order": 2, "durationMs": 700, "trigger": "with_prev"},
+				"s3": {"effect": "fade-out", "order": 3, "durationMs": 300, "trigger": "after_prev"}
+			}
 		}`)
 		got, err := store.ValidateAndNormalizeSlidePageMeta(raw)
 		if err != nil {
@@ -60,6 +66,15 @@ func TestValidateAndNormalizeSlidePageMeta(t *testing.T) {
 		if !reflect.DeepEqual(parsed.ShapeGroups["grp-1"], []string{"s1", "s2"}) {
 			t.Fatalf("deduped group: %+v", parsed.ShapeGroups)
 		}
+		if gotAnim := parsed.Animations["s1"]; gotAnim.Effect != "fade-in" || gotAnim.Order != 1 || gotAnim.DurationMs != 450 || gotAnim.Trigger != "click" {
+			t.Fatalf("s1 animation defaults: %+v", gotAnim)
+		}
+		if gotAnim := parsed.Animations["s2"]; gotAnim.Effect != "slide-up" || gotAnim.Order != 2 || gotAnim.DurationMs != 700 || gotAnim.Trigger != "with_prev" {
+			t.Fatalf("s2 animation: %+v", gotAnim)
+		}
+		if gotAnim := parsed.Animations["s3"]; gotAnim.Effect != "fade-out" || gotAnim.Order != 3 || gotAnim.DurationMs != 300 || gotAnim.Trigger != "after_prev" {
+			t.Fatalf("s3 animation: %+v", gotAnim)
+		}
 	})
 
 	t.Run("rejects invalid fields and oversized payloads", func(t *testing.T) {
@@ -74,6 +89,12 @@ func TestValidateAndNormalizeSlidePageMeta(t *testing.T) {
 			manyMembers[i] = fmt.Sprintf("s-%d", i)
 		}
 		manyMembersRaw, _ := json.Marshal(map[string]any{"shapeGroups": map[string][]string{"g1": manyMembers}})
+
+		manyAnims := make(map[string]store.SlideShapeAnimationMeta, 101)
+		for i := range 101 {
+			manyAnims[fmt.Sprintf("shape-%d", i)] = store.SlideShapeAnimationMeta{Effect: "fade-in", Order: 1}
+		}
+		manyAnimsRaw, _ := json.Marshal(map[string]any{"animations": manyAnims})
 
 		giantRaw := json.RawMessage(`{"transition":"fade","pad":"` + strings.Repeat("a", 65*1024) + `"}`)
 
@@ -94,6 +115,17 @@ func TestValidateAndNormalizeSlidePageMeta(t *testing.T) {
 			{"invalid member id", json.RawMessage(`{"shapeGroups":{"g1":["s1","bad id!"]}}`)},
 			{"too many groups", manyGroupsRaw},
 			{"too many group members", manyMembersRaw},
+			{"invalid animation shape id", json.RawMessage(`{"animations":{"bad id!":{"effect":"fade-in","order":1}}}`)},
+			{"invalid animation effect", json.RawMessage(`{"animations":{"s1":{"effect":"spin","order":1}}}`)},
+			{"missing animation effect", json.RawMessage(`{"animations":{"s1":{"order":1}}}`)},
+			{"animation order too small", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":0}}}`)},
+			{"animation order too large", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":101}}}`)},
+			{"animation duration too small", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1,"durationMs":99}}}`)},
+			{"animation duration negative", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1,"durationMs":-10}}}`)},
+			{"animation duration too large", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1,"durationMs":5001}}}`)},
+			{"invalid animation trigger", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1,"trigger":"hover"}}}`)},
+			{"unknown animation nested key", json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1,"delay":100}}}`)},
+			{"too many animations", manyAnimsRaw},
 			{"oversized payload", giantRaw},
 			{"trailing junk", json.RawMessage(`{"transition":"fade"}{}`)},
 		}
@@ -147,7 +179,7 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 	}
 
 	// Save full page metadata on page 1 without bumping revision.
-	meta1 := json.RawMessage(`{"titleStyle":{"fontSize":48,"bold":true,"color":"#112233","align":"center"},"bodyStyle":{"italic":true},"transition":"fade","shapeGroups":{"grp-1":["shape-a","shape-b"]}}`)
+	meta1 := json.RawMessage(`{"titleStyle":{"fontSize":48,"bold":true,"color":"#112233","align":"center"},"bodyStyle":{"italic":true},"transition":"fade","shapeGroups":{"grp-1":["shape-a","shape-b"]},"animations":{"shape-a":{"effect":"zoom-in","order":1,"durationMs":500,"trigger":"click"},"shape-b":{"effect":"pulse","order":2,"trigger":"with_prev"}}}`)
 	saved1, err := op.UpdateSlidesPageMeta(ctx, g, deck.ID, p1.ID, meta1)
 	if err != nil {
 		t.Fatalf("update meta: %v", err)
@@ -161,6 +193,12 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 	}
 	if parsed1.TitleStyle == nil || *parsed1.TitleStyle.FontSize != 48 || *parsed1.TitleStyle.Color != "#112233" || parsed1.Transition == nil || *parsed1.Transition != "fade" || !reflect.DeepEqual(parsed1.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) {
 		t.Fatalf("saved meta mismatch: %+v", parsed1)
+	}
+	if a := parsed1.Animations["shape-a"]; a.Effect != "zoom-in" || a.Order != 1 || a.DurationMs != 500 || a.Trigger != "click" {
+		t.Fatalf("saved animations shape-a mismatch: %+v", a)
+	}
+	if b := parsed1.Animations["shape-b"]; b.Effect != "pulse" || b.Order != 2 || b.DurationMs != 450 || b.Trigger != "with_prev" {
+		t.Fatalf("saved animations shape-b mismatch: %+v", b)
 	}
 
 	// Content update succeeds with original revision and preserves meta.
@@ -181,7 +219,7 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 	if err := json.Unmarshal(dup.Meta, &dupMeta); err != nil {
 		t.Fatalf("duplicate meta unmarshal: %v (%s)", err, dup.Meta)
 	}
-	if dupMeta.TitleStyle == nil || *dupMeta.TitleStyle.FontSize != 48 || dupMeta.Transition == nil || *dupMeta.Transition != "fade" || !reflect.DeepEqual(dupMeta.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) {
+	if dupMeta.TitleStyle == nil || *dupMeta.TitleStyle.FontSize != 48 || dupMeta.Transition == nil || *dupMeta.Transition != "fade" || !reflect.DeepEqual(dupMeta.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) || dupMeta.Animations["shape-a"].Effect != "zoom-in" {
 		t.Fatalf("duplicate did not preserve meta: %+v", dupMeta)
 	}
 
@@ -212,8 +250,8 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 	if m1.BodyStyle == nil || m1.BodyStyle.Italic == nil || !*m1.BodyStyle.Italic || *m1.BodyStyle.Color != "#cbd5e1" {
 		t.Fatalf("p1 bodyStyle merge lost overrides: %+v", m1.BodyStyle)
 	}
-	if m1.Transition == nil || *m1.Transition != "fade" || !reflect.DeepEqual(m1.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) {
-		t.Fatalf("p1 batch merge lost transition or shapeGroups: %+v", m1)
+	if m1.Transition == nil || *m1.Transition != "fade" || !reflect.DeepEqual(m1.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) || m1.Animations["shape-a"].Effect != "zoom-in" || m1.Animations["shape-b"].Trigger != "with_prev" {
+		t.Fatalf("p1 batch merge lost transition, shapeGroups, or animations: %+v", m1)
 	}
 	if err := json.Unmarshal(byID[p2.ID].Meta, &m2); err != nil {
 		t.Fatalf("p2 batch meta: %v", err)
@@ -262,7 +300,7 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 		t.Fatalf("copy deck: len=%d err=%v", len(copiedPages), err)
 	}
 	var copiedMeta store.SlidePageMeta
-	if err := json.Unmarshal(copiedPages[0].Meta, &copiedMeta); err != nil || copiedMeta.TitleStyle == nil || *copiedMeta.TitleStyle.FontSize != 48 || !reflect.DeepEqual(copiedMeta.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) {
+	if err := json.Unmarshal(copiedPages[0].Meta, &copiedMeta); err != nil || copiedMeta.TitleStyle == nil || *copiedMeta.TitleStyle.FontSize != 48 || !reflect.DeepEqual(copiedMeta.ShapeGroups["grp-1"], []string{"shape-a", "shape-b"}) || copiedMeta.Animations["shape-a"].Effect != "zoom-in" {
 		t.Fatalf("copied deck lost meta: %s (%v)", copiedPages[0].Meta, err)
 	}
 
@@ -284,6 +322,9 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 	}
 	if _, err := op.BatchUpdateSlidesPagesMeta(ctx, g, deck.ID, json.RawMessage(`{"shapeGroups":{"g":["a","b"]}}`)); !errors.Is(err, store.ErrInvalidSlideMeta) {
 		t.Fatalf("batch shapeGroups should be rejected: %v", err)
+	}
+	if _, err := op.BatchUpdateSlidesPagesMeta(ctx, g, deck.ID, json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1}}}`)); !errors.Is(err, store.ErrInvalidSlideMeta) {
+		t.Fatalf("batch animations should be rejected: %v", err)
 	}
 
 	// Viewer cannot edit page meta (ErrForbidden).
@@ -319,3 +360,51 @@ func exerciseSlidesMeta(t *testing.T, st store.Store) {
 
 func TestMemorySlidesMeta(t *testing.T)   { exerciseSlidesMeta(t, store.NewMemory()) }
 func TestPostgresSlidesMeta(t *testing.T) { exerciseSlidesMeta(t, atomicPostgres(t)) }
+
+func TestSlidesMetaAnimations(t *testing.T) {
+	ctx := context.Background()
+	st := store.NewMemory()
+	owner, ws, err := st.CreateUser(ctx, "slides-anim@example.test", "Owner", "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := store.RestoreGuard{UserID: owner.ID, SessionHash: []byte("slides-anim-sess")}
+	if err := st.CreateSession(ctx, g.SessionHash, owner.ID, time.Now().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	deck, err := st.CreateDriveNode(ctx, g, ws.ID, nil, "slides", "Anim Deck", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, err := st.ListSlidesPages(ctx, owner.ID, deck.ID)
+	if err != nil || len(pages) != 1 {
+		t.Fatalf("list pages: %v", err)
+	}
+	p1 := pages[0]
+	raw := json.RawMessage(`{"animations":{"s1":{"effect":"fade-in","order":1},"s2":{"effect":"bounce","order":2,"durationMs":600,"trigger":"after_prev"}}}`)
+	saved, err := st.UpdateSlidesPageMeta(ctx, g, deck.ID, p1.ID, raw)
+	if err != nil {
+		t.Fatalf("save animations: %v", err)
+	}
+	var meta store.SlidePageMeta
+	if err := json.Unmarshal(saved.Meta, &meta); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if meta.Animations["s1"].DurationMs != 450 || meta.Animations["s1"].Trigger != "click" {
+		t.Fatalf("s1 defaults not normalized: %+v", meta.Animations["s1"])
+	}
+	if meta.Animations["s2"].Effect != "bounce" || meta.Animations["s2"].DurationMs != 600 || meta.Animations["s2"].Trigger != "after_prev" {
+		t.Fatalf("s2 mismatch: %+v", meta.Animations["s2"])
+	}
+	batched, err := st.BatchUpdateSlidesPagesMeta(ctx, g, deck.ID, json.RawMessage(`{"transition":"fade"}`))
+	if err != nil || len(batched) != 1 {
+		t.Fatalf("batch update: %v", err)
+	}
+	var afterBatch store.SlidePageMeta
+	if err := json.Unmarshal(batched[0].Meta, &afterBatch); err != nil {
+		t.Fatalf("unmarshal after batch: %v", err)
+	}
+	if afterBatch.Transition == nil || *afterBatch.Transition != "fade" || afterBatch.Animations["s2"].Effect != "bounce" {
+		t.Fatalf("batch update lost animations: %+v", afterBatch)
+	}
+}

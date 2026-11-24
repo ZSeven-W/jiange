@@ -27,6 +27,13 @@ export interface SheetCellHistoryEntry {
   createdAt: string;
 }
 
+export interface SheetDefinedNameRecord {
+  name: string;
+  ref: string;
+  sheetId?: number;
+  comment?: string;
+}
+
 function sheetHistoryHeaders(userId: number): Record<string, string> {
   return {
     "X-Jiange-User-Id": String(userId),
@@ -108,4 +115,25 @@ export const sheetHistoryApi = {
       signal,
     );
   },
+
+  getDefinedNames: (sheetId: number, userId: number, signal?: AbortSignal) =>
+    sheetHistoryRequest<{ definedNames: SheetDefinedNameRecord[] }>(
+      "GET",
+      `/api/sheets/${sheetId}/defined-names`,
+      userId,
+      undefined,
+      signal,
+    ),
+
+  saveDefinedNames: (
+    sheetId: number,
+    userId: number,
+    definedNames: readonly SheetDefinedNameRecord[],
+  ) =>
+    sheetHistoryRequest<{ definedNames: SheetDefinedNameRecord[] }>(
+      "PUT",
+      `/api/sheets/${sheetId}/defined-names`,
+      userId,
+      { definedNames },
+    ),
 };

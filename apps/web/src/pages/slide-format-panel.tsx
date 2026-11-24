@@ -1,12 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronRight, Palette, Play, X } from "lucide-react";
-import type { SlideCreationLayout, SlideLayout, SlideShape } from "@/lib/api";
+import type { SlideCreationLayout, SlideLayout, SlideShape, SlideShapeAnimation } from "@/lib/api";
 import { FeishuSelect } from "@/components/feishu-select";
 import { blankSlideLayout, isBlankSlideLayout } from "./slides-layout";
 import { backgroundPopoverPosition, SLIDE_BACKGROUND_COLORS } from "./slides-background";
 import { isTwoColumnSlide } from "./slides-layout-preset";
 import type { SlidePageTextStyles } from "./slides-text-style";
+import {
+  nextSlideAnimationOrder,
+  type SlidePageShapeAnimations,
+} from "./slides-animations";
+import {
+  SlideChartEditor,
+  SlideElementAnimationControls,
+  SlideTableEditor,
+} from "./slides-table-chart-editor";
 import {
   matchSlideTheme,
   SLIDE_THEMES,
@@ -22,9 +31,11 @@ export function SlideFormatPanel({
   background,
   layout,
   shapes,
+  selectedShape,
   usedColors,
   textStyle,
   transition = "none",
+  pageAnimations,
   canEdit,
   busy,
   applying,
@@ -37,14 +48,19 @@ export function SlideFormatPanel({
   onTransitionChange,
   onPreviewTransition,
   onApplyTransitionAll,
+  onShapeChange,
+  onShapeAnimationChange,
+  onPreviewShapeAnimation,
   onClose,
 }: {
   background: string;
   layout: SlideLayout;
   shapes: SlideShape[];
+  selectedShape?: SlideShape | null;
   usedColors: string[];
   textStyle?: SlidePageTextStyles;
   transition?: SlideTransitionKind;
+  pageAnimations?: SlidePageShapeAnimations;
   canEdit: boolean;
   busy: boolean;
   applying: boolean;
@@ -57,6 +73,9 @@ export function SlideFormatPanel({
   onTransitionChange?: (transition: SlideTransitionKind) => void;
   onPreviewTransition?: (transition: SlideTransitionKind) => void;
   onApplyTransitionAll?: (transition: SlideTransitionKind) => void;
+  onShapeChange?: (id: string, patch: Partial<SlideShape>) => void;
+  onShapeAnimationChange?: (shapeId: string, anim: SlideShapeAnimation | null) => void;
+  onPreviewShapeAnimation?: (shapeId: string, anim: SlideShapeAnimation) => void;
   onClose: () => void;
 }) {
   const [palette, setPalette] = useState(false);
@@ -89,6 +108,30 @@ export function SlideFormatPanel({
   return <aside className="z-20 flex max-h-[42%] w-full shrink-0 flex-col border-t border-[#dee0e3] bg-white md:max-h-none md:w-[294px] md:border-l md:border-t-0" data-slide-format aria-label="幻灯片格式" onKeyDown={(event) => { if (event.key !== "Escape") return; event.preventDefault(); event.stopPropagation(); if (palette) { setPalette(false); trigger.current?.focus(); } else onClose(); }}>
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-[#e5e6eb] px-5 text-[14px] font-medium text-[#1f2329]"><Palette size={16} strokeWidth={1.7}/><span>幻灯片格式</span><button type="button" onClick={onClose} className="ml-auto grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]" aria-label="关闭幻灯片格式"><X size={16}/></button></header>
     <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5 pt-4 text-[13px] text-[#1f2329]">
+      {selectedShape?.kind === "table" && onShapeChange && (
+        <SlideTableEditor
+          shape={selectedShape}
+          canEdit={canEdit}
+          onChange={(patch) => onShapeChange(selectedShape.id, patch)}
+        />
+      )}
+      {selectedShape?.kind === "chart" && onShapeChange && (
+        <SlideChartEditor
+          shape={selectedShape}
+          canEdit={canEdit}
+          onChange={(patch) => onShapeChange(selectedShape.id, patch)}
+        />
+      )}
+      {selectedShape && onShapeAnimationChange && (
+        <SlideElementAnimationControls
+          shapeId={selectedShape.id}
+          animation={pageAnimations?.[selectedShape.id]}
+          defaultOrder={nextSlideAnimationOrder(pageAnimations)}
+          canEdit={canEdit}
+          onChange={(anim) => onShapeAnimationChange(selectedShape.id, anim)}
+          onPreview={onPreviewShapeAnimation}
+        />
+      )}
       <div className="mb-4 font-medium">背景</div>
       <div className="relative flex h-9 items-center justify-between"><span>颜色填充</span><button ref={trigger} type="button" disabled={!canEdit} aria-label="选择背景颜色" aria-expanded={palette} onClick={() => setPalette((open) => !open)} className="grid size-7 place-items-center rounded border border-[#dee0e3] hover:border-[#3370ff] disabled:opacity-40"><span className="grid size-5 place-items-center rounded-sm border border-[#d0d3d6]" style={{ background: background || "linear-gradient(135deg,#fff 45%,#f28b82 47%,#f28b82 53%,#fff 55%)" }}/></button>
         {palette && trigger.current && createPortal(<div ref={paletteRef} role="group" aria-label="背景颜色" style={backgroundPopoverPosition(trigger.current.getBoundingClientRect(), window.innerWidth, window.innerHeight, colors.length ? 300 : 265)} className="fixed z-[100] overflow-y-auto rounded-lg border border-[#dee0e3] bg-white p-3 text-[12px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">

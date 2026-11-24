@@ -3631,7 +3631,15 @@ export function Editor({ sync, userId, me, readOnly, onUndoRegistrar, onTableFin
                     let wroteExtra = false;
                     for (const [key, value] of Object.entries(extraProps)) {
                       if (key in intent.writes) continue;
-                      if (key !== "fc.ml" && !key.startsWith("fc.fr.") && !key.startsWith("fc.mr.")) continue;
+                      if (
+                        key !== "fc.ml" &&
+                        !key.startsWith("fc.fr.") &&
+                        !key.startsWith("fc.mr.") &&
+                        !key.startsWith("fc.vt.") &&
+                        !key.startsWith("fc.mb.") &&
+                        !key.startsWith("fc.msu.") &&
+                        !key.startsWith("fc.mg.")
+                      ) continue;
                       if ((currentProps[key] ?? "") !== value) {
                         tx.setProp(b, key, value);
                         appliedKeys.push(key);

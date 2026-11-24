@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, docsApi, slidesApi, type DocMeta, type Me, type SlidePageMeta, type SlidesPage as Page, type SlideShape } from "@/lib/api";
+import { ApiError, docsApi, slidesApi, type DocMeta, type Me, type SlidePageMeta, type SlidesPage as Page, type SlideShape, type SlideShapeAnimation } from "@/lib/api";
 import { DocumentWatermark } from "@/components/document-watermark";
 import { exportSlidesToPptx, parsePptxToSlides, type PptxImportResult } from "@jiange/slides-sdk/pptx";
 import { ShareDialog } from "@/components/share-dialog";
@@ -21,10 +21,38 @@ import {
 } from "./slides-structure-history";
 import { SlideShapes } from "./slides-shapes";
 import { SlidesGpuLayer } from "./slides-gpu-layer";
-import { isDarkSlideBackground, PresenterView, SlideSurface } from "./slides-presenter";
+import {
+  appendInkPoint,
+  clearSlideInk,
+  isDarkSlideBackground,
+  PRESENTER_INK_COLORS,
+  PresenterStageInteractive,
+  PresenterToolDock,
+  PresenterView,
+  pushLaserTrailPoint,
+  SlideSurface,
+  startInkStroke,
+  stepPresentationBackward,
+  stepPresentationForward,
+  type PresenterInkStroke,
+  type PresenterPoint,
+  type PresenterTool,
+} from "./slides-presenter";
 import { SlideShapeControls, SlideMultiShapeControls } from "./slides-shape-controls";
 import { SlideTextControls } from "./slides-text-controls";
 import { bodyHasBullets, buildSlidePageMeta, hydrateSlideTextStyles, toggleBodyBullets, type SlideFieldTextStyle, type SlidePageTextStyles, type SlideTextStyleMap } from "./slides-text-style";
+import {
+  buildAnimationSteps,
+  getPageShapeAnimations,
+  hydrateSlideAnimations,
+  pruneShapeAnimations,
+  sameSlideShapeAnimations,
+  setShapeAnimation,
+  SLIDE_ANIMATION_KEYFRAMES_CSS,
+  type SlideDeckShapeAnimations,
+  type SlidePageShapeAnimations,
+} from "./slides-animations";
+import { createDefaultSlideChart, createDefaultSlideTable } from "./slides-table-chart-editor";
 import { applyThemeToPageTextStyle, applyThemeToTextStyles, type SlideThemePreset } from "./slides-themes";
 import {
   applyTransitionToAllPages,
@@ -60,6 +88,7 @@ import { playableSlides, presentationStart, presentationKeyTarget } from "./slid
 import { ResourceTypeNotice } from "./resource-type-notice";
 import { ResourceReferencesButton } from "./resource-references-button";
 import { SlideFormatPanel } from "./slide-format-panel";
+import { SlidesExtrasPanel } from "./slides-extras-panel";
 import { SlideNotesPanel } from "./slide-notes-panel";
 import { SlideDeckTitle, type SlideTitleDraft } from "./slide-deck-title";
 import { readSlideTitleDraft, writeSlideTitleDraft } from "./slides-title-recovery";
@@ -73,7 +102,7 @@ import { SlideCreateLayoutPicker, slideCreatePickerPosition, type NewSlideLayout
 import { planSlideLayout, slidePresetContent } from "./slides-layout-preset";
 import { slidePageMenuPosition } from "./slides-page-menu";
 import { encodeSlideClipboard, mayCopySlide, parseSlideClipboard, verifyCrossSlidePaste } from "./slides-clipboard";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Clipboard, Copy, Download, EyeOff, FileDown, FilePlus2, FileUp, GripHorizontal, ImageIcon, Maximize2, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Printer, Redo2, Trash2, Type, Shapes, Undo2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, BarChart3, ChevronDown, ChevronLeft, ChevronsLeft, ChevronsRight, Clipboard, Copy, Download, EyeOff, FileDown, FilePlus2, FileUp, GripHorizontal, History, ImageIcon, Maximize2, MessageSquare, Minus, MoreHorizontal, Palette, Play, Plus, Presentation, Printer, Redo2, Table2, Trash2, Type, Shapes, Undo2, X } from "lucide-react";
 
 type BackgroundAction = { id: number; before: Page[]; after: Page[] };
 type BackgroundHistory = { undo: BackgroundAction[]; redo: BackgroundAction[] };
@@ -101,10 +130,22 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   const [titleDraft, setTitleDraft] = useState<SlideTitleDraft | null>(() => typeof sessionStorage === "undefined" ? null : readSlideTitleDraft(sessionStorage, userId, deckId));
   const titleSaving = useRef(false);
   const [playing, setPlaying] = useState(false);
+  const [playbackAnimStep, setPlaybackAnimStep] = useState(0);
+  const [presenterTool, setPresenterTool] = useState<PresenterTool>("pointer");
+  const [presenterInkColor, setPresenterInkColor] = useState<string>(PRESENTER_INK_COLORS[0]);
+  const [presenterLaserTrail, setPresenterLaserTrail] = useState<PresenterPoint[]>([]);
+  const [presenterInkByPage, setPresenterInkByPage] = useState<Record<number, PresenterInkStroke[]>>({});
   const [audienceWindow, setAudienceWindow] = useState<Window | null>(null);
   const audienceRef = useRef<Window | null>(null);
   const audienceMountRef = useRef<HTMLElement | null>(null);
-  const stopPresentation = () => { const popup = audienceRef.current; audienceRef.current = null; audienceMountRef.current = null; popup?.close(); setAudienceWindow(null); setPlaying(false); };
+  const resetPresenterState = () => {
+    setPlaybackAnimStep(0);
+    setPresenterTool("pointer");
+    setPresenterInkColor(PRESENTER_INK_COLORS[0]);
+    setPresenterLaserTrail([]);
+    setPresenterInkByPage({});
+  };
+  const stopPresentation = () => { const popup = audienceRef.current; audienceRef.current = null; audienceMountRef.current = null; popup?.close(); setAudienceWindow(null); setPlaying(false); resetPresenterState(); };
   const [checkingPlayback, setCheckingPlayback] = useState(false);
   const [playMenu, setPlayMenu] = useState(false);
   const playMenuRef = useRef<HTMLDivElement>(null);
@@ -117,6 +158,7 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   const shapeButtonRef = useRef<HTMLButtonElement>(null);
   const shapeMenuRef = useRef<HTMLDivElement>(null);
   const [formatOpen, setFormatOpen] = useState(false);
+  const [extrasPanel, setExtrasPanel] = useState<"comments" | "versions" | null>(null);
   const [backgroundApplying, setBackgroundApplying] = useState(false);
   const [backgroundBatchUnknown, setBackgroundBatchUnknown] = useState(false);
   const [backgroundHistory, setBackgroundHistory] = useState<BackgroundHistory>({ undo: [], redo: [] });
@@ -169,6 +211,12 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   const [shapeGroups, setShapeGroups] = useState<SlideDeckShapeGroups>({});
   const shapeGroupsRef = useRef<SlideDeckShapeGroups>(shapeGroups);
   shapeGroupsRef.current = shapeGroups;
+  const [shapeAnimations, setShapeAnimations] = useState<SlideDeckShapeAnimations>({});
+  const shapeAnimationsRef = useRef<SlideDeckShapeAnimations>(shapeAnimations);
+  shapeAnimationsRef.current = shapeAnimations;
+  const [shapeAnimPreview, setShapeAnimPreview] = useState<{ shapeId: string; nonce: number } | null>(null);
+  const shapeAnimPreviewTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (shapeAnimPreviewTimer.current !== null) window.clearTimeout(shapeAnimPreviewTimer.current); }, []);
   const [transitions, setTransitions] = useState<SlideTransitionMap>({});
   const transitionsRef = useRef<SlideTransitionMap>(transitions);
   transitionsRef.current = transitions;
@@ -187,9 +235,11 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
     metaFlushPromisesRef.current.clear();
     metaBatchInFlightRef.current = 0;
     shapeGroupsRef.current = {};
+    shapeAnimationsRef.current = {};
     transitionsRef.current = {};
     textStylesRef.current = {};
     setShapeGroups({});
+    setShapeAnimations({});
     setTransitions({});
     setTextStyles({});
   }, [deckId, userId]);
@@ -237,10 +287,11 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
     styles: SlidePageTextStyles | undefined,
     transition: SlideTransitionKind | undefined,
     groups: SlideShapeGroups | undefined,
+    animations: SlidePageShapeAnimations | undefined = shapeAnimationsRef.current[pageId],
   ) => {
     if (!mayWrite.current) return;
     const deckKey = `${deckId}:${userId}`;
-    const nextMeta = buildSlidePageMeta(styles, transition, groups);
+    const nextMeta = buildSlidePageMeta(styles, transition, groups, animations);
     metaQueuedRef.current.set(pageId, nextMeta);
     const alreadyRunning = metaInFlightRef.current.has(pageId);
     if (!alreadyRunning) metaInFlightRef.current.set(pageId, 1);
@@ -316,7 +367,43 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
     else delete next[pageId];
     shapeGroupsRef.current = next;
     setShapeGroups(next);
-    schedulePageMetaSave(pageId, textStylesRef.current[pageId], transitionsRef.current[pageId], normalizedNext);
+    schedulePageMetaSave(pageId, textStylesRef.current[pageId], transitionsRef.current[pageId], normalizedNext, shapeAnimationsRef.current[pageId]);
+  };
+  const updatePageAnimations = (
+    pageId: number,
+    updater: (prev: SlidePageShapeAnimations | undefined) => SlidePageShapeAnimations,
+  ) => {
+    const prevAll = shapeAnimationsRef.current;
+    const prevPage = prevAll[pageId];
+    const nextPage = updater(prevPage);
+    const normalizedNext = Object.keys(nextPage).length > 0 ? nextPage : undefined;
+    if (sameSlideShapeAnimations(prevPage, normalizedNext)) return;
+    const next: SlideDeckShapeAnimations = { ...prevAll };
+    if (normalizedNext) next[pageId] = normalizedNext;
+    else delete next[pageId];
+    shapeAnimationsRef.current = next;
+    setShapeAnimations(next);
+    schedulePageMetaSave(pageId, textStylesRef.current[pageId], transitionsRef.current[pageId], shapeGroupsRef.current[pageId], normalizedNext);
+  };
+  const triggerShapeAnimPreview = (shapeId: string, anim: SlideShapeAnimation) => {
+    if (shapeAnimPreviewTimer.current !== null) {
+      window.clearTimeout(shapeAnimPreviewTimer.current);
+      shapeAnimPreviewTimer.current = null;
+    }
+    const duration = anim.durationMs ?? 450;
+    const start = () => {
+      setShapeAnimPreview({ shapeId, nonce: Date.now() });
+      shapeAnimPreviewTimer.current = window.setTimeout(() => {
+        setShapeAnimPreview(null);
+        shapeAnimPreviewTimer.current = null;
+      }, duration + 140);
+    };
+    if (shapeAnimPreview) {
+      setShapeAnimPreview(null);
+      requestAnimationFrame(start);
+    } else {
+      start();
+    }
   };
   const [marqueeRect, setMarqueeRect] = useState<SlideRect | null>(null);
   const marqueeDrag = useRef<{
@@ -428,21 +515,24 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   const mayWrite = useRef(false);
   mayWrite.current = !meta.isError && !meta.isFetching && meta.data?.kind === "slides" && (meta.data.role === "edit" || meta.data.role === "manage");
   const pages = useQuery({ queryKey: ["slides", deckId, userId], queryFn: () => slidesApi.pages(deckId, userId), enabled: meta.data?.kind === "slides" && !meta.isError, refetchInterval: 5000, refetchIntervalInBackground: false });
-  // Hydrate text styles, transitions, and shape groups directly from cloud page.meta
+  // Hydrate text styles, transitions, shape groups, and element animations directly from cloud page.meta
   // whenever pages.data loads or updates (initial load, tab return, polling, or WS invalidation).
   useEffect(() => {
     if (!pages.data || metaBatchInFlightRef.current > 0) return;
     const serverStyles = hydrateSlideTextStyles(pages.data);
     const serverTransitions = hydrateSlideTransitions(pages.data);
     const serverGroups = hydrateSlideShapeGroups(pages.data);
+    const serverAnimations = hydrateSlideAnimations(pages.data);
     const inFlight = metaInFlightRef.current;
     if (inFlight.size === 0) {
       textStylesRef.current = serverStyles;
       transitionsRef.current = serverTransitions;
       shapeGroupsRef.current = serverGroups;
+      shapeAnimationsRef.current = serverAnimations;
       setTextStyles(serverStyles);
       setTransitions(serverTransitions);
       setShapeGroups(serverGroups);
+      setShapeAnimations(serverAnimations);
       return;
     }
     const mergeMap = <T,>(server: Record<number, T>, local: Record<number, T>): Record<number, T> => {
@@ -456,12 +546,15 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
     const nextStyles = mergeMap(serverStyles, textStylesRef.current);
     const nextTransitions = mergeMap(serverTransitions, transitionsRef.current);
     const nextGroups = mergeMap(serverGroups, shapeGroupsRef.current);
+    const nextAnimations = mergeMap(serverAnimations, shapeAnimationsRef.current);
     textStylesRef.current = nextStyles;
     transitionsRef.current = nextTransitions;
     shapeGroupsRef.current = nextGroups;
+    shapeAnimationsRef.current = nextAnimations;
     setTextStyles(nextStyles);
     setTransitions(nextTransitions);
     setShapeGroups(nextGroups);
+    setShapeAnimations(nextAnimations);
   }, [pages.data, deckId, userId]);
   const queue = useMemo(() => new SlidesDraftQueue(
     (page, content) => slidesApi.update(deckId, page.id, userId, content.title, content.body, content.background, content.layout ?? "", page.revision, content.notes, content.shapes),
@@ -708,6 +801,7 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   const existingShapeIdSet = new Set((draft?.content.shapes ?? []).map((shape) => shape.id));
   const activeSelectedShapes = draft ? selectedShapes.filter((id) => existingShapeIdSet.has(id)) : [];
   const activePageGroups = active ? shapeGroups[active.id] : undefined;
+  const activePageAnimations = active ? shapeAnimations[active.id] : undefined;
   const chosenShape = activeSelectedShapes.length === 1 ? draft?.content.shapes.find((shape) => shape.id === activeSelectedShapes[0]) : undefined;
   const multiSelectedCount = activeSelectedShapes.length;
   const multiSelectionGrouped = activeSelectedShapes.length > 1 && isSelectionSingleGroup(activePageGroups, activeSelectedShapes);
@@ -774,8 +868,10 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
     if (!active || !activeSelectedShapes.length) return;
     const removeSet = new Set(activeSelectedShapes);
     const nextShapes = queue.get(active).content.shapes.filter((shape) => !removeSet.has(shape.id));
+    const livingIds = new Set(nextShapes.map((shape) => shape.id));
     queue.edit(active, { shapes: nextShapes });
-    updatePageGroups(active.id, (prev) => pruneShapeGroups(prev, new Set(nextShapes.map((shape) => shape.id))));
+    updatePageGroups(active.id, (prev) => pruneShapeGroups(prev, livingIds));
+    updatePageAnimations(active.id, (prev) => pruneShapeAnimations(prev, livingIds));
     setSelectedShapes([]);
   };
   const addShape = (kind: SlideShape["kind"]) => {
@@ -794,12 +890,19 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
     };
     const shape: SlideShape = kind === "text"
       ? { id, kind, ...cascade(12, 55, 35, 15), width: 35, height: 15, color: "#1f2329", text: "", fontSize: 24 }
-      : kind !== "image" && isLineSlideShape(kind as BasicSlideShape)
-        ? { id, kind, ...cascade(35, 48, 30, 5), width: 30, height: 5, color: "#1f2329" }
-        : { id, kind, ...cascade(14, 52, 16, 20), color: "#3370ff" };
+      : kind === "table"
+        ? { id, kind, ...cascade(12, 28, 72, 42), width: 72, height: 42, color: "#3370ff", table: createDefaultSlideTable() }
+        : kind === "chart"
+          ? { id, kind, ...cascade(16, 26, 66, 48), width: 66, height: 48, color: "#3370ff", chart: createDefaultSlideChart() }
+          : kind !== "image" && isLineSlideShape(kind as BasicSlideShape)
+            ? { id, kind, ...cascade(35, 48, 30, 5), width: 30, height: 5, color: "#1f2329" }
+            : { id, kind, ...cascade(14, 52, 16, 20), color: "#3370ff" };
     queue.edit(active, { shapes: [...existing, shape] });
     setSelectedShape(shape.id);
     setShapeMenu(false);
+    if (kind === "table" || kind === "chart") {
+      setFormatOpen(true);
+    }
   };
   const insertImage = async (file: File) => {
     if (!active || !canEdit || imageUpload.current) return;
@@ -853,13 +956,31 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
       if (event.isComposing || event.altKey || event.ctrlKey || event.metaKey || !playbackPage) return;
       // Let focused buttons retain their native Enter/Space activation.
       if ((event.key === " " || event.key === "Enter") && event.target instanceof HTMLElement && event.target.closest("button")) return;
+      if (event.key === "ArrowRight" || event.key === "ArrowDown" || event.key === "PageDown" || event.key === " " || event.key === "Enter") {
+        const step = stepPresentationForward(playable, playbackPage.id, playbackAnimStep, shapeAnimationsRef.current);
+        if (step) {
+          event.preventDefault();
+          if (step.pageId !== playbackPage.id) setCurrent(step.pageId);
+          setPlaybackAnimStep(step.animStep);
+        }
+        return;
+      }
+      if (event.key === "ArrowLeft" || event.key === "ArrowUp" || event.key === "PageUp") {
+        const step = stepPresentationBackward(playable, playbackPage.id, playbackAnimStep, shapeAnimationsRef.current);
+        if (step) {
+          event.preventDefault();
+          if (step.pageId !== playbackPage.id) setCurrent(step.pageId);
+          setPlaybackAnimStep(step.animStep);
+        }
+        return;
+      }
       const next = presentationKeyTarget(list, playbackPage.id, event.key);
-      if (next) { event.preventDefault(); setCurrent(next.id); }
+      if (next) { event.preventDefault(); setCurrent(next.id); setPlaybackAnimStep(0); }
     };
     window.addEventListener("keydown", onKey);
     audienceWindow?.addEventListener("keydown", onKey);
     return () => { window.removeEventListener("keydown", onKey); audienceWindow?.removeEventListener("keydown", onKey); };
-  }, [playing, playbackPage, list, audienceWindow]);
+  }, [playing, playbackPage, playable, playbackAnimStep, list, audienceWindow]);
 
   if (meta.isPending) return <div className="grid flex-1 place-items-center text-[13px] text-subtle">正在打开演示文稿…</div>;
   if (meta.isError || !meta.data || pages.isError) return <div className="grid flex-1 place-items-center text-[13px] text-subtle"><div className="flex max-w-md flex-col items-center gap-3 px-4 text-center"><p>{pages.error instanceof ApiError && pages.error.status === 426 ? pages.error.message : "无法访问该演示文稿，请确认权限后重试。"}</p>{queue.hasUnsaved() && <p role="alert">当前页面有未保存内容，请勿刷新或关闭；恢复网络及权限后重试。</p>}<SlidesDraftRecovery queue={queue}/><SlideTitleRecovery draft={titleDraft}/><button type="button" onClick={() => { void meta.refetch(); void pages.refetch(); }} className="rounded-md border px-3 py-1.5 text-foreground hover:bg-hover">重试</button></div></div>;
@@ -869,29 +990,117 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   if (playing && playbackPage && playbackDraft) {
     const playbackTransition = getSlideTransition(transitions, playbackPage.id);
     const playbackAnimStyle = slideTransitionAnimationStyle(playbackTransition);
+    const playbackPageAnims = getPageShapeAnimations(shapeAnimations, playbackPage.id);
+    const playbackTotalSteps = buildAnimationSteps(playbackPageAnims).length;
+    const playbackIndex = playable.findIndex((page) => page.id === playbackPage.id);
+    const playbackInkStrokes = presenterInkByPage[playbackPage.id] ?? [];
+    const canStepPrev = playbackAnimStep > 0 || playbackIndex > 0;
+    const canStepNext = playbackAnimStep < playbackTotalSteps || (playbackIndex >= 0 && playbackIndex < playable.length - 1);
+    const advancePlayback = () => {
+      const next = stepPresentationForward(playable, playbackPage.id, playbackAnimStep, shapeAnimations);
+      if (!next) return;
+      if (next.pageId !== playbackPage.id) setCurrent(next.pageId);
+      setPlaybackAnimStep(next.animStep);
+    };
+    const retreatPlayback = () => {
+      const prev = stepPresentationBackward(playable, playbackPage.id, playbackAnimStep, shapeAnimations);
+      if (!prev) return;
+      if (prev.pageId !== playbackPage.id) setCurrent(prev.pageId);
+      setPlaybackAnimStep(prev.animStep);
+    };
+    const handlePresenterToolChange = (nextTool: PresenterTool) => {
+      setPresenterTool(nextTool);
+      if (nextTool !== "laser") setPresenterLaserTrail([]);
+    };
     return (
       <div ref={playbackRef} tabIndex={-1} aria-label={audienceWindow ? "演示者视图" : "幻灯片放映"} className="fixed inset-0 z-[80] outline-none" data-slides-playing>
         {audienceWindow ? <>
-          <PresenterView pages={playable} currentId={playbackPage.id} content={playbackDraft.content} contentFor={(page) => queue.get(page).content} textStyles={textStyles} transitions={transitions} onSelect={setCurrent} onExit={stopPresentation}/>
+          <PresenterView
+            pages={playable}
+            currentId={playbackPage.id}
+            content={playbackDraft.content}
+            contentFor={(page) => queue.get(page).content}
+            textStyles={textStyles}
+            transitions={transitions}
+            animations={shapeAnimations}
+            animStep={playbackAnimStep}
+            onAnimStepChange={setPlaybackAnimStep}
+            tool={presenterTool}
+            onToolChange={handlePresenterToolChange}
+            inkColor={presenterInkColor}
+            onInkColorChange={setPresenterInkColor}
+            laserTrail={presenterLaserTrail}
+            onLaserTrailChange={setPresenterLaserTrail}
+            inkByPage={presenterInkByPage}
+            onInkByPageChange={setPresenterInkByPage}
+            externalKeyNav
+            onSelect={(id) => { setCurrent(id); setPlaybackAnimStep(0); }}
+            onExit={stopPresentation}
+          />
           {createPortal(
             <div aria-label="观众视图" className="flex h-dvh items-center justify-center bg-black">
-              <style>{SLIDE_TRANSITION_KEYFRAMES_CSS}</style>
+              <style>{`${SLIDE_TRANSITION_KEYFRAMES_CSS}\n${SLIDE_ANIMATION_KEYFRAMES_CSS}`}</style>
               <div className="w-full overflow-hidden" style={{ width: "min(100vw, calc(100dvh * 16 / 9))" }}>
                 <div key={playbackPage.id} data-slide-transition={playbackTransition} style={playbackAnimStyle}>
-                  <SlideSurface content={playbackDraft.content} textStyle={textStyles[playbackPage.id]}/>
+                  <SlideSurface
+                    content={playbackDraft.content}
+                    textStyle={textStyles[playbackPage.id]}
+                    animations={playbackPageAnims}
+                    animationStep={playbackTotalSteps > 0 ? playbackAnimStep : undefined}
+                    inkStrokes={playbackInkStrokes}
+                    laserTrail={presenterTool === "laser" ? presenterLaserTrail : undefined}
+                  />
                 </div>
               </div>
             </div>,
             audienceMountRef.current!,
           )}
-        </> : <div className="flex h-full flex-col items-center justify-center bg-[#1f2329] p-4 sm:p-10">
-          <style>{SLIDE_TRANSITION_KEYFRAMES_CSS}</style>
-          <div className="w-full max-w-[1280px] shrink-0 overflow-hidden" style={{ width: "min(100%, calc((100dvh - 6rem) * 16 / 9))" }}>
-            <div key={playbackPage.id} data-slide-transition={playbackTransition} style={playbackAnimStyle}>
-              <SlideSurface content={playbackDraft.content} textStyle={textStyles[playbackPage.id]}/>
-            </div>
+        </> : <div className="flex h-full flex-col items-center justify-center bg-[#1f2329] p-4 pb-16 sm:p-10 sm:pb-20">
+          <style>{`${SLIDE_TRANSITION_KEYFRAMES_CSS}\n${SLIDE_ANIMATION_KEYFRAMES_CSS}`}</style>
+          <div className="w-full max-w-[1280px] shrink-0 overflow-hidden" style={{ width: "min(100%, calc((100dvh - 7.5rem) * 16 / 9))" }}>
+            <PresenterStageInteractive
+              tool={presenterTool}
+              inkColor={presenterInkColor}
+              pageId={playbackPage.id}
+              onLaserMove={(pt) => setPresenterLaserTrail((prev) => pushLaserTrailPoint(prev, pt))}
+              onLaserLeave={() => setPresenterLaserTrail([])}
+              onInkStart={(pid, pt, color) => setPresenterInkByPage((prev) => startInkStroke(prev, pid, pt, color))}
+              onInkMove={(pid, pt) => setPresenterInkByPage((prev) => appendInkPoint(prev, pid, pt))}
+            >
+              <div key={playbackPage.id} data-slide-transition={playbackTransition} style={playbackAnimStyle}>
+                <SlideSurface
+                  content={playbackDraft.content}
+                  textStyle={textStyles[playbackPage.id]}
+                  animations={playbackPageAnims}
+                  animationStep={playbackTotalSteps > 0 ? playbackAnimStep : undefined}
+                  inkStrokes={playbackInkStrokes}
+                  laserTrail={presenterTool === "laser" ? presenterLaserTrail : undefined}
+                />
+              </div>
+            </PresenterStageInteractive>
           </div>
-          <div className="absolute bottom-3 flex items-center gap-3 rounded-lg bg-black/60 px-3 py-2 text-[13px] text-white"><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) <= 0} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i > 0) setCurrent(playable[i - 1].id); }} className="disabled:opacity-40">上一页</button><span>{playable.findIndex((page) => page.id === playbackPage.id) + 1} / {playable.length}</span><button type="button" disabled={playable.findIndex((page) => page.id === playbackPage.id) >= playable.length - 1} onClick={() => { const i = playable.findIndex((page) => page.id === playbackPage.id); if (i < playable.length - 1) setCurrent(playable[i + 1].id); }} className="disabled:opacity-40">下一页</button><button type="button" onClick={stopPresentation}>退出放映</button></div>
+          <div className="absolute bottom-3 flex flex-wrap items-center justify-center gap-2.5 px-3">
+            <div className="flex items-center gap-3 rounded-xl border border-white/12 bg-[#252629]/95 px-3 py-1.5 text-[13px] text-white shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md">
+              <button type="button" disabled={!canStepPrev} onClick={retreatPlayback} className="rounded px-1.5 py-0.5 hover:bg-white/10 disabled:opacity-40">上一页</button>
+              <span className="tabular-nums">{playbackIndex + 1} / {playable.length}</span>
+              {playbackTotalSteps > 0 && (
+                <span data-presenter-anim-step className="rounded bg-[#3370ff]/25 px-1.5 py-0.5 text-[11px] tabular-nums text-[#94bfff]">
+                  动画 {playbackAnimStep}/{playbackTotalSteps}
+                </span>
+              )}
+              <button type="button" disabled={!canStepNext} onClick={advancePlayback} className="rounded px-1.5 py-0.5 hover:bg-white/10 disabled:opacity-40">下一页</button>
+              <span className="h-4 w-px bg-white/15" aria-hidden="true" />
+              <button type="button" onClick={stopPresentation} className="rounded px-1.5 py-0.5 text-[#f2f3f5] hover:bg-white/10">退出放映</button>
+            </div>
+            <PresenterToolDock
+              tool={presenterTool}
+              inkColor={presenterInkColor}
+              hasInk={playbackInkStrokes.length > 0}
+              onToolChange={handlePresenterToolChange}
+              onInkColorChange={setPresenterInkColor}
+              onClearInk={() => setPresenterInkByPage((prev) => clearSlideInk(prev, playbackPage.id))}
+            />
+          </div>
         </div>}
       </div>
     );
@@ -1194,6 +1403,7 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
           audienceMountRef.current.replaceChildren();
         } catch { setOperationError("无法访问观众窗口，请重新开始演示。"); return; }
       }
+      resetPresenterState();
       setCurrent(start.id); setAudienceWindow(popup); setPlaying(true); started = true;
     } finally { if (!started && popup) { if (audienceRef.current === popup) { audienceRef.current = null; audienceMountRef.current = null; } popup.close(); } playbackCheck.current = false; setCheckingPlayback(false); }
   };
@@ -1452,7 +1662,7 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
   const printablePages = playable.length ? playable : list;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-[#f5f6f7]" data-slides-editor data-document-print-restricted={!canDownload ? "true" : undefined}>
-      <style>{SLIDE_TRANSITION_KEYFRAMES_CSS}</style>
+      <style>{`${SLIDE_TRANSITION_KEYFRAMES_CSS}\n${SLIDE_ANIMATION_KEYFRAMES_CSS}`}</style>
       <header className="flex h-14 shrink-0 items-center gap-1 border-b bg-white pl-14 pr-2 sm:gap-2 sm:pr-3 md:px-5">
         <button type="button" onClick={() => { location.hash = "#/drive/mine"; }} aria-label="返回云盘" className="grid size-7 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:size-8"><ChevronLeft size={17}/></button>
         <span className="hidden size-7 shrink-0 place-items-center rounded-md bg-[#ff8800] text-white sm:grid"><Presentation size={15}/></span>
@@ -1500,6 +1710,40 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
           </div>
           <button type="button" aria-label="创建整份幻灯片副本" title={backgroundBatchUnknown || deletePageUnknown ? "请先重新打开并核对页面" : queue.hasUnsaved() ? "请先等待内容保存" : "创建副本"} disabled={backgroundBatchUnknown || deletePageUnknown || copyingDeck || queue.hasUnsaved() || uploadingImage || create.isPending || remove.isPending || pageActions > 0} onClick={() => void duplicateDeck()} className="hidden size-8 shrink-0 place-items-center rounded-md border border-[#d0d3d6] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-40 sm:grid" data-slides-copy>{copyingDeck ? <span className="text-[11px]">…</span> : <Copy size={14}/>}</button>
           <ResourceReferencesButton id={deckId} userId={userId} title={meta.data?.title || "未命名幻灯片"} kind="slides" />
+          <button
+            type="button"
+            data-slides-comments-btn
+            aria-label="评论批注"
+            title="评论批注"
+            aria-pressed={extrasPanel === "comments"}
+            onClick={() => {
+              setExtrasPanel((prev) => (prev === "comments" ? null : "comments"));
+              setFormatOpen(false);
+            }}
+            className={cn(
+              "grid size-8 shrink-0 place-items-center rounded-md border text-[#646a73] transition-colors",
+              extrasPanel === "comments" ? "border-[#3370ff] bg-[#edf2ff] text-[#3370ff]" : "border-[#d0d3d6] hover:bg-[#f2f3f5]",
+            )}
+          >
+            <MessageSquare size={14} />
+          </button>
+          <button
+            type="button"
+            data-slides-versions-btn
+            aria-label="历史版本"
+            title="历史版本"
+            aria-pressed={extrasPanel === "versions"}
+            onClick={() => {
+              setExtrasPanel((prev) => (prev === "versions" ? null : "versions"));
+              setFormatOpen(false);
+            }}
+            className={cn(
+              "grid size-8 shrink-0 place-items-center rounded-md border text-[#646a73] transition-colors",
+              extrasPanel === "versions" ? "border-[#3370ff] bg-[#edf2ff] text-[#3370ff]" : "border-[#d0d3d6] hover:bg-[#f2f3f5]",
+            )}
+          >
+            <History size={14} />
+          </button>
           <button ref={shareRef} type="button" onClick={() => setSharing(true)} className="h-8 rounded-md bg-[#3370ff] px-2 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3">分享</button>
           <div ref={playMenuRef} className="relative flex h-8 rounded-md border border-[#3370ff] text-[#3370ff]">
             <button type="button" aria-label={checkingPlayback ? "检查中…" : "演示"} disabled={!playable.length || visibilityUnknown || backgroundBatchUnknown || deletePageUnknown || checkingPlayback || pageActions > 0 || create.isPending || remove.isPending} title="从当前页开始演示" onClick={() => { setPlayMenu(false); void startPresentation(); }} className="flex items-center gap-1 rounded-l-md bg-white px-2 text-[13px] hover:bg-[#f5f6f7] disabled:opacity-40 sm:px-3"><Play size={13}/><span className="hidden sm:inline">{checkingPlayback ? "检查中…" : "演示"}</span></button>
@@ -1538,6 +1782,8 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
             <div className="relative shrink-0"><button ref={shapeButtonRef} type="button" disabled={!canEdit || !active} aria-haspopup="dialog" aria-expanded={shapeMenu} onClick={() => setShapeMenu((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Shapes size={16}/>图形</button></div>
             <button type="button" disabled={!canEdit || !active || uploadingImage || draft?.content.shapes.length === 100} onClick={() => imageInputRef.current?.click()} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><ImageIcon size={16}/>{uploadingImage ? "上传中" : "图片"}</button>
             <input ref={imageInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" aria-label="选择幻灯片图片" className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void insertImage(file); }}/>
+            <button type="button" data-slides-insert-table disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("table")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Table2 size={16}/>表格</button>
+            <button type="button" data-slides-insert-chart disabled={!canEdit || !active || draft?.content.shapes.length === 100} onClick={() => addShape("chart")} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><BarChart3 size={16}/>图表</button>
             <button ref={backgroundButtonRef} type="button" disabled={!active} aria-expanded={formatOpen} onClick={() => setFormatOpen((open) => !open)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Palette size={16}/>格式</button>
             <span className="mx-1 h-5 w-px bg-[#e5e6eb]" />
             <button type="button" aria-label="复制页面" disabled={!canEdit || !active || draft?.state !== "saved" || copyPageUnknown || visibilityUnknown || pageActions > 0} onClick={() => active && doCopy(active)} className="flex h-12 min-w-12 flex-col items-center justify-center gap-0.5 rounded-md px-2 text-[11px] hover:bg-[#f2f3f5] disabled:opacity-40"><Copy size={15}/>复制</button>
@@ -1553,7 +1799,7 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
           {draft && (draft.state === "conflict" || draft.state === "unknown") && <p role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">{draft.state === "conflict" ? "此页已被其他人修改。" : "保存结果未确认。"}你的输入仍在页面中，请复制保留后重新打开。</p>}
           {draft?.state === "pending" && !canDraft && <div role="alert" className="bg-[#fff2f0] px-4 py-2 text-[12px] text-[#d83931]">权限尚未确认，输入仍保留在本地，未发送到服务器。<SlidesDraftRecovery queue={queue}/></div>}
           <div className="relative flex min-h-0 flex-1 flex-col">
-          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) { const nextShapes = queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id); queue.edit(active, { shapes: nextShapes }); updatePageGroups(active.id, (prev) => pruneShapeGroups(prev, new Set(nextShapes.map((shape) => shape.id)))); } setSelectedShape(null); }}/>}
+          {chosenShape && canEdit && <SlideShapeControls shape={chosenShape} onChange={(patch) => updateShape(chosenShape.id, patch)} onOrder={(action) => orderShape(chosenShape.id, action)} onAlign={(alignment) => alignShape(chosenShape.id, alignment)} onDelete={() => { if (active) { const nextShapes = queue.get(active).content.shapes.filter((shape) => shape.id !== chosenShape.id); const livingIds = new Set(nextShapes.map((shape) => shape.id)); queue.edit(active, { shapes: nextShapes }); updatePageGroups(active.id, (prev) => pruneShapeGroups(prev, livingIds)); updatePageAnimations(active.id, (prev) => pruneShapeAnimations(prev, livingIds)); } setSelectedShape(null); }}/>}
           {multiSelectedCount > 1 && canEdit && (
             <SlideMultiShapeControls
               count={multiSelectedCount}
@@ -1677,12 +1923,12 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
                     }
                   }}
                 >
-                <SlidesGpuLayer background={draft.content.background} shapes={previewShapes ? draft.content.shapes.map((s) => previewShapes.get(s.id) ?? s) : draft.content.shapes} selectedId={selectedShape} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
+                <SlidesGpuLayer background={draft.content.background} shapes={(previewShapes ? draft.content.shapes.map((s) => previewShapes.get(s.id) ?? s) : draft.content.shapes).filter((s) => s.kind !== "chart" && s.id !== shapeAnimPreview?.shapeId)} selectedId={selectedShape} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
                 <div className="absolute left-0 top-0 z-[1]" style={{ width: SLIDE_WIDTH, height: SLIDE_HEIGHT, padding: hasLargeSlideTitle(draft.content.layout) ? 0 : "48px 57.6px", transform: `scale(${zoom / 100})`, transformOrigin: "top left", containerType: "inline-size" }}>
                   {(!isBlankSlideLayout(draft.content.layout) || draft.content.title || titleFocusPage === active.id) && <input ref={titleRef} aria-label="幻灯片标题" value={draft.content.title} readOnly={!canDraft} style={titleInlineStyle} onFocus={() => { setSelectedShape(null); setTitleFocusPage(active.id); setActiveTextField({ pageId: active.id, kind: "title" }); }} onChange={(event) => queue.edit(active, { title: event.target.value }, "title")} onBlur={(event) => { setTitleFocusPage(null); queue.endGroup(active.id); if (!keepTextToolbar(event.relatedTarget)) setActiveTextField((prev) => prev?.kind === "title" ? null : prev); }} placeholder={draft.content.layout === "title" ? "点击修改大标题样式" : "点击添加标题"} className={cn("border border-transparent bg-transparent px-2 py-1 font-semibold leading-tight outline-none focus:border-[#3370ff] focus:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-white" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? cn("absolute left-[9.5%] top-[41.3%] w-[81%] text-[54px]", isDarkSlideBackground(draft.content.background) ? "placeholder:text-white/80" : "placeholder:text-[#1f2329]", draft.content.layout === "title" ? "text-center" : "text-left") : "w-full text-[36px] placeholder:text-transparent group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]")} data-slides-title data-slide-history />}
                   {draft.content.layout === "blank" && !draft.content.title && titleFocusPage !== active.id && !!draft.content.body && <div aria-hidden="true" className="h-[55px]"/>}
                   {((draft.content.layout !== "title" && !isBlankSlideLayout(draft.content.layout)) || draft.content.body || bodyFocusPage === active.id) && <textarea aria-label="幻灯片正文" value={draft.content.body} readOnly={!canDraft} style={bodyInlineStyle} onFocus={() => { setSelectedShape(null); setBodyFocusPage(active.id); setActiveTextField({ pageId: active.id, kind: "body" }); }} onChange={(event) => queue.edit(active, { body: event.target.value }, "body")} onBlur={(event) => { setBodyFocusPage(null); queue.endGroup(active.id); if (!keepTextToolbar(event.relatedTarget)) setActiveTextField((prev) => prev?.kind === "body" ? null : prev); }} placeholder="点击添加正文" className={cn("resize-none border border-transparent bg-transparent px-2 py-1 text-[21px] leading-relaxed outline-none placeholder:text-transparent focus:border-[#3370ff] focus:placeholder:text-[#b8bec5] group-hover/slide:placeholder:text-[#b8bec5] [@media(hover:none)]:placeholder:text-[#b8bec5]", isDarkSlideBackground(draft.content.background) ? "text-[#e5e7eb]" : "text-[#1f2329]", hasLargeSlideTitle(draft.content.layout) ? "absolute left-[9.5%] top-[60%] h-[27%] w-[81%]" : "mt-[4%] h-[55%] w-full")} data-slides-body data-slide-history />}
-                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} selectedIds={activeSelectedShapes} pageGroups={activePageGroups} scale={zoom / 100} gpuBacked={gpuActive} onPreviewManyChange={setPreviewShapes} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setActiveTextField(null); setSelectedShapes([id]); }} onSelectMany={(ids) => { queue.endGroup(active.id); setActiveTextField(null); setSelectedShapes(ids); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onChangeMany={(nextShapes) => replaceShapes(nextShapes)} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
+                  <SlideShapes shapes={draft.content.shapes} editable={canEdit} textEditable={canDraft} selected={selectedShape} selectedIds={activeSelectedShapes} pageGroups={activePageGroups} animations={activePageAnimations} previewAnimShapeId={shapeAnimPreview?.shapeId ?? null} previewAnimNonce={shapeAnimPreview?.nonce ?? 0} scale={zoom / 100} gpuBacked={gpuActive} onPreviewManyChange={setPreviewShapes} onOpenInspector={() => setFormatOpen(true)} onSelect={(id) => { if (id !== selectedShape) queue.endGroup(active.id); setActiveTextField(null); setSelectedShapes([id]); }} onSelectMany={(ids) => { queue.endGroup(active.id); setActiveTextField(null); setSelectedShapes(ids); }} onChange={(shape) => updateShape(shape.id, { x: shape.x, y: shape.y, width: shape.width, height: shape.height, rotation: shape.rotation })} onChangeMany={(nextShapes) => replaceShapes(nextShapes)} onTextChange={(id, text) => { flushSync(() => { const shapes = patchSlideShape(queue.get(active).content.shapes, id, { text }); queue.edit(active, { shapes }, `text:${id}`); }); }} onTextBlur={() => queue.endGroup(active.id)}/>
                   {marqueeRect && (
                     <div
                       data-slides-marquee
@@ -1713,7 +1959,39 @@ export function SlidesDeck({ deckId, userId, me }: { deckId: number; userId: num
             data-slides-format-overlay
             className="fixed inset-y-0 right-0 z-40 flex w-[min(100vw,360px)] shadow-xl md:static md:z-auto md:w-auto md:shrink-0 md:shadow-none [&>aside]:h-full [&>aside]:max-h-none [&>aside]:w-full [&>aside]:border-t-0 md:[&>aside]:w-[294px]"
           >
-            <SlideFormatPanel key={active.id} background={draft.content.background} layout={draft.content.layout ?? ""} shapes={draft.content.shapes} usedColors={list.map((page) => queue.get(page).content.background)} textStyle={textStyles[active.id]} transition={getSlideTransition(transitions, active.id)} canEdit={canEdit} busy={pageActions > 0 || pages.isFetching || queue.hasUnsaved()} applying={backgroundApplying} onChange={(color) => { if (canEdit && !pageActionCount.current && activePageRef.current === active.id) queue.edit(active, { background: color }); }} onLayoutChange={(layout) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; const plan = planSlideLayout(queue.get(active).content, layout); if (!plan.ok) { setOperationError(plan.message); return; } setOperationError(""); setSelectedShape(null); queue.edit(active, plan.content); }} onMore={() => { if (canEdit && activePageRef.current === active.id) { backgroundTarget.current = active.id; backgroundRef.current?.click(); } }} onApplyAll={() => void applyBackgroundToAll()} onApplyTheme={(theme) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; applyPageThemeStyle(active.id, theme); }} onApplyThemeAll={(theme) => void applyBackgroundToAll(theme.background, theme)} onTransitionChange={(kind) => { if (canEdit && activePageRef.current === active.id) updatePageTransition(active.id, kind); }} onPreviewTransition={(kind) => triggerTransitionPreview(kind)} onApplyTransitionAll={(kind) => { if (canEdit) applyTransitionToAll(kind); }} onClose={() => { setFormatOpen(false); backgroundButtonRef.current?.focus(); }}/>
+            <SlideFormatPanel key={active.id} background={draft.content.background} layout={draft.content.layout ?? ""} shapes={draft.content.shapes} selectedShape={chosenShape ?? null} usedColors={list.map((page) => queue.get(page).content.background)} textStyle={textStyles[active.id]} transition={getSlideTransition(transitions, active.id)} pageAnimations={activePageAnimations} canEdit={canEdit} busy={pageActions > 0 || pages.isFetching || queue.hasUnsaved()} applying={backgroundApplying} onChange={(color) => { if (canEdit && !pageActionCount.current && activePageRef.current === active.id) queue.edit(active, { background: color }); }} onLayoutChange={(layout) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; const plan = planSlideLayout(queue.get(active).content, layout); if (!plan.ok) { setOperationError(plan.message); return; } setOperationError(""); setSelectedShape(null); queue.edit(active, plan.content); }} onMore={() => { if (canEdit && activePageRef.current === active.id) { backgroundTarget.current = active.id; backgroundRef.current?.click(); } }} onApplyAll={() => void applyBackgroundToAll()} onApplyTheme={(theme) => { if (!canEdit || pageActionCount.current || activePageRef.current !== active.id) return; applyPageThemeStyle(active.id, theme); }} onApplyThemeAll={(theme) => void applyBackgroundToAll(theme.background, theme)} onTransitionChange={(kind) => { if (canEdit && activePageRef.current === active.id) updatePageTransition(active.id, kind); }} onPreviewTransition={(kind) => triggerTransitionPreview(kind)} onApplyTransitionAll={(kind) => { if (canEdit) applyTransitionToAll(kind); }} onShapeChange={(id, patch) => { if (canEdit && activePageRef.current === active.id) updateShape(id, patch); }} onShapeAnimationChange={(shapeId, anim) => { if (canEdit && activePageRef.current === active.id) updatePageAnimations(active.id, (prev) => setShapeAnimation(prev, shapeId, anim)); }} onPreviewShapeAnimation={(shapeId, anim) => triggerShapeAnimPreview(shapeId, anim)} onClose={() => { setFormatOpen(false); backgroundButtonRef.current?.focus(); }}/>
+          </div>
+        </>
+      )}
+      {extrasPanel && (
+        <>
+          <div className="fixed inset-0 z-30 bg-black/25 md:hidden" aria-hidden="true" onClick={() => setExtrasPanel(null)} />
+          <div
+            data-slides-extras-overlay
+            className="fixed inset-y-0 right-0 z-40 flex w-[min(100vw,360px)] shadow-xl md:static md:z-auto md:w-auto md:shrink-0 md:shadow-none"
+          >
+            <SlidesExtrasPanel
+              key={extrasPanel}
+              deckId={deckId}
+              userId={userId}
+              currentPageId={active?.id ?? null}
+              selectedShapeId={selectedShape}
+              pageIndexById={new Map(list.map((p, idx) => [p.id, idx + 1]))}
+              canEdit={canEdit}
+              canManage={meta.data?.role === "manage"}
+              initialTab={extrasPanel}
+              onJumpPage={(pageId) => {
+                setCurrent(pageId);
+                setSelectedShape(null);
+              }}
+              onRestored={(restoredPages) => {
+                qc.setQueryData(["slides", deckId, userId], restoredPages);
+                if (restoredPages.length > 0) setCurrent(restoredPages[0].id);
+                setSelectedShape(null);
+                void qc.invalidateQueries({ queryKey: ["slides", deckId, userId] });
+              }}
+              onClose={() => setExtrasPanel(null)}
+            />
           </div>
         </>
       )}

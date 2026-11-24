@@ -168,7 +168,7 @@ export function toDrawio(graph: FlowGraph): string {
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/\n/g, "&#10;");
   const styleFor = (n: FlowNode) => {
     const base: Record<Shape, string> = { rect: "rounded=0;", round: "rounded=1;", terminator: "rounded=1;arcSize=50;", diamond: "rhombus;", parallelogram: "shape=parallelogram;perimeter=parallelogramPerimeter;", ellipse: "ellipse;", document: "shape=document;", cylinder: "shape=cylinder3;", hexagon: "shape=hexagon;perimeter=hexagonPerimeter2;", text: "text;",
-      triangle: "triangle;direction=north;", note: "shape=note;", swimlane: "swimlane;horizontal=0;", swimlaneV: "swimlane;", class: "swimlane;fontStyle=1;startSize=32;", actor: "shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;", lifeline: "shape=umlLifeline;perimeter=lifelinePerimeter;size=44;", image: "rounded=0;dashed=1;" };
+      triangle: "triangle;direction=north;", note: "shape=note;", sticky: "shape=note;rounded=1;", swimlane: "swimlane;horizontal=0;", swimlaneV: "swimlane;", class: "swimlane;fontStyle=1;startSize=32;", actor: "shape=umlActor;verticalLabelPosition=bottom;verticalAlign=top;", lifeline: "shape=umlLifeline;perimeter=lifelinePerimeter;size=44;", image: "rounded=0;dashed=1;" };
     return `${base[n.shape]}jiangeShape=${n.shape};${n.rot ? `rotation=${n.rot};` : ""}whiteSpace=wrap;html=0;${n.fill ? `fillColor=${n.fill};` : ""}${n.stroke ? `strokeColor=${n.stroke};` : ""}${n.color ? `fontColor=${n.color};` : ""}`;
   };
   const cells = [

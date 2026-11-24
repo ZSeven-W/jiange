@@ -8,6 +8,12 @@ import { slidePresetControlLabel, slidePresetPlaceholder } from "./slides-layout
 import { isGpuNativeSlideShape } from "./slides-gpu-layer";
 import { computeSlideShapeSnap, type SlideSnapGuide } from "./slides-snap";
 import {
+  shapeAnimationPlayState,
+  slideShapeAnimationPreviewStyle,
+  type SlidePageShapeAnimations,
+} from "./slides-animations";
+import { SlideChartSvg } from "./slides-table-chart-editor";
+import {
   isSelectionSingleGroup,
   moveMultipleShapes,
   multiSelectionBounds,
@@ -36,12 +42,17 @@ export function SlideShapes({
   selected,
   selectedIds,
   pageGroups,
+  animations,
+  animationStep,
+  previewAnimShapeId,
+  previewAnimNonce = 0,
   onSelect,
   onSelectMany,
   onChange,
   onChangeMany,
   onTextChange,
   onTextBlur,
+  onOpenInspector,
   scale = 1,
   gpuBacked = false,
   onPreviewChange,
@@ -53,12 +64,17 @@ export function SlideShapes({
   selected: string | null;
   selectedIds?: readonly string[];
   pageGroups?: SlideShapeGroups;
+  animations?: SlidePageShapeAnimations;
+  animationStep?: number;
+  previewAnimShapeId?: string | null;
+  previewAnimNonce?: number;
   onSelect?: (id: string) => void;
   onSelectMany?: (ids: string[]) => void;
   onChange?: (shape: SlideShape) => void;
   onChangeMany?: (shapes: SlideShape[]) => void;
   onTextChange?: (id: string, value: string) => void;
   onTextBlur?: () => void;
+  onOpenInspector?: (id: string) => void;
   scale?: number;
   gpuBacked?: boolean;
   onPreviewChange?: (shape: SlideShape | null) => void;
@@ -120,16 +136,96 @@ export function SlideShapes({
     const isSingleSelected = singleSelectedId === item.id;
     const placeholder = item.kind === "text" ? slidePresetPlaceholder(item.id) : null;
     const textStyle = { color: item.color, fontSize: `${(item.fontSize ?? 24) / 9.6}cqw`, fontWeight: item.bold ? 700 : 400, textAlign: item.align ?? "left" } as const;
-    const gpuRendered = gpuBacked && isGpuNativeSlideShape(item);
-    const graphic = item.kind === "text" ? <div className={`h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3] ${editable && placeholder && !item.text ? "border border-dashed border-[#c9cdd4]" : ""}`} style={editable && placeholder && !item.text ? { ...textStyle, color: "#a3aab3" } : textStyle}>{item.text || (editable ? placeholder : "")}</div> : item.kind === "image" ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/> : item.kind === "table" ? <table className="h-full w-full border-collapse text-[1.1cqw]"><tbody>{(item.table?.rows ?? []).map((row, ri) => <tr key={ri}>{row.map((cell, ci) => <td key={ci} className="border border-[#d0d5dd] px-1 py-0.5">{cell}</td>)}</tr>)}</tbody></table> : item.kind === "chart" ? <div className={gpuRendered ? "flex h-full w-full items-start justify-center pt-[0.5cqw] text-[1.2cqw] text-[#475467]" : "flex h-full w-full items-center justify-center rounded border border-[#d0d5dd] bg-[#f8fafc] text-[1.2cqw] text-[#475467]"}>{item.chart?.title || "Chart"}</div> : gpuRendered ? <div className="h-full w-full" aria-hidden="true" /> : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
+    const shapeAnim = animations?.[item.id];
+    const isPreviewingAnim = previewAnimShapeId === item.id && !!shapeAnim;
+    const playState = !editable && animationStep !== undefined && shapeAnim
+      ? shapeAnimationPlayState(item.id, animations, animationStep)
+      : undefined;
+    const hasDomAnimation = isPreviewingAnim || !!playState;
+    const gpuRendered = gpuBacked && item.kind !== "chart" && !hasDomAnimation && isGpuNativeSlideShape(item);
+    const tableHeaderRow = item.table?.headerRow !== false;
+    const tableHeaderFill = item.table?.headerFill || "#edf2ff";
+    const tableBorderColor = item.table?.borderColor || "#dee0e3";
+    const graphic = item.kind === "text"
+      ? <div className={`h-full w-full overflow-hidden whitespace-pre-wrap break-words px-[0.4cqw] py-[0.2cqw] leading-[1.3] ${editable && placeholder && !item.text ? "border border-dashed border-[#c9cdd4]" : ""}`} style={editable && placeholder && !item.text ? { ...textStyle, color: "#a3aab3" } : textStyle}>{item.text || (editable ? placeholder : "")}</div>
+      : item.kind === "image"
+        ? <img src={`/api/files/${item.fileId}`} alt="" draggable={false} className="h-full w-full object-contain"/>
+        : item.kind === "table"
+          ? (
+            <div
+              data-slide-table-graphic
+              className="h-full w-full overflow-hidden rounded-[4px] bg-white"
+              style={{ border: `1px solid ${tableBorderColor}` }}
+            >
+              <table className="h-full w-full table-fixed border-collapse text-left text-[1.15cqw] text-[#1f2329]">
+                <tbody>
+                  {(item.table?.rows ?? [[""]]).map((row, ri) => {
+                    const isHeader = tableHeaderRow && ri === 0;
+                    return (
+                      <tr
+                        key={ri}
+                        style={{
+                          backgroundColor: isHeader ? tableHeaderFill : ri % 2 === 1 ? "#ffffff" : "#f7f8fa",
+                        }}
+                      >
+                        {row.map((cell, ci) => (
+                          <td
+                            key={ci}
+                            className={`overflow-hidden text-ellipsis whitespace-nowrap px-[0.6cqw] py-[0.3cqw] ${isHeader ? "font-semibold text-[#1f2329]" : "text-[#4e5969]"}`}
+                            style={{ border: `1px solid ${tableBorderColor}` }}
+                          >
+                            {cell}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )
+          : item.kind === "chart"
+            ? <SlideChartSvg chart={item.chart} />
+            : gpuRendered
+              ? <div className="h-full w-full" aria-hidden="true" />
+              : <SlideShapeGraphic kind={item.kind} color={item.color}/>;
     const style = { left: `${item.x}%`, top: `${item.y}%`, width: `${item.width ?? 16}%`, height: `${item.height ?? 20}%`, transform: `rotate(${item.rotation ?? 0}deg)` };
     const editingText = item.kind === "text" && isSingleSelected;
     const line = item.kind !== "text" && item.kind !== "image" && item.kind !== "table" && item.kind !== "chart" && isLineSlideShape(item.kind);
+    const previewAnimStyle = isPreviewingAnim ? slideShapeAnimationPreviewStyle(shapeAnim) : undefined;
     // Keep the active textarea mounted across temporary permission checks so
     // a background refetch does not discard focus or the browser's selection.
-    if (!editable && !editingText) return <div key={item.id} className="pointer-events-none absolute" style={style}>{graphic}</div>;
+    if (!editable && !editingText) {
+      return (
+        <div
+          key={item.id}
+          data-slide-shape-id={item.id}
+          data-slide-anim-visible={playState ? (playState.visible ? "true" : "false") : undefined}
+          className="pointer-events-none absolute"
+          style={style}
+        >
+          <div className="h-full w-full" style={playState?.style}>
+            {graphic}
+          </div>
+        </div>
+      );
+    }
+    const shapeAriaLabel = item.kind === "text"
+      ? (editingText ? "移动文本框" : slidePresetControlLabel(item.id, !!item.text) ?? "文本框")
+      : item.kind === "image"
+        ? "幻灯片图片"
+        : item.kind === "table"
+          ? "幻灯片表格"
+          : item.kind === "chart"
+            ? (item.chart?.title ? `幻灯片图表 ${item.chart.title}` : "幻灯片图表")
+            : `图形 ${item.kind}`;
     return <div key={item.id} data-slide-object data-slide-shape-id={item.id} className={`absolute ${editingText ? "outline outline-2 outline-[#3370ff] outline-offset-2" : ""}`} style={style}>
-    <button type="button" disabled={!editable} aria-label={item.kind === "text" ? (editingText ? "移动文本框" : slidePresetControlLabel(item.id, !!item.text) ?? "文本框") : item.kind === "image" ? "幻灯片图片" : `图形 ${item.kind}`} aria-pressed={isSelected} className={editingText ? "absolute z-10 grid h-5 w-8 touch-none place-items-center rounded border border-[#c9cdd4] bg-white text-[#646a73]" : `h-full w-full touch-none ${isSelected ? "outline outline-2 outline-[#3370ff] outline-offset-2" : "hover:outline hover:outline-1 hover:outline-[#3370ff]"}`} style={editingText ? { left: "50%", top: 0, marginTop: -20 / Math.max(scale, 0.1), transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})` } : undefined}
+    <button type="button" disabled={!editable} aria-label={shapeAriaLabel} aria-pressed={isSelected} className={editingText ? "absolute z-10 grid h-5 w-8 touch-none place-items-center rounded border border-[#c9cdd4] bg-white text-[#646a73]" : `h-full w-full touch-none ${isSelected ? "outline outline-2 outline-[#3370ff] outline-offset-2" : "hover:outline hover:outline-1 hover:outline-[#3370ff]"}`} style={editingText ? { left: "50%", top: 0, marginTop: -20 / Math.max(scale, 0.1), transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})` } : undefined}
+      onDoubleClick={() => {
+        if (editable && (item.kind === "table" || item.kind === "chart")) {
+          onOpenInspector?.(item.id);
+        }
+      }}
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         const canvas = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]");
@@ -250,7 +346,20 @@ export function SlideShapes({
         } else {
           onChange?.({ ...shape, x: clamp(shape.x + move[0], 100 - (shape.width ?? 16)), y: clamp(shape.y + move[1], 100 - (shape.height ?? 20)) });
         }
-      }}>{editingText ? <GripHorizontal size={14}/> : graphic}</button>
+      }}>{editingText ? <GripHorizontal size={14}/> : <div key={isPreviewingAnim ? `anim-${previewAnimNonce}` : "static"} className="h-full w-full" style={previewAnimStyle}>{graphic}</div>}</button>
+    {editable && shapeAnim && (
+      <span
+        data-slide-anim-badge={shapeAnim.order}
+        aria-label={`元素动画顺序 ${shapeAnim.order}`}
+        title={`动画 #${shapeAnim.order}`}
+        className="pointer-events-none absolute left-0 top-0 z-20 grid size-5 place-items-center rounded-full bg-[#3370ff] text-[10px] font-semibold tabular-nums text-white shadow-sm ring-2 ring-white"
+        style={{
+          transform: `translate(-40%, -40%) scale(${1 / Math.max(scale, 0.1)})`,
+        }}
+      >
+        {shapeAnim.order}
+      </span>
+    )}
     {editingText && <textarea autoFocus readOnly={!textEditable} aria-label="文本框内容" data-slide-history maxLength={1000} value={item.text ?? ""} onChange={(event) => { if (textEditable) onTextChange?.(item.id, event.target.value); }} onBlur={onTextBlur} placeholder={placeholder ?? "输入文字"} className="absolute inset-0 h-full w-full resize-none overflow-hidden whitespace-pre-wrap break-words bg-transparent px-[0.4cqw] py-[0.2cqw] leading-[1.3] outline-none placeholder:text-[#a3aab3]" style={textStyle}/>}
     {editable && isSingleSelected && line && (["start", "end"] as const).map((endpoint) => <button key={endpoint} type="button" aria-label={endpoint === "start" ? "调整线条起点" : "调整线条终点"} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: endpoint === "start" ? "5%" : "95%", top: "50%", transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: "crosshair" }}
       onPointerDown={(event) => { const rect = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]")?.getBoundingClientRect(); if (!rect?.width || !rect.height) return; event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); lineDrag.current = { shape, endpoint, pointer: event.pointerId, startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }; }}

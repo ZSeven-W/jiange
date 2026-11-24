@@ -1,4 +1,5 @@
-import type { SlideFieldTextStyleMeta, SlidePageMeta, SlidesPage } from "@/lib/api";
+import type { SlideFieldTextStyleMeta, SlidePageMeta, SlideShapeAnimation, SlidesPage } from "@/lib/api";
+import { normalizeSlideShapeAnimations } from "./slides-animations";
 
 export type SlideTextAlign = "left" | "center" | "right";
 
@@ -67,6 +68,7 @@ export function buildSlidePageMeta(
   styles: SlidePageTextStyles | undefined,
   transition: SlidePageMeta["transition"] | undefined,
   shapeGroups: Record<string, string[]> | undefined,
+  animations?: Record<string, SlideShapeAnimation> | undefined,
 ): SlidePageMeta {
   const meta: SlidePageMeta = {};
   const titleStyle = normalizeSlideFieldTextStyle(styles?.title);
@@ -86,6 +88,10 @@ export function buildSlidePageMeta(
     if (Object.keys(cleanGroups).length > 0) {
       meta.shapeGroups = cleanGroups;
     }
+  }
+  const cleanAnims = normalizeSlideShapeAnimations(animations as Record<string, unknown> | undefined);
+  if (cleanAnims) {
+    meta.animations = cleanAnims;
   }
   return meta;
 }

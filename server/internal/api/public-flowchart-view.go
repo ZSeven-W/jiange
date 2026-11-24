@@ -13,6 +13,7 @@ import (
 var publicFlowID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
 var publicMindID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 var publicFlowColor = regexp.MustCompile(`^#[0-9a-fA-F]{6}$`)
+var publicVoterID = regexp.MustCompile(`^[A-Za-z0-9_:@.-]{1,64}$`)
 
 // publicFlowProps mirrors the whiteboard SDK's visible graph semantics. It
 // rewrites objects rather than forwarding arbitrary embedded JSON, and omits
@@ -99,8 +100,10 @@ func publicFlowProps(props map[string]string) map[string]string {
 			}
 		}
 	}
+	publicBoardVotesProps(out, props, nodes)
 	publicMindProps(out, props)
 	publicMindRelationProps(out, props)
+	publicMindExtrasProps(out, props)
 	return out
 }
 
@@ -155,7 +158,7 @@ func publicFlowNode(raw string) map[string]any {
 	}
 	shape, _ := m["shape"].(string)
 	switch shape {
-	case "rect", "round", "diamond", "ellipse", "terminator", "parallelogram", "document", "cylinder", "hexagon", "text", "triangle", "note", "swimlane", "swimlaneV", "class", "actor", "lifeline", "image":
+	case "rect", "round", "diamond", "ellipse", "terminator", "parallelogram", "document", "cylinder", "hexagon", "text", "triangle", "note", "sticky", "swimlane", "swimlaneV", "class", "actor", "lifeline", "image":
 	default:
 		shape = "rect"
 	}
@@ -394,6 +397,241 @@ func publicMindRelation(id, raw string, liveTopics map[string]bool) map[string]a
 		if trimmed := strings.TrimSpace(label); trimmed != "" {
 			out["label"] = trimmed
 		}
+	}
+	return out
+}
+
+func publicBoardVotesProps(out, props map[string]string, nodes map[string]bool) {
+	if len(nodes) == 0 {
+		return
+	}
+	voteKeys := []string{}
+	for key, raw := range props {
+		if strings.HasPrefix(key, "fc.vt.") && raw != "" {
+			voteKeys = append(voteKeys, key)
+		}
+	}
+	sort.Strings(voteKeys)
+	count := 0
+	for _, key := range voteKeys {
+		if count >= 200 {
+			break
+		}
+		id := strings.TrimPrefix(key, "fc.vt.")
+		if !publicFlowID.MatchString(id) || !nodes[id] {
+			continue
+		}
+		if vote := publicBoardVote(props[key]); vote != nil {
+			out[key] = publicJSON(vote)
+			count++
+		}
+	}
+}
+
+func publicBoardVote(raw string) map[string]any {
+	if len(raw) > 16384 {
+		return nil
+	}
+	m := publicJSONObject(raw)
+	if m == nil {
+		return nil
+	}
+	rawVoters, ok := m["voters"].([]any)
+	if !ok {
+		return nil
+	}
+	seen := map[string]bool{}
+	voters := make([]string, 0, len(rawVoters))
+	for _, item := range rawVoters {
+		if len(voters) >= 500 {
+			break
+		}
+		s, ok := item.(string)
+		if !ok || strings.ContainsRune(s, 0) {
+			continue
+		}
+		trimmed := strings.TrimSpace(s)
+		if !publicVoterID.MatchString(trimmed) || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		voters = append(voters, trimmed)
+	}
+	if len(voters) == 0 {
+		return nil
+	}
+	sort.Strings(voters)
+	return map[string]any{"voters": voters}
+}
+
+func publicMindExtrasProps(out, props map[string]string) {
+	liveTopics := map[string]bool{}
+	for key, val := range out {
+		if strings.HasPrefix(key, "fc.m.") && val != "" {
+			liveTopics[strings.TrimPrefix(key, "fc.m.")] = true
+		}
+	}
+	if len(liveTopics) == 0 {
+		return
+	}
+	boundaryKeys := []string{}
+	summaryKeys := []string{}
+	badgeKeys := []string{}
+	for key, raw := range props {
+		if raw == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(key, "fc.mb."):
+			boundaryKeys = append(boundaryKeys, key)
+		case strings.HasPrefix(key, "fc.msu."):
+			summaryKeys = append(summaryKeys, key)
+		case strings.HasPrefix(key, "fc.mg."):
+			badgeKeys = append(badgeKeys, key)
+		}
+	}
+	sort.Strings(boundaryKeys)
+	sort.Strings(summaryKeys)
+	sort.Strings(badgeKeys)
+
+	bCount := 0
+	for _, key := range boundaryKeys {
+		if bCount >= 200 {
+			break
+		}
+		id := strings.TrimPrefix(key, "fc.mb.")
+		if !publicMindID.MatchString(id) || !liveTopics[id] {
+			continue
+		}
+		if boundary := publicMindBoundary(props[key]); boundary != nil {
+			out[key] = publicJSON(boundary)
+			bCount++
+		}
+	}
+
+	sCount := 0
+	for _, key := range summaryKeys {
+		if sCount >= 200 {
+			break
+		}
+		id := strings.TrimPrefix(key, "fc.msu.")
+		if !publicMindID.MatchString(id) || !liveTopics[id] {
+			continue
+		}
+		if summary := publicMindSummary(props[key]); summary != nil {
+			out[key] = publicJSON(summary)
+			sCount++
+		}
+	}
+
+	gCount := 0
+	for _, key := range badgeKeys {
+		if gCount >= 500 {
+			break
+		}
+		id := strings.TrimPrefix(key, "fc.mg.")
+		if !publicMindID.MatchString(id) || !liveTopics[id] {
+			continue
+		}
+		if badge := publicMindBadge(props[key]); badge != nil {
+			out[key] = publicJSON(badge)
+			gCount++
+		}
+	}
+}
+
+func publicMindBoundary(raw string) map[string]any {
+	if len(raw) > 1024 {
+		return nil
+	}
+	m := publicJSONObject(raw)
+	if m == nil {
+		return nil
+	}
+	color := "#3370ff"
+	if rawColor, exists := m["color"]; exists && rawColor != nil {
+		c, ok := rawColor.(string)
+		if !ok || !publicFlowColor.MatchString(c) {
+			return nil
+		}
+		color = strings.ToLower(c)
+	}
+	out := map[string]any{"color": color}
+	if rawLabel, exists := m["label"]; exists && rawLabel != nil {
+		label, ok := rawLabel.(string)
+		if !ok || strings.ContainsRune(label, 0) || len(utf16.Encode([]rune(label))) > 40 {
+			return nil
+		}
+		if trimmed := strings.TrimSpace(label); trimmed != "" {
+			out["label"] = trimmed
+		}
+	}
+	return out
+}
+
+func publicMindSummary(raw string) map[string]any {
+	if len(raw) > 1024 {
+		return nil
+	}
+	m := publicJSONObject(raw)
+	if m == nil {
+		return nil
+	}
+	color := "#722ed1"
+	if rawColor, exists := m["color"]; exists && rawColor != nil {
+		c, ok := rawColor.(string)
+		if !ok || !publicFlowColor.MatchString(c) {
+			return nil
+		}
+		color = strings.ToLower(c)
+	}
+	label := "概要"
+	if rawLabel, exists := m["label"]; exists && rawLabel != nil {
+		s, ok := rawLabel.(string)
+		if !ok || strings.ContainsRune(s, 0) || len(utf16.Encode([]rune(s))) > 80 {
+			return nil
+		}
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			label = trimmed
+		}
+	}
+	return map[string]any{"label": label, "color": color}
+}
+
+func publicMindBadge(raw string) map[string]any {
+	if len(raw) > 1024 {
+		return nil
+	}
+	m := publicJSONObject(raw)
+	if m == nil {
+		return nil
+	}
+	out := map[string]any{}
+	if rawP, exists := m["priority"]; exists && rawP != nil {
+		n, ok := publicNumber(rawP)
+		if !ok || math.Trunc(n) != n || (n != 1 && n != 2 && n != 3) {
+			return nil
+		}
+		out["priority"] = int(n)
+	}
+	if rawProg, exists := m["progress"]; exists && rawProg != nil {
+		n, ok := publicNumber(rawProg)
+		if !ok || math.Trunc(n) != n || (n != 0 && n != 25 && n != 50 && n != 75 && n != 100) {
+			return nil
+		}
+		out["progress"] = int(n)
+	}
+	if rawTag, exists := m["tag"]; exists && rawTag != nil {
+		s, ok := rawTag.(string)
+		if !ok || strings.ContainsRune(s, 0) || len(utf16.Encode([]rune(s))) > 16 {
+			return nil
+		}
+		if trimmed := strings.TrimSpace(s); trimmed != "" {
+			out["tag"] = trimmed
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

@@ -1,12 +1,22 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SheetWorksheet } from "@/lib/api";
 import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
-import type { SheetCellHistoryEntry, SheetVersionMeta } from "@/lib/sheet-history-api";
+import {
+  sheetHistoryApi,
+  type SheetCellHistoryEntry,
+  type SheetDefinedNameRecord,
+  type SheetVersionMeta,
+} from "@/lib/sheet-history-api";
+import * as sheetHistoryPanelModule from "./sheet-history-panel";
 import {
   DEFINED_NAME_REGEX,
+  definedNameRecordsToSdk,
+  MAX_DEFINED_NAME_REF_LENGTH,
+  MAX_DEFINED_NAMES,
   parseDefinedNameTarget,
+  sdkDefinedNamesToRecords,
   SheetCellHistoryPanel,
   SheetDefinedNamesPanel,
   SheetVersionsPanel,
@@ -227,5 +237,107 @@ describe("SheetDefinedNamesPanel & helpers", () => {
     expect(html).toContain("=Sheet1!A1");
     expect(html).toContain("LocalTotal");
     expect(html).toContain('data-sheet-name-delete="TaxRate"');
+  });
+
+  it("enforces max 200 names and 512-char ref limits in validateDefinedName", () => {
+    const fullList: SheetDefinedName[] = Array.from({ length: MAX_DEFINED_NAMES }, (_, i) => ({
+      name: `N_${i}`,
+      ref: `Sheet1!A${i + 1}`,
+    }));
+    expect(validateDefinedName("ExtraName", "Sheet1!B1", undefined, fullList).ok).toBe(false);
+    expect(validateDefinedName("LongRef", "A".repeat(MAX_DEFINED_NAME_REF_LENGTH + 1), undefined, []).ok).toBe(false);
+    expect(validateDefinedName("OkRef", "A".repeat(MAX_DEFINED_NAME_REF_LENGTH), undefined, []).ok).toBe(true);
+  });
+
+  it("maps cloud defined name records to SDK format and back while preserving sheetId and comment", () => {
+    const s1 = makeWorksheet({ id: 11, title: "Sheet1" });
+    const s2 = makeWorksheet({ id: 12, title: "汇总" });
+    const records: SheetDefinedNameRecord[] = [
+      { name: "TaxRate", ref: "Sheet1!$A$1", comment: "全局税率" },
+      { name: "LocalTotal", ref: "汇总!B2:B4", sheetId: 12, comment: "汇总页" },
+      { name: "OrphanScope", ref: "OldSheet!A1", sheetId: 999 },
+    ];
+
+    const sdkNames = definedNameRecordsToSdk(records, [s1, s2]);
+    expect(sdkNames).toEqual([
+      { name: "TaxRate", ref: "Sheet1!$A$1" },
+      { name: "LocalTotal", ref: "汇总!B2:B4", sheetName: "汇总" },
+      { name: "OrphanScope", ref: "OldSheet!A1", sheetName: "#999" },
+    ]);
+
+    // Worksheet rename keeps scope attached to sheetId.
+    const renamedS2 = makeWorksheet({ id: 12, title: "年度汇总" });
+    const afterRename = definedNameRecordsToSdk(records, [s1, renamedS2]);
+    expect(afterRename[1]).toEqual({ name: "LocalTotal", ref: "汇总!B2:B4", sheetName: "年度汇总" });
+
+    // Round-trip back to cloud records preserves sheetId & comment.
+    const backToRecords = sdkDefinedNamesToRecords(sdkNames, [s1, s2], records);
+    expect(backToRecords).toEqual([
+      { name: "TaxRate", ref: "Sheet1!$A$1", comment: "全局税率" },
+      { name: "LocalTotal", ref: "汇总!B2:B4", sheetId: 12, comment: "汇总页" },
+      { name: "OrphanScope", ref: "OldSheet!A1", sheetId: 999 },
+    ]);
+  });
+
+  describe("cloud defined names API (zero localStorage dependency)", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("removes localStorage helpers and persists defined names via backend API", async () => {
+      expect("loadStoredDefinedNames" in sheetHistoryPanelModule).toBe(false);
+      expect("saveStoredDefinedNames" in sheetHistoryPanelModule).toBe(false);
+
+      const sampleRecords: SheetDefinedNameRecord[] = [
+        { name: "TaxRate", ref: "Sheet1!$A$1", comment: "税率" },
+        { name: "LocalSum", ref: "Sheet1!B1:B5", sheetId: 11 },
+      ];
+      const fetchMock = vi
+        .spyOn(globalThis, "fetch")
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ definedNames: sampleRecords }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ definedNames: sampleRecords }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+        );
+
+      const loaded = await sheetHistoryApi.getDefinedNames(7, 42);
+      expect(loaded.definedNames).toEqual(sampleRecords);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        1,
+        "/api/sheets/7/defined-names",
+        expect.objectContaining({
+          method: "GET",
+          credentials: "same-origin",
+          headers: expect.objectContaining({
+            "X-Jiange-User-Id": "42",
+            "X-Jiange-Sheet-Version": "1",
+          }),
+        }),
+      );
+
+      const saved = await sheetHistoryApi.saveDefinedNames(7, 42, sampleRecords);
+      expect(saved.definedNames).toEqual(sampleRecords);
+      expect(fetchMock).toHaveBeenNthCalledWith(
+        2,
+        "/api/sheets/7/defined-names",
+        expect.objectContaining({
+          method: "PUT",
+          credentials: "same-origin",
+          headers: expect.objectContaining({
+            "X-Jiange-User-Id": "42",
+            "X-Jiange-Sheet-Version": "1",
+            "Content-Type": "application/json",
+          }),
+          body: JSON.stringify({ definedNames: sampleRecords }),
+        }),
+      );
+    });
   });
 });

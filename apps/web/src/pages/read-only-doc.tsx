@@ -1,6 +1,7 @@
 import { boardContentBounds, FlowSvg } from "@/editor/flowchart/flowchart-block";
 import { readBoardFramesFromProps } from "@/editor/flowchart/board-frames";
 import { readMindLayoutFromProps } from "@/editor/flowchart/mindmap-layouts";
+import { readWhiteboardExtrasFromProps } from "@/editor/flowchart/whiteboard-extras";
 import { readFlow } from "@/editor/flowchart/model";
 import { tableCellAlign, tableCellFill, tableCellHasRichMarks, tableCellRich, tableDataOf } from "@/editor/table-cells";
 import { renderTableRichSpans } from "@/editor/table-rich-render";
@@ -86,6 +87,7 @@ function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; p
   const graph = readFlow(block.props);
   const frames = readBoardFramesFromProps(block.props);
   const mindLayout = readMindLayoutFromProps(block.props);
+  const extras = readWhiteboardExtrasFromProps(block.props);
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
   const [overflow, setOverflow] = useState(false);
   const scroll = useRef<HTMLDivElement>(null);
@@ -95,7 +97,7 @@ function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; p
   for (const [id, folded] of Object.entries(overrides)) { if (folded) collapsed.add(id); else collapsed.delete(id); }
   const display = { ...graph, mindCollapsed: [...collapsed] };
   const hasContent = graph.nodes.length || graph.strokes?.length || graph.mind?.length || frames.length;
-  const bounds = boardContentBounds(display, mindLayout.structure, frames, collapsed);
+  const bounds = boardContentBounds(display, mindLayout.structure, frames, collapsed, mindLayout.relations, extras.mindBoundaries, extras.mindSummaries, extras.mindBadges);
   const minWidth = Math.min(8192, Math.max(200, bounds.w + 80));
   const minHeight = Math.min(8192, Math.max(120, bounds.h + 80));
   useEffect(() => {
@@ -110,7 +112,7 @@ function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; p
   }, [minWidth, minHeight, hasContent]);
   const height = Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360));
   const sizing = { "--flow-min-width": `${minWidth}px`, "--flow-min-height": `${minHeight}px` } as CSSProperties;
-  return <div data-flowchart className="my-2"><div ref={scroll} data-flow-scroll role="region" aria-label="图形预览，可滚动查看" tabIndex={0} className="overflow-auto rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }}>{hasContent ? <div className="h-full min-h-[var(--flow-min-height)] min-w-[var(--flow-min-width)] sm:min-h-0 sm:min-w-0" style={sizing}><FlowSvg graph={display} frames={frames} mindStructure={mindLayout.structure} mindRelations={mindLayout.relations} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, versionSeq) ?? ""} onMindFold={(id) => setOverrides((previous) => ({ ...previous, [id]: !collapsed.has(id) }))} /></div> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>{overflow && <p className="mt-1 text-right text-[12px] text-subtle sm:hidden">滑动查看完整图形</p>}</div>;
+  return <div data-flowchart className="my-2"><div ref={scroll} data-flow-scroll role="region" aria-label="图形预览，可滚动查看" tabIndex={0} className="overflow-auto rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }}>{hasContent ? <div className="h-full min-h-[var(--flow-min-height)] min-w-[var(--flow-min-width)] sm:min-h-0 sm:min-w-0" style={sizing}><FlowSvg graph={display} frames={frames} votes={extras.votes} mindStructure={mindLayout.structure} mindRelations={mindLayout.relations} mindBoundaries={extras.mindBoundaries} mindSummaries={extras.mindSummaries} mindBadges={extras.mindBadges} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, versionSeq) ?? ""} onMindFold={(id) => setOverrides((previous) => ({ ...previous, [id]: !collapsed.has(id) }))} /></div> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>{overflow && <p className="mt-1 text-right text-[12px] text-subtle sm:hidden">滑动查看完整图形</p>}</div>;
 }
 
 function ReadOnlyTable({ data, merges, widths, fillProps = {}, header = true, headerColumn = false, activeComment = false }: { data?: string; merges?: string; widths?: string; fillProps?: Record<string, string>; header?: boolean; headerColumn?: boolean; activeComment?: boolean }) {

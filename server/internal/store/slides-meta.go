@@ -16,9 +16,11 @@ import (
 )
 
 const (
-	maxSlidePageMetaBytes = 64 * 1024
-	maxSlideShapeGroups   = 100
-	maxSlideGroupMembers  = 100
+	maxSlidePageMetaBytes   = 64 * 1024
+	maxSlideShapeGroups     = 100
+	maxSlideGroupMembers    = 100
+	maxSlideShapeAnimations = 100
+	defaultSlideAnimMs      = 450
 )
 
 // ErrInvalidSlideMeta reports malformed, oversized, or out-of-range page metadata.
@@ -38,12 +40,21 @@ type SlideFieldTextStyleMeta struct {
 	Align    *string  `json:"align,omitempty"`
 }
 
+// SlideShapeAnimationMeta carries per-shape animation configuration for a single slide page.
+type SlideShapeAnimationMeta struct {
+	Effect     string `json:"effect"`               // fade-in | slide-up | zoom-in | bounce | pulse | fade-out
+	Order      int    `json:"order"`                // 1..100
+	DurationMs int    `json:"durationMs,omitempty"` // 100..5000 (default 450)
+	Trigger    string `json:"trigger,omitempty"`    // click | with_prev | after_prev (default "click")
+}
+
 // SlidePageMeta carries cloud-persisted presentation metadata for a single slide page.
 type SlidePageMeta struct {
-	TitleStyle  *SlideFieldTextStyleMeta `json:"titleStyle,omitempty"`
-	BodyStyle   *SlideFieldTextStyleMeta `json:"bodyStyle,omitempty"`
-	Transition  *string                  `json:"transition,omitempty"`
-	ShapeGroups map[string][]string      `json:"shapeGroups,omitempty"`
+	TitleStyle  *SlideFieldTextStyleMeta           `json:"titleStyle,omitempty"`
+	BodyStyle   *SlideFieldTextStyleMeta           `json:"bodyStyle,omitempty"`
+	Transition  *string                            `json:"transition,omitempty"`
+	ShapeGroups map[string][]string                `json:"shapeGroups,omitempty"`
+	Animations  map[string]SlideShapeAnimationMeta `json:"animations,omitempty"`
 }
 
 // SlidesMetaStore persists slide page styling, transitions, and shape groups
@@ -159,8 +170,67 @@ func normalizeSlideShapeGroups(in map[string][]string) (map[string][]string, err
 	return out, nil
 }
 
+func validSlideAnimationEffect(v string) bool {
+	switch v {
+	case "fade-in", "slide-up", "zoom-in", "bounce", "pulse", "fade-out":
+		return true
+	}
+	return false
+}
+
+func validSlideAnimationTrigger(v string) bool {
+	switch v {
+	case "click", "with_prev", "after_prev":
+		return true
+	}
+	return false
+}
+
+func normalizeSlideShapeAnimations(in map[string]SlideShapeAnimationMeta) (map[string]SlideShapeAnimationMeta, error) {
+	if in == nil {
+		return nil, nil
+	}
+	if len(in) > maxSlideShapeAnimations {
+		return nil, ErrInvalidSlideMeta
+	}
+	out := make(map[string]SlideShapeAnimationMeta, len(in))
+	for shapeID, anim := range in {
+		if !slideMetaID.MatchString(shapeID) {
+			return nil, ErrInvalidSlideMeta
+		}
+		if !validSlideAnimationEffect(anim.Effect) {
+			return nil, ErrInvalidSlideMeta
+		}
+		if anim.Order < 1 || anim.Order > maxSlideShapeAnimations {
+			return nil, ErrInvalidSlideMeta
+		}
+		durationMs := anim.DurationMs
+		if durationMs == 0 {
+			durationMs = defaultSlideAnimMs
+		} else if durationMs < 100 || durationMs > 5000 {
+			return nil, ErrInvalidSlideMeta
+		}
+		trigger := anim.Trigger
+		if trigger == "" {
+			trigger = "click"
+		} else if !validSlideAnimationTrigger(trigger) {
+			return nil, ErrInvalidSlideMeta
+		}
+		out[shapeID] = SlideShapeAnimationMeta{
+			Effect:     anim.Effect,
+			Order:      anim.Order,
+			DurationMs: durationMs,
+			Trigger:    trigger,
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
+}
+
 func encodeNormalizedSlidePageMeta(m SlidePageMeta) (json.RawMessage, error) {
-	if m.TitleStyle == nil && m.BodyStyle == nil && m.Transition == nil && len(m.ShapeGroups) == 0 {
+	if m.TitleStyle == nil && m.BodyStyle == nil && m.Transition == nil && len(m.ShapeGroups) == 0 && len(m.Animations) == 0 {
 		return nil, nil
 	}
 	encoded, err := json.Marshal(m)
@@ -221,11 +291,16 @@ func ValidateAndNormalizeSlidePageMeta(raw json.RawMessage) (json.RawMessage, er
 	if err != nil {
 		return nil, err
 	}
+	animations, err := normalizeSlideShapeAnimations(in.Animations)
+	if err != nil {
+		return nil, err
+	}
 	return encodeNormalizedSlidePageMeta(SlidePageMeta{
 		TitleStyle:  titleStyle,
 		BodyStyle:   bodyStyle,
 		Transition:  transition,
 		ShapeGroups: groups,
+		Animations:  animations,
 	})
 }
 
@@ -357,7 +432,7 @@ func mergeSlidePageMeta(existing json.RawMessage, patch slideBatchMetaPatch) (js
 	if patch.hasTransition {
 		cur.Transition = patch.transition
 	}
-	// Always preserve cur.ShapeGroups untouched.
+	// Always preserve cur.ShapeGroups and cur.Animations untouched.
 	return encodeNormalizedSlidePageMeta(cur)
 }
 

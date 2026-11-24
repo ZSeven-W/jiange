@@ -39,12 +39,25 @@ describe("multi-person cells (允许多选)", () => {
     expect(markup).toContain("确定");
   });
 
-  it("keeps the native single select for single-mode and created_by fields", () => {
+  it("uses FeishuSelect without native <select> for single-mode person, created_by, and select fields", () => {
     const markup = renderToStaticMarkup(<CellEditor field={single} record={{ ...record, cells: { 1: 9 } }} members={members} onCommit={() => {}} onCancel={() => {}} />);
-    expect(markup).toContain("<select");
+    expect(markup).toContain('role="combobox"');
+    expect(markup).toContain('data-select-value="9"');
+    expect(markup).toContain("data-person-single-editor");
+    expect(markup).not.toContain("<select");
     expect(markup).not.toContain("data-person-editor");
+
     const creator: Field = { id: 2, name: "创建人", type: "created_by", position: 2 };
     const createdMarkup = renderToStaticMarkup(<CellEditor field={creator} record={record} members={members} onCommit={() => {}} onCancel={() => {}} />);
-    expect(createdMarkup).toContain("<select");
+    expect(createdMarkup).toContain('role="combobox"');
+    expect(createdMarkup).toContain("data-person-single-editor");
+    expect(createdMarkup).not.toContain("<select");
+
+    const statusField: Field = { id: 3, name: "状态", type: "select", options: ["待办", "进行中", "完成"], position: 3 };
+    const selectMarkup = renderToStaticMarkup(<CellEditor field={statusField} record={{ ...record, cells: { 3: "进行中" } }} members={members} onCommit={() => {}} onCancel={() => {}} />);
+    expect(selectMarkup).toContain('role="combobox"');
+    expect(selectMarkup).toContain('data-select-value="进行中"');
+    expect(selectMarkup).toContain("data-select-cell-editor");
+    expect(selectMarkup).not.toContain("<select");
   });
 });

@@ -92,8 +92,11 @@ import {
   type RemoteCollaborator,
 } from "./sheet-collab";
 import { SheetConflictBar } from "./sheet-conflict-bar";
-import { loadStoredDefinedNames, parseDefinedNameTarget, saveStoredDefinedNames } from "./sheet-history-panel";
+import { sheetHistoryApi, type SheetDefinedNameRecord } from "@/lib/sheet-history-api";
+import { definedNameRecordsToSdk, parseDefinedNameTarget, sdkDefinedNamesToRecords } from "./sheet-history-panel";
 import { SheetPrintDialog } from "./sheet-print-dialog";
+
+const EMPTY_DEFINED_NAMES: SheetDefinedName[] = [];
 
 const DEFAULT_COL_WIDTH = 105;
 const DEFAULT_ROW_HEIGHT = 27;
@@ -210,6 +213,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const metaQueryKey = useMemo(() => ["doc", sheetId, userId], [sheetId, userId]);
   const workbookQueryKey = useMemo(() => ["sheet", sheetId, userId], [sheetId, userId]);
   const commentsQueryKey = useMemo(() => ["sheet-comments", sheetId, userId], [sheetId, userId]);
+  const definedNamesQueryKey = useMemo(() => ["sheet-defined-names", sheetId, userId] as const, [sheetId, userId]);
 
   const meta = useQuery({
     queryKey: metaQueryKey,
@@ -241,6 +245,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const commentsQuery = useQuery({
     queryKey: commentsQueryKey,
     queryFn: () => sheetsApi.listComments(sheetId, userId),
+    enabled: !!isSheetKind && !meta.isError,
+    retry: false,
+  });
+  const definedNamesQuery = useQuery({
+    queryKey: definedNamesQueryKey,
+    queryFn: ({ signal }) => sheetHistoryApi.getDefinedNames(sheetId, userId, signal),
     enabled: !!isSheetKind && !meta.isError,
     retry: false,
   });
@@ -303,16 +313,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [importing, setImporting] = useState(false);
   const [fillTarget, setFillTarget] = useState<SheetPoint | null>(null);
   const [activePanel, setActivePanel] = useState<SheetPanelMode | null>(null);
-  const [definedNames, setDefinedNames] = useState<SheetDefinedName[]>(() => loadStoredDefinedNames(sheetId));
   const [printOpen, setPrintOpen] = useState(false);
   const [cellContextMenu, setCellContextMenu] = useState<{ x: number; y: number; row: number; col: number } | null>(null);
   const [dropdownCell, setDropdownCell] = useState<{ sheetId: number; row: number; col: number } | null>(null);
   const [gridScrollTop, setGridScrollTop] = useState(0);
   const [gridViewportHeight, setGridViewportHeight] = useState(0);
-
-  useEffect(() => {
-    setDefinedNames(loadStoredDefinedNames(sheetId));
-  }, [sheetId]);
 
   const shareBtnRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -336,6 +341,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   }, []);
 
   const sheets = workbook.data?.sheets ?? [];
+  const definedNameRecords = definedNamesQuery.data?.definedNames;
+  const definedNames = useMemo(
+    () => (definedNameRecords && definedNameRecords.length > 0 ? definedNameRecordsToSdk(definedNameRecords, sheets) : EMPTY_DEFINED_NAMES),
+    [definedNameRecords, sheets],
+  );
   const activeSheet = useMemo(
     () => sheets.find((s) => s.id === activeSheetId) ?? sheets[0] ?? null,
     [sheets, activeSheetId],
@@ -405,7 +415,8 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         const msg = JSON.parse(event.data);
         if (msg?.type === "revision" && Number.isSafeInteger(msg.workbookRevision)) {
           const current = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
-          if (msg.worksheetId && Array.isArray(msg.cellDelta) && msg.cellDelta.length > 0) {
+          const hasCellDelta = Boolean(msg.worksheetId && Array.isArray(msg.cellDelta) && msg.cellDelta.length > 0);
+          if (hasCellDelta) {
             const patched = applyRemoteCellDelta(current, msg.worksheetId, msg.workbookRevision, msg.cellDelta as SheetCellRevision[]);
             if (patched) {
               qc.setQueryData<SheetSnapshot>(workbookQueryKey, patched);
@@ -416,6 +427,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             void qc.invalidateQueries({ queryKey: workbookQueryKey });
           }
           void qc.invalidateQueries({ queryKey: commentsQueryKey });
+          if (!hasCellDelta) {
+            void qc.invalidateQueries({ queryKey: definedNamesQueryKey });
+          }
         } else if (msg?.type === "presence" && Array.isArray(msg.collaborators)) {
           setCollaborators(msg.collaborators.filter((c: RemoteCollaborator) => c.userId !== userId));
         }
@@ -427,7 +441,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       wsRef.current = null;
       socket.close();
     };
-  }, [isSheetKind, workbook.isSuccess, sheetId, userId, qc, workbookQueryKey, commentsQueryKey]);
+  }, [isSheetKind, workbook.isSuccess, sheetId, userId, qc, workbookQueryKey, commentsQueryKey, definedNamesQueryKey]);
 
   const isEditingAny = !!editing;
   useEffect(() => {
@@ -1303,10 +1317,31 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     setActivePanel((cur) => (cur === mode ? null : mode));
   };
 
-  const handleUpdateDefinedNames = (next: SheetDefinedName[]) => {
-    setDefinedNames(next);
-    saveStoredDefinedNames(sheetId, next);
-    setStatusMessage(t("已更新定义名称"));
+  const handleUpdateDefinedNames = async (next: SheetDefinedName[]) => {
+    if (!canEdit) return;
+    const prev = qc.getQueryData<{ definedNames: SheetDefinedNameRecord[] }>(definedNamesQueryKey);
+    const nextRecords = sdkDefinedNamesToRecords(next, sheets, prev?.definedNames);
+    setErrorMessage("");
+    qc.setQueryData<{ definedNames: SheetDefinedNameRecord[] }>(definedNamesQueryKey, {
+      definedNames: nextRecords,
+    });
+    try {
+      const res = await sheetHistoryApi.saveDefinedNames(sheetId, userId, nextRecords);
+      if (!mountedRef.current) return;
+      qc.setQueryData<{ definedNames: SheetDefinedNameRecord[] }>(definedNamesQueryKey, {
+        definedNames: res.definedNames,
+      });
+      void qc.invalidateQueries({ queryKey: definedNamesQueryKey });
+      setStatusMessage(t("已更新定义名称"));
+    } catch (err) {
+      if (!mountedRef.current) return;
+      if (prev !== undefined) {
+        qc.setQueryData<{ definedNames: SheetDefinedNameRecord[] }>(definedNamesQueryKey, prev);
+      } else {
+        void qc.invalidateQueries({ queryKey: definedNamesQueryKey });
+      }
+      setErrorMessage(err instanceof Error ? err.message : t("保存定义名称失败"));
+    }
   };
 
   const handleJumpToNamedRange = (dn: SheetDefinedName) => {
@@ -1338,6 +1373,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     setCellConflicts([]);
     setMergeConflict(null);
     void qc.invalidateQueries({ queryKey: commentsQueryKey });
+    void qc.invalidateQueries({ queryKey: definedNamesQueryKey });
     void qc.invalidateQueries({ queryKey: ["sheet-cell-history", sheetId, userId] });
     setStatusMessage(t("已恢复历史版本，并已自动备份恢复前内容"));
   };

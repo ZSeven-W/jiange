@@ -239,6 +239,22 @@ func validSlideShapes(raw json.RawMessage) bool {
 		Bold     *bool    `json:"bold"`
 		Align    *string  `json:"align"`
 		FileID   *int64   `json:"fileId"`
+		Table    *struct {
+			Rows        [][]string `json:"rows"`
+			HeaderRow   *bool      `json:"headerRow"`
+			HeaderFill  *string    `json:"headerFill"`
+			BorderColor *string    `json:"borderColor"`
+		} `json:"table"`
+		Chart *struct {
+			Type       string   `json:"type"`
+			Title      string   `json:"title"`
+			Categories []string `json:"categories"`
+			Series     []struct {
+				Name   string    `json:"name"`
+				Values []float64 `json:"values"`
+				Color  string    `json:"color"`
+			} `json:"series"`
+		} `json:"chart"`
 	}
 	if json.Unmarshal(raw, &shapes) != nil || len(shapes) > 100 {
 		return false
@@ -256,7 +272,7 @@ func validSlideShapes(raw json.RawMessage) bool {
 		if s.Rotation != nil {
 			rotation = *s.Rotation
 		}
-		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "rounded-rectangle" && s.Kind != "right-triangle" && s.Kind != "diamond" && s.Kind != "pentagon" && s.Kind != "hexagon" && s.Kind != "star" && s.Kind != "parallelogram" && s.Kind != "trapezoid" && s.Kind != "arrow-right" && s.Kind != "line" && s.Kind != "line-arrow" && s.Kind != "line-arrow-filled" && s.Kind != "line-dot" && s.Kind != "line-double-arrow" && s.Kind != "text" && s.Kind != "image") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
+		if !slideShapeID.MatchString(s.ID) || seen[s.ID] || (s.Kind != "rectangle" && s.Kind != "ellipse" && s.Kind != "triangle" && s.Kind != "rounded-rectangle" && s.Kind != "right-triangle" && s.Kind != "diamond" && s.Kind != "pentagon" && s.Kind != "hexagon" && s.Kind != "star" && s.Kind != "parallelogram" && s.Kind != "trapezoid" && s.Kind != "arrow-right" && s.Kind != "line" && s.Kind != "line-arrow" && s.Kind != "line-arrow-filled" && s.Kind != "line-dot" && s.Kind != "line-double-arrow" && s.Kind != "text" && s.Kind != "image" && s.Kind != "table" && s.Kind != "chart") || !(width >= 5 && width <= 100 && height >= 5 && height <= 100 && s.X >= 0 && s.X+width <= 100 && s.Y >= 0 && s.Y+height <= 100 && rotation >= 0 && rotation <= 359) || !slideShapeColor.MatchString(s.Color) {
 			return false
 		}
 		if s.Kind == "text" && (s.Text == nil || utf8.RuneCountInString(*s.Text) > 1000 || (s.FontSize != nil && (*s.FontSize < 12 || *s.FontSize > 96)) || (s.Align != nil && *s.Align != "left" && *s.Align != "center" && *s.Align != "right")) {
@@ -264,6 +280,35 @@ func validSlideShapes(raw json.RawMessage) bool {
 		}
 		if s.Kind == "image" && (s.FileID == nil || *s.FileID <= 0) {
 			return false
+		}
+		if s.Kind == "table" {
+			if s.Table == nil || len(s.Table.Rows) < 1 || len(s.Table.Rows) > 20 {
+				return false
+			}
+			cols := len(s.Table.Rows[0])
+			if cols < 1 || cols > 12 {
+				return false
+			}
+			for _, row := range s.Table.Rows {
+				if len(row) != cols {
+					return false
+				}
+				for _, cell := range row {
+					if utf8.RuneCountInString(cell) > 500 {
+						return false
+					}
+				}
+			}
+		}
+		if s.Kind == "chart" {
+			if s.Chart == nil || (s.Chart.Type != "column" && s.Chart.Type != "bar" && s.Chart.Type != "line" && s.Chart.Type != "pie") || utf8.RuneCountInString(s.Chart.Title) > 120 || len(s.Chart.Categories) < 1 || len(s.Chart.Categories) > 24 || len(s.Chart.Series) < 1 || len(s.Chart.Series) > 8 {
+				return false
+			}
+			for _, ser := range s.Chart.Series {
+				if utf8.RuneCountInString(ser.Name) > 80 || len(ser.Values) > 24 {
+					return false
+				}
+			}
 		}
 		seen[s.ID] = true
 	}

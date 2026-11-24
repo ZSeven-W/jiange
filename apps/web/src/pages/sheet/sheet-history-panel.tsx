@@ -6,6 +6,7 @@ import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
 import {
   sheetHistoryApi,
   type SheetCellHistoryEntry,
+  type SheetDefinedNameRecord,
   type SheetVersionMeta,
 } from "@/lib/sheet-history-api";
 import { t } from "@/lib/i18n";
@@ -19,8 +20,9 @@ import { formatSheetRefPrefix } from "./workbook-templates";
 import { parseRangeInput } from "./workbook-engine";
 
 export const DEFINED_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_.]{0,63}$/;
+export const MAX_DEFINED_NAMES = 200;
+export const MAX_DEFINED_NAME_REF_LENGTH = 512;
 const WORKBOOK_SCOPE_VALUE = "__workbook__";
-const DEFINED_NAMES_STORAGE_PREFIX = "jiange:sheet:defined-names:";
 
 export function formatSheetHistoryTime(iso: string): string {
   try {
@@ -45,6 +47,9 @@ export function validateDefinedName(
 ): { ok: true; item: SheetDefinedName } | { ok: false; error: string } {
   const name = rawName.trim();
   const ref = rawRef.trim().replace(/^=/, "");
+  if (existing.length >= MAX_DEFINED_NAMES) {
+    return { ok: false, error: t("最多支持 200 个定义名称") };
+  }
   if (!name) {
     return { ok: false, error: t("请输入名称") };
   }
@@ -53,6 +58,9 @@ export function validateDefinedName(
   }
   if (!ref) {
     return { ok: false, error: t("请输入引用区域或常量值") };
+  }
+  if (ref.length > MAX_DEFINED_NAME_REF_LENGTH) {
+    return { ok: false, error: t("引用位置最多支持 512 个字符") };
   }
   const lowerName = name.toLowerCase();
   const lowerScope = (scopeSheetName ?? "").trim().toLowerCase();
@@ -106,43 +114,69 @@ export function parseDefinedNameTarget(
   return { sheetId: targetSheet.id, rect: { top, left, bottom, right } };
 }
 
-export function loadStoredDefinedNames(sheetId: number): SheetDefinedName[] {
-  if (typeof window === "undefined" || !window.localStorage) return [];
-  try {
-    const raw = window.localStorage.getItem(`${DEFINED_NAMES_STORAGE_PREFIX}${sheetId}`);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const out: SheetDefinedName[] = [];
-    for (const item of parsed) {
-      if (
-        item &&
-        typeof item === "object" &&
-        typeof item.name === "string" &&
-        DEFINED_NAME_REGEX.test(item.name.trim()) &&
-        typeof item.ref === "string" &&
-        item.ref.trim()
-      ) {
-        const entry: SheetDefinedName = { name: item.name.trim(), ref: item.ref.trim() };
-        if (typeof item.sheetName === "string" && item.sheetName.trim()) {
-          entry.sheetName = item.sheetName.trim();
-        }
-        out.push(entry);
-      }
-    }
-    return out;
-  } catch {
-    return [];
+export function definedNameRecordsToSdk(
+  records: readonly SheetDefinedNameRecord[],
+  sheets: readonly SheetWorksheet[],
+): SheetDefinedName[] {
+  const sheetById = new Map<number, SheetWorksheet>();
+  for (const ws of sheets) {
+    sheetById.set(ws.id, ws);
   }
+  const out: SheetDefinedName[] = [];
+  for (const item of records) {
+    const name = item.name.trim();
+    const ref = item.ref.trim();
+    if (!name || !ref) continue;
+    if (item.sheetId !== undefined && item.sheetId !== null) {
+      const ws = sheetById.get(item.sheetId);
+      out.push({ name, ref, sheetName: ws ? ws.title : `#${item.sheetId}` });
+    } else {
+      out.push({ name, ref });
+    }
+  }
+  return out;
 }
 
-export function saveStoredDefinedNames(sheetId: number, names: readonly SheetDefinedName[]): void {
-  if (typeof window === "undefined" || !window.localStorage) return;
-  try {
-    window.localStorage.setItem(`${DEFINED_NAMES_STORAGE_PREFIX}${sheetId}`, JSON.stringify(names));
-  } catch {
-    // Ignore storage quota or private-mode failures cleanly.
+export function sdkDefinedNamesToRecords(
+  names: readonly SheetDefinedName[],
+  sheets: readonly SheetWorksheet[],
+  prevRecords: readonly SheetDefinedNameRecord[] = [],
+): SheetDefinedNameRecord[] {
+  const sheetIdByLowerTitle = new Map<string, number>();
+  for (const ws of sheets) {
+    sheetIdByLowerTitle.set(ws.title.trim().toLowerCase(), ws.id);
   }
+  const prevComments = new Map<string, string>();
+  for (const rec of prevRecords) {
+    if (rec.comment) {
+      prevComments.set(`${rec.sheetId ?? ""}::${rec.name.trim().toLowerCase()}`, rec.comment);
+    }
+  }
+  return names.map((dn) => {
+    const name = dn.name.trim();
+    const ref = dn.ref.trim().replace(/^=/, "");
+    let sheetId: number | undefined;
+    const scopeName = dn.sheetName?.trim();
+    if (scopeName) {
+      const found = sheetIdByLowerTitle.get(scopeName.toLowerCase());
+      if (found !== undefined) {
+        sheetId = found;
+      } else {
+        const orphanMatch = /^#(\d+)$/.exec(scopeName);
+        if (orphanMatch) {
+          const parsedId = Number(orphanMatch[1]);
+          if (Number.isSafeInteger(parsedId) && parsedId > 0) {
+            sheetId = parsedId;
+          }
+        }
+      }
+    }
+    const comment = prevComments.get(`${sheetId ?? ""}::${name.toLowerCase()}`);
+    const record: SheetDefinedNameRecord = { name, ref };
+    if (sheetId !== undefined) record.sheetId = sheetId;
+    if (comment) record.comment = comment;
+    return record;
+  });
 }
 
 export interface SheetVersionsPanelProps {

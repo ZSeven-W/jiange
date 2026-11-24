@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { t } from "@/lib/i18n";
 import { docsApi, type AttachmentRef, type BaseRecord, type Cell, type Field, type User } from "@/lib/api";
+import { FeishuSelect, type FeishuSelectOption } from "@/components/feishu-select";
 import { cn } from "@/lib/utils";
 import { displayValue, formatTime, isAttachmentArray, isStringArray, memberName, optionColor, personIDs, REGISTRY } from "./registry";
 import { Paperclip } from "lucide-react";
@@ -206,34 +207,42 @@ export function CellEditor({
   const [text, setText] = useState(seed ?? (typeof value === "string" || typeof value === "number" ? String(value) : ""));
   const completed = useRef(false);
 
-  if (field.type === "select")
+  if (field.type === "select") {
+    const selectOptions: FeishuSelectOption[] = [
+      { value: "", label: "—" },
+      ...(field.options ?? [])
+        .filter((o, idx, arr) => o !== "" && arr.indexOf(o) === idx)
+        .map((o) => ({ value: o, label: o })),
+    ];
     return (
-      <select autoFocus className="w-full bg-transparent outline-none" value={typeof value === "string" ? value : ""} onChange={(e) => onCommit(e.target.value || null)} onBlur={onCancel}>
-        <option value="">—</option>
-        {(field.options ?? []).map((o) => (
-          <option key={o}>{o}</option>
-        ))}
-      </select>
+      <SingleSelectCellEditor
+        ariaLabel={field.name}
+        value={typeof value === "string" ? value : ""}
+        options={selectOptions}
+        onCommit={(next) => onCommit(next || null)}
+        onCancel={onCancel}
+        dataAttr={{ "data-select-cell-editor": true }}
+      />
     );
+  }
   if (field.type === "multi_select") return <MultiSelectEditor field={field} value={isStringArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} onDraft={onDraft} />;
   if (field.type === "person" && field.multiple) return <PersonMultiEditor members={members} value={personIDs(value)} onCommit={onCommit} onCancel={onCancel} onDraft={onDraft} />;
-  if (field.type === "person" || field.type === "created_by")
+  if (field.type === "person" || field.type === "created_by") {
+    const memberOptions: FeishuSelectOption[] = [
+      { value: "", label: "—" },
+      ...members.map((m) => ({ value: String(m.id), label: m.name })),
+    ];
     return (
-      <select
-        autoFocus
-        className="w-full bg-transparent outline-none"
+      <SingleSelectCellEditor
+        ariaLabel={field.name}
         value={typeof value === "number" ? String(value) : ""}
-        onChange={(e) => onCommit(e.target.value === "" ? null : Number(e.target.value))}
-        onBlur={onCancel}
-      >
-        <option value="">—</option>
-        {members.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.name}
-          </option>
-        ))}
-      </select>
+        options={memberOptions}
+        onCommit={(next) => onCommit(next === "" ? null : Number(next))}
+        onCancel={onCancel}
+        dataAttr={{ "data-person-single-editor": true }}
+      />
     );
+  }
   if (field.type === "attachment")
     return <AttachmentEditor baseId={record.baseId} field={field} value={isAttachmentArray(value) ? value : []} onCommit={onCommit} onCancel={onCancel} />;
 
@@ -279,6 +288,85 @@ export function CellEditor({
         }
       }}
     />
+  );
+}
+
+function SingleSelectCellEditor({
+  ariaLabel,
+  value,
+  options,
+  onCommit,
+  onCancel,
+  dataAttr,
+}: {
+  ariaLabel: string;
+  value: string;
+  options: readonly FeishuSelectOption[];
+  onCommit: (next: string) => void;
+  onCancel: () => void;
+  dataAttr?: Record<string, string | boolean | undefined>;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const completed = useRef(false);
+  const cancelRef = useRef(onCancel);
+  cancelRef.current = onCancel;
+
+  useEffect(() => {
+    const trigger = wrapRef.current?.querySelector<HTMLButtonElement>('button[role="combobox"]');
+    if (trigger) {
+      trigger.focus();
+      trigger.click();
+    }
+    const finishCancel = () => {
+      if (completed.current) return;
+      completed.current = true;
+      cancelRef.current();
+    };
+    const onPointerDown = (e: PointerEvent | MouseEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (wrapRef.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('[role="listbox"]')) return;
+      finishCancel();
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        finishCancel();
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={wrapRef}
+      className="w-full min-w-0"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <FeishuSelect
+        ariaLabel={ariaLabel}
+        value={value}
+        options={options}
+        onChange={(next) => {
+          if (completed.current) return;
+          completed.current = true;
+          onCommit(next);
+        }}
+        className="h-7 w-full bg-transparent px-1 text-[13px]"
+        menuMinWidth={140}
+        dataAttr={dataAttr}
+      />
+    </div>
   );
 }
 

@@ -1,13 +1,23 @@
 import { mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, mindDescriptionTextWidth, mindTitleHeight, type MindDescriptions, type MindDescriptionStyles, type MindPaint, type MindPaints, type MindStyles, type MindTextFormats, type MindTopic, type PositionedTopic } from "./mindmap";
 import { layoutMindTopicsWithStructure, mindRelationCurvePath, mindRelationLabelPoint, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
 import type { MindDrop } from "./mindmap-move";
+import { computeBoundaryBox, computeSummaryBrace, priorityBadgeMeta, progressWedgePath, type MindBadges, type MindBoundaries, type MindSummaries } from "./whiteboard-extras";
 
-export function MindMapSvg({ topics, structure = "logic", relations = [], relationFromId = null, onRemoveRelation, styles = {}, paints = {}, textFormats = {}, descriptions = {}, descriptionStyles = {}, collapsed = new Set(), selected, editing, descriptionEditing, dragPreview, gpuBacked = false, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onEditDescription, onDescriptionDraft, onDescriptionFinish, onDescriptionCancel, onFold, onAddChild }: {
+function pillTextWidth(text: string, fontSize = 11): number {
+  return [...text].reduce((sum, ch) => sum + (/[\u2e80-\uffff]/.test(ch) ? fontSize : fontSize * 0.6), 0);
+}
+
+export function MindMapSvg({ topics, structure = "logic", relations = [], relationFromId = null, onRemoveRelation, boundaries = {}, summaries = {}, badges = {}, onEditBoundary, onEditSummary, styles = {}, paints = {}, textFormats = {}, descriptions = {}, descriptionStyles = {}, collapsed = new Set(), selected, editing, descriptionEditing, dragPreview, gpuBacked = false, onSelect, onContextMenu, onEdit, onDraft, onFinish, onCancel, onEditDescription, onDescriptionDraft, onDescriptionFinish, onDescriptionCancel, onFold, onAddChild }: {
   topics: readonly MindTopic[];
   structure?: MindLayoutKind;
   relations?: readonly MindRelation[];
   relationFromId?: string | null;
   onRemoveRelation?: (id: string) => void;
+  boundaries?: MindBoundaries;
+  summaries?: MindSummaries;
+  badges?: MindBadges;
+  onEditBoundary?: (nodeId: string) => void;
+  onEditSummary?: (parentId: string) => void;
   styles?: MindStyles;
   paints?: MindPaints;
   textFormats?: MindTextFormats;
@@ -60,6 +70,18 @@ export function MindMapSvg({ topics, structure = "logic", relations = [], relati
   };
   const lineProps = (paint?: MindPaint) => ({ fill: "none", stroke: gpuBacked ? "transparent" : paint?.stroke ?? "#5b7ff1", strokeWidth: paint?.width ?? 2, strokeOpacity: (paint?.opacity ?? 100) / 100, strokeDasharray: paint?.line === "dashed" ? "6 4" : paint?.line === "dotted" ? "2 3" : undefined, pointerEvents: "none" as const });
   const visibleRelations = relations.filter((rel) => byId.has(rel.fromId) && byId.has(rel.toId));
+  const renderedBoundaries = Object.entries(boundaries)
+    .map(([nodeId, boundary]) => {
+      const box = computeBoundaryBox(nodeId, topics, nodes);
+      return box ? { nodeId, boundary, box } : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+  const renderedSummaries = Object.entries(summaries)
+    .map(([parentId, summary]) => {
+      const brace = computeSummaryBrace(parentId, topics, nodes, structure, summary.label);
+      return brace ? { parentId, summary, brace } : null;
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
   return <g data-mindmap data-mind-structure={structure}>
     {visibleRelations.length > 0 && (
       <defs>
@@ -68,6 +90,57 @@ export function MindMapSvg({ topics, structure = "logic", relations = [], relati
         </marker>
       </defs>
     )}
+    {renderedBoundaries.map(({ nodeId, boundary, box }) => {
+      const labelW = boundary.label ? Math.max(36, Math.round(pillTextWidth(boundary.label, 11) + 16)) : 0;
+      return (
+        <g key={`boundary-${nodeId}`} data-mind-boundary={nodeId}>
+          <rect
+            x={box.x}
+            y={box.y}
+            width={box.w}
+            height={box.h}
+            rx={12}
+            fill={boundary.color}
+            fillOpacity={0.07}
+            stroke={boundary.color}
+            strokeWidth={1.6}
+            strokeDasharray="6 4"
+            pointerEvents="none"
+          />
+          {boundary.label && (
+            <g
+              data-mind-boundary-label={nodeId}
+              style={{ cursor: onEditBoundary ? "pointer" : undefined }}
+              onPointerDown={onEditBoundary ? (e) => e.stopPropagation() : undefined}
+              onDoubleClick={onEditBoundary ? (e) => { e.stopPropagation(); onEditBoundary(nodeId); } : undefined}
+            >
+              <rect
+                x={box.x + 10}
+                y={box.y - 10}
+                width={labelW}
+                height={20}
+                rx={10}
+                fill="#ffffff"
+                stroke={boundary.color}
+                strokeWidth={1.2}
+              />
+              <text
+                x={box.x + 10 + labelW / 2}
+                y={box.y}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={11}
+                fontWeight={500}
+                fill={boundary.color}
+                pointerEvents="none"
+              >
+                {boundary.label}
+              </text>
+            </g>
+          )}
+        </g>
+      );
+    })}
     {structure === "fishbone" && nodes.filter((node) => node.topic.parent === null).map((rootPos) => {
       const branches = nodes.filter((n) => n.topic.parent === rootPos.topic.id);
       if (!branches.length) return null;
@@ -155,7 +228,105 @@ export function MindMapSvg({ topics, structure = "logic", relations = [], relati
         {isEditingDescription && <foreignObject x={node.x + 4} y={node.y + titleHeight} width={node.w - 8} height={node.h - titleHeight}>
           <textarea autoFocus aria-label="思维导图节点描述" maxLength={2000} value={descriptionEditing.value} onPointerDown={(event) => event.stopPropagation()} onDoubleClick={(event) => event.stopPropagation()} onChange={(event) => onDescriptionDraft?.(event.target.value)} onBlur={() => onDescriptionFinish?.()} onKeyDown={(event) => { event.stopPropagation(); if (event.nativeEvent.isComposing) return; if (event.key === "Escape") { event.preventDefault(); onDescriptionCancel?.(); } else if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); onDescriptionFinish?.(); } }} placeholder="输入描述" style={{ width: "100%", height: "100%", boxSizing: "border-box", resize: "none", border: "1px solid #3370ff", outline: "none", padding: "2px 4px", fontSize: descriptionSize, lineHeight: `${descriptionLineHeight}px`, color: descriptionStyle?.color ?? "#646a73", background: descriptionStyle?.highlight ?? "#fff" }}/>
         </foreignObject>}
+        {(() => {
+          const badge = badges[node.topic.id];
+          if (!badge) return null;
+          let cursorX = node.x;
+          const badgeY = node.y - 18;
+          const parts: React.ReactNode[] = [];
+          if (badge.priority !== undefined) {
+            const meta = priorityBadgeMeta(badge.priority);
+            const w = 24;
+            parts.push(
+              <g key="priority" data-mind-badge-priority={badge.priority}>
+                <rect x={cursorX} y={badgeY} width={w} height={16} rx={4} fill={meta.bg} stroke={meta.border} strokeWidth={1} />
+                <text x={cursorX + w / 2} y={badgeY + 8} textAnchor="middle" dominantBaseline="central" fontSize={10} fontWeight={700} fill={meta.fg}>{meta.label}</text>
+              </g>,
+            );
+            cursorX += w + 4;
+          }
+          if (badge.progress !== undefined) {
+            const progColor = badge.progress === 100 ? "#2ea121" : "#3370ff";
+            const labelText = `${badge.progress}%`;
+            const w = Math.max(38, Math.round(16 + labelText.length * 6 + 6));
+            const cx = cursorX + 8;
+            const cy = badgeY + 8;
+            parts.push(
+              <g key="progress" data-mind-badge-progress={badge.progress}>
+                <rect x={cursorX} y={badgeY} width={w} height={16} rx={8} fill="#ffffff" stroke="#d4d7dc" strokeWidth={1} />
+                <circle cx={cx} cy={cy} r={4.5} fill="#ffffff" stroke={progColor} strokeWidth={1.1} />
+                {badge.progress > 0 && <path d={progressWedgePath(cx, cy, 4, badge.progress)} fill={progColor} />}
+                <text x={cursorX + 16} y={cy} dominantBaseline="central" fontSize={9.5} fontWeight={600} fill="#1f2329">{labelText}</text>
+              </g>,
+            );
+            cursorX += w + 4;
+          }
+          if (badge.tag) {
+            const w = Math.max(28, Math.round(pillTextWidth(badge.tag, 10) + 12));
+            parts.push(
+              <g key="tag" data-mind-badge-tag={badge.tag}>
+                <rect x={cursorX} y={badgeY} width={w} height={16} rx={8} fill="#f0ebff" stroke="#d3bff8" strokeWidth={1} />
+                <text x={cursorX + w / 2} y={badgeY + 8} textAnchor="middle" dominantBaseline="central" fontSize={10} fontWeight={500} fill="#6425d0">{badge.tag}</text>
+              </g>,
+            );
+          }
+          if (!parts.length) return null;
+          return <g data-mind-badge={node.topic.id} pointerEvents="none">{parts}</g>;
+        })()}
       </g>;
+    })}
+    {renderedSummaries.map(({ parentId, summary, brace }) => {
+      const pillW = Math.max(44, Math.round(pillTextWidth(summary.label, 12) + 20));
+      const pillH = 26;
+      const pillX =
+        brace.anchor === "start"
+          ? brace.labelX
+          : brace.anchor === "end"
+            ? brace.labelX - pillW
+            : brace.labelX - pillW / 2;
+      const pillY = brace.labelY - pillH / 2;
+      return (
+        <g key={`summary-${parentId}`} data-mind-summary={parentId}>
+          <path
+            d={brace.path}
+            fill="none"
+            stroke={summary.color}
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            pointerEvents="none"
+          />
+          <g
+            data-mind-summary-pill={parentId}
+            style={{ cursor: onEditSummary ? "pointer" : undefined }}
+            onPointerDown={onEditSummary ? (e) => e.stopPropagation() : undefined}
+            onDoubleClick={onEditSummary ? (e) => { e.stopPropagation(); onEditSummary(parentId); } : undefined}
+          >
+            <rect
+              x={pillX}
+              y={pillY}
+              width={pillW}
+              height={pillH}
+              rx={13}
+              fill="#ffffff"
+              stroke={summary.color}
+              strokeWidth={1.5}
+            />
+            <text
+              x={pillX + pillW / 2}
+              y={brace.labelY}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize={12}
+              fontWeight={600}
+              fill={summary.color}
+              pointerEvents="none"
+            >
+              {summary.label}
+            </text>
+          </g>
+        </g>
+      );
     })}
     {visibleRelations.map((rel) => {
       const fromPos = byId.get(rel.fromId)!, toPos = byId.get(rel.toId)!;

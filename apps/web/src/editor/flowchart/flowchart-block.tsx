@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Bold, Brush, ChevronDown, ChevronLeft, Circle, Copy, Diamond, Download, Eraser, FileUp, Frame, Hand, ImageIcon, Italic, LayoutTemplate, Link2, ListTree, Loader2, Maximize2, MessageSquare, Minus, MoreHorizontal, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, Strikethrough, Trash2, Type, Underline, Undo2, Workflow, X } from "lucide-react";
+import { QueryClientContext } from "@tanstack/react-query";
+import { AlignCenter, AlignCenterHorizontal, AlignCenterVertical, AlignEndHorizontal, AlignEndVertical, AlignHorizontalSpaceAround, AlignLeft, AlignRight, AlignStartHorizontal, AlignStartVertical, AlignVerticalSpaceAround, ArrowDownToLine, ArrowUpToLine, Bold, BoxSelect, Braces, Brush, ChevronDown, ChevronLeft, Circle, Copy, Diamond, Download, Eraser, FileUp, Frame, Hand, Highlighter, ImageIcon, Italic, LayoutTemplate, Link2, List, ListTree, Loader2, Map as MapIcon, Maximize2, MessageSquare, Minus, MoreHorizontal, Network, Pencil, RotateCcw, RotateCw, MousePointer2, Palette, Plus, Redo2, Search, Shapes, Sparkles, Spline, Square, StickyNote, Strikethrough, Tag, ThumbsUp, Timer, Trash2, Type, Underline, Undo2, Workflow, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { FeishuSelect } from "@/components/feishu-select";
+import { useI18n } from "@/lib/i18n";
 import { aiErrorText, openAISettings, type AIMessage } from "@/lib/ai";
 import { autoLayout, boundedFlowOffset, bounds, flowBounds, flowIntentWrites, flowWrites, isContainer, moveFlowSelection, textArea, edgePath, midIsY, portPoint, measureLabel, newFlowId, normalizeEdge, normalizeNode, normalizeStroke, SHAPES, themeOf, THEMES, type EdgeKind, type FlowChangeOutcome, type FlowEdge, type FlowGraph, type FlowNode, type FlowStroke, type FlowTheme, type Port, type Shape } from "./model";
 import { DrawioError, parseDrawio, toDrawio } from "./drawio";
@@ -12,7 +14,10 @@ import { fitInsertedImage, pinchViewport, placeMindMenu, placeSelectionToolbar, 
 import { describeUnappliedFlows, type UnappliedFlow } from "./recovery";
 import { appliedFlowHistory, type FlowHistory } from "./history";
 import { MindMapSvg } from "./mind-map-svg";
+import { MindMapOutlineView } from "./mindmap-outline";
 import { GPU_NATIVE_BOARD_SHAPES, WhiteboardGpuLayer } from "./whiteboard-gpu-layer";
+import { WhiteboardMinimap, WhiteboardTimer } from "./whiteboard-minimap";
+import { computeBoundaryBox, computeSummaryBrace, createStickyNode, EMPTY_WHITEBOARD_EXTRAS, MIND_BOUNDARY_COLORS, MIND_PRIORITIES, MIND_PROGRESS_STEPS, MIND_SUMMARY_COLORS, priorityBadgeMeta, readWhiteboardExtrasFromProps, STICKY_PRESETS, stickyPresetForFill, toggleNodeVote, topVotedNodes, whiteboardExtrasPropWrites, type BoardVotes, type MindBadge, type MindBadges, type MindBoundaries, type MindPriority, type MindProgress, type MindSummaries, type StickyPreset, type WhiteboardExtras } from "./whiteboard-extras";
 import { mindNodeImageBounds, mindNodeImageSvg, rasterizeMindNode } from "./mind-node-image";
 import { canonicalMindDescription, mindDefaultTextColor, mindDescriptionAt, mindDescriptionLines, mindDescriptionStyleAt, type MindDescriptionStyle, type MindPaint, type MindStyle, type MindTextFormat, type MindTopic } from "./mindmap";
 import { layoutMindTopicsWithStructure, MIND_LAYOUT_OPTIONS, mindLayoutPropWrites, mindRelationCurvePath, mindRelationLabelPoint, readMindLayoutFromProps, type MindLayoutKind, type MindRelation } from "./mindmap-layouts";
@@ -24,7 +29,7 @@ import { inkHitByEraser, inkPointBounds, scaleInk, scaleSelectionProportionally,
 import { exportMindMapToXmind, parseXmindToMindMap, XmindError } from "@jiange/whiteboard-sdk/xmind";
 import type { FlowCommentAnchor } from "@jiange/whiteboard-sdk/comment-anchor";
 import { BoardCommentComposer, BoardCommentPinsSvg, BoardCommentThreadPopover, resolveBoardCommentPins, type BoardCommentActions, type ResolvedBoardPin } from "./board-comments";
-import type { Comment } from "@/lib/api";
+import type { Comment, Me } from "@/lib/api";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboard-assets";
 import { subscribeAuthChanges, subscribeLocalAuthChanges } from "@/lib/session-cache";
 import type { ClipBlock } from "../model";
@@ -47,6 +52,11 @@ function wrapLines(text: string, width: number): string[] {
 }
 
 function nodeColors(n: FlowNode, theme: FlowTheme): { fill: string; stroke: string; text: string } {
+  if (n.shape === "sticky") {
+    const preset = stickyPresetForFill(n.fill);
+    const fill = n.fill ?? preset.fill;
+    return { fill, stroke: n.stroke ?? preset.stroke, text: n.color ?? readableOn(fill) };
+  }
   if (theme.palette && !n.fill && !n.stroke) {
     let h = 0;
     for (const ch of n.id) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
@@ -81,6 +91,21 @@ export function ShapeOutline({ n, theme, fill, stroke, fileUrl }: { n: FlowNode;
       : <g><rect x={x} y={y} width={w} height={h} rx={4} fill="#F5F6F7" stroke="#BBBFC4" strokeDasharray="5 4" /><path d={`M${x + w / 2 - 14},${y + h / 2 + 10} l9,-12 l7,8 l5,-5 l7,9 z`} fill="#BBBFC4" /></g>;
     case "triangle": return <polygon points={`${x + w / 2},${y} ${x + w},${y + h} ${x},${y + h}`} {...common} />;
     case "note": { const k = Math.min(18, w / 5, h / 3); return <g><path d={`M${x},${y} H${x + w - k} L${x + w},${y + k} V${y + h} H${x} Z`} {...common} /><path d={`M${x + w - k},${y} V${y + k} H${x + w}`} fill="none" stroke={stroke} strokeWidth={theme.strokeWidth} /></g>; }
+    case "sticky": {
+      const k = Math.min(22, Math.max(10, Math.min(w, h) * 0.16));
+      const r = Math.min(4, w / 10, h / 10);
+      const preset = stickyPresetForFill(fill !== "none" ? fill : n.fill);
+      const isIcon = fill === "none";
+      const bodyPath = `M${x + r},${y} H${x + w - r} Q${x + w},${y} ${x + w},${y + r} V${y + h - k} L${x + w - k},${y + h} H${x + r} Q${x},${y + h} ${x},${y + h - r} V${y + r} Q${x},${y} ${x + r},${y} Z`;
+      const foldPath = `M${x + w - k},${y + h} V${y + h - k + 2} Q${x + w - k},${y + h - k} ${x + w - k + 2},${y + h - k} H${x + w} Z`;
+      return (
+        <g data-sticky-shape={isIcon ? undefined : n.id}>
+          <path d={bodyPath} fill={fill} stroke={stroke} strokeWidth={isIcon ? theme.strokeWidth : 1} />
+          {!isIcon && <rect x={x + 1} y={y + 1} width={Math.max(0, w - 2)} height={Math.min(8, h * 0.1)} rx={2} fill="#FFFFFF" fillOpacity={0.28} pointerEvents="none" />}
+          <path d={foldPath} fill={isIcon ? "none" : preset.fold} stroke={stroke} strokeWidth={isIcon ? theme.strokeWidth * 0.8 : 0.9} strokeLinejoin="round" />
+        </g>
+      );
+    }
     // 泳道主体不填充（点击穿透到画布，可在泳道内框选），只有标题栏可选中。
     case "swimlane": return <g><rect x={x} y={y} width={w} height={h} fill="none" stroke={stroke} strokeWidth={theme.strokeWidth} /><rect x={x} y={y} width={32} height={h} {...common} /></g>;
     case "swimlaneV": return <g><rect x={x} y={y} width={w} height={h} fill="none" stroke={stroke} strokeWidth={theme.strokeWidth} /><rect x={x} y={y} width={w} height={36} {...common} /></g>;
@@ -181,6 +206,9 @@ export function boardContentBounds(
   frames: readonly BoardFrame[] = [],
   mindCollapsed?: ReadonlySet<string>,
   mindRelations?: readonly MindRelation[],
+  mindBoundaries?: MindBoundaries,
+  mindSummaries?: MindSummaries,
+  mindBadges?: MindBadges,
 ): { x: number; y: number; w: number; h: number } {
   const boxes: Array<{ x: number; y: number; w: number; h: number }> = [];
   if (graph.nodes.length || graph.strokes?.length || (graph.mind?.length && mindStructure === "logic")) {
@@ -208,8 +236,12 @@ export function boardContentBounds(
       }
     }
   }
+  const hasMindExtras =
+    !!(mindBoundaries && Object.keys(mindBoundaries).length) ||
+    !!(mindSummaries && Object.keys(mindSummaries).length) ||
+    !!(mindBadges && Object.keys(mindBadges).length);
   let placedMind: ReturnType<typeof layoutMindTopicsWithStructure> | null = null;
-  if (graph.mind?.length && (mindStructure !== "logic" || mindRelations?.length)) {
+  if (graph.mind?.length && (mindStructure !== "logic" || mindRelations?.length || hasMindExtras)) {
     const collapsed = mindCollapsed ?? new Set(graph.mindCollapsed ?? []);
     placedMind = layoutMindTopicsWithStructure(
       graph.mind,
@@ -238,6 +270,27 @@ export function boardContentBounds(
       }
     }
   }
+  if (placedMind && graph.mind?.length) {
+    if (mindBoundaries) {
+      for (const nodeId of Object.keys(mindBoundaries)) {
+        const bBox = computeBoundaryBox(nodeId, graph.mind, placedMind);
+        if (bBox) boxes.push({ x: bBox.x, y: bBox.y - 12, w: bBox.w, h: bBox.h + 12 });
+      }
+    }
+    if (mindSummaries) {
+      for (const [parentId, summary] of Object.entries(mindSummaries)) {
+        const brace = computeSummaryBrace(parentId, graph.mind, placedMind, mindStructure, summary.label);
+        if (brace) boxes.push(brace.box);
+      }
+    }
+    if (mindBadges) {
+      for (const p of placedMind) {
+        if (mindBadges[p.topic.id]) {
+          boxes.push({ x: p.x, y: p.y - 22, w: Math.max(p.w, 120), h: p.h + 22 });
+        }
+      }
+    }
+  }
   for (const f of frames) {
     const pillW = Math.max(74, Math.min(220, measureLabel(f.title || "Frame", 64)));
     boxes.push({ x: f.x, y: f.y - 32, w: Math.max(f.w, pillW), h: f.h + 32 });
@@ -250,7 +303,7 @@ export function boardContentBounds(
   return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
 }
 
-export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "xMidYMid meet", selected, editing, frames, selectedFrameId, editingFrameId, onFrameHeaderDown, onFrameResizeDown, onFrameTitleDoubleClick, onFrameExport, onFrameDelete, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, mindStructure = "logic", mindRelations, mindRelationFrom, onRemoveMindRelation, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
+export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "xMidYMid meet", selected, editing, frames, selectedFrameId, editingFrameId, onFrameHeaderDown, onFrameResizeDown, onFrameTitleDoubleClick, onFrameExport, onFrameDelete, votes, currentUserId, votingMode, onToggleVote, onNodeDown, onEdgeDown, onStrokeDown, onStrokeResize, resizeStroke, groupBox, groupScalePct, onGroupScale, commentPins, activePinId, pinZoom, onPinSelect, erasing, draftStroke, mindSelected, mindEditing, mindDescriptionEditing, mindCollapsed, mindDragPreview, mindStructure = "logic", mindRelations, mindRelationFrom, onRemoveMindRelation, mindBoundaries, mindSummaries, mindBadges, onEditMindBoundary, onEditMindSummary, onMindFold, onMindAddChild, onMindSelect, onMindContextMenu, onMindEdit, onMindDraft, onMindFinish, onMindCancel, onMindEditDescription, onMindDescriptionDraft, onMindDescriptionFinish, onMindDescriptionCancel, onPortDown, onCanvasDown, onNodeDouble, onEdgeDouble, connectPreview, idPrefix = "fc", transparent, gpuBacked = false, guides, marquee, rotateHandle, bendHandle, peerSel, onWaypointRemove, touchZoom, fileUrl = (id: number) => `/api/files/${id}` }: {
   graph: FlowGraph; width?: number | string; height?: number | string; viewBox?: string; preserveAspectRatio?: string;
   selected?: Set<string>; editing?: string | null;
   frames?: readonly BoardFrame[];
@@ -261,6 +314,10 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
   onFrameTitleDoubleClick?: (frame: BoardFrame) => void;
   onFrameExport?: (frame: BoardFrame) => void;
   onFrameDelete?: (frame: BoardFrame) => void;
+  votes?: BoardVotes;
+  currentUserId?: string;
+  votingMode?: boolean;
+  onToggleVote?: (nodeId: string) => void;
   onNodeDown?: (e: React.PointerEvent, n: FlowNode) => void;
   onEdgeDown?: (e: React.PointerEvent, edge: FlowEdge) => void;
   onStrokeDown?: (e: React.PointerEvent, stroke: FlowStroke) => void;
@@ -282,6 +339,11 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
   mindRelations?: readonly MindRelation[];
   mindRelationFrom?: string | null;
   onRemoveMindRelation?: (id: string) => void;
+  mindBoundaries?: MindBoundaries;
+  mindSummaries?: MindSummaries;
+  mindBadges?: MindBadges;
+  onEditMindBoundary?: (nodeId: string) => void;
+  onEditMindSummary?: (parentId: string) => void;
   onMindFold?: (id: string) => void;
   onMindAddChild?: (id: string) => void;
   mindEditing?: { id: string; value: string } | null;
@@ -323,7 +385,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
 }) {
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
-  const b = boardContentBounds(graph, mindStructure, frames, mindCollapsed, mindRelations);
+  const b = boardContentBounds(graph, mindStructure, frames, mindCollapsed, mindRelations, mindBoundaries, mindSummaries, mindBadges);
   const vb = viewBox ?? `${b.x - 40} ${b.y - 40} ${Math.max(200, b.w + 80)} ${Math.max(120, b.h + 80)}`;
   const filter = theme.sketch ? `url(#${idPrefix}-sketch)` : theme.shadow ? `url(#${idPrefix}-shadow)` : undefined;
   return (
@@ -332,6 +394,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
         <marker id={`${idPrefix}-arrow`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill={theme.edge} /></marker>
         <filter id={`${idPrefix}-sketch`} filterUnits="userSpaceOnUse" x="-20000" y="-20000" width="60000" height="60000"><feTurbulence type="fractalNoise" baseFrequency="0.04" numOctaves="2" seed="3" /><feDisplacementMap in="SourceGraphic" scale="2.2" /></filter>
         <filter id={`${idPrefix}-shadow`} x="-10%" y="-10%" width="130%" height="140%"><feDropShadow dx="0" dy="2" stdDeviation="2.5" floodColor="#1F2329" floodOpacity="0.12" /></filter>
+        <filter id={`${idPrefix}-sticky-shadow`} x="-14%" y="-12%" width="134%" height="142%"><feDropShadow dx="0" dy="4" stdDeviation="4" floodColor="#1F2329" floodOpacity="0.14" /></filter>
       </defs>
       {frames?.map((frame) => {
         const isSel = selectedFrameId === frame.id;
@@ -468,7 +531,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
           {!gpuBacked && <path d={d} fill="none" stroke={stroke.color} strokeOpacity={stroke.marker ? 0.35 : undefined} strokeWidth={stroke.width} strokeLinecap="round" strokeLinejoin="round" pointerEvents="none"/>}
         </g>;
       })}
-      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} structure={mindStructure} relations={mindRelations} relationFromId={mindRelationFrom} onRemoveRelation={onRemoveMindRelation} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} gpuBacked={gpuBacked && mindStructure === "logic"} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
+      {!!graph.mind?.length && <MindMapSvg topics={graph.mind} structure={mindStructure} relations={mindRelations} relationFromId={mindRelationFrom} onRemoveRelation={onRemoveMindRelation} boundaries={mindBoundaries} summaries={mindSummaries} badges={mindBadges} onEditBoundary={onEditMindBoundary} onEditSummary={onEditMindSummary} styles={graph.mindStyles} paints={graph.mindPaints} textFormats={graph.mindTextFormats} descriptions={graph.mindDescriptions} descriptionStyles={graph.mindDescriptionStyles} collapsed={mindCollapsed ?? new Set(graph.mindCollapsed ?? [])} dragPreview={mindDragPreview} gpuBacked={gpuBacked && mindStructure === "logic"} onFold={onMindFold} onAddChild={onMindAddChild} selected={mindSelected} editing={mindEditing} descriptionEditing={mindDescriptionEditing} onSelect={onMindSelect} onContextMenu={onMindContextMenu} onEdit={onMindEdit} onDraft={onMindDraft} onFinish={onMindFinish} onCancel={onMindCancel} onEditDescription={onMindEditDescription} onDescriptionDraft={onMindDescriptionDraft} onDescriptionFinish={onMindDescriptionFinish} onDescriptionCancel={onMindDescriptionCancel}/>}
       {graph.edges.map((e) => {
         const a = byId.get(e.from), t = byId.get(e.to);
         if (!a || !t) return null;
@@ -487,9 +550,46 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
         const sel = selected?.has(n.id);
         const peer = peerSel?.find((p) => p.ids.includes(n.id));
         const gpuNode = gpuBacked && GPU_NATIVE_BOARD_SHAPES.has(n.shape);
-        return <g key={n.id} data-flow-node={n.id} transform={n.rot ? `rotate(${n.rot} ${n.x + n.w / 2} ${n.y + n.h / 2})` : undefined} style={{ cursor: onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
-          <g filter={n.shape === "image" || gpuNode ? undefined : filter}><ShapeOutline n={n} theme={theme} fill={gpuNode ? "transparent" : c.fill} stroke={gpuNode ? "transparent" : c.stroke} fileUrl={fileUrl} /></g>
+        const nodeFilter = n.shape === "sticky" ? `url(#${idPrefix}-sticky-shadow)` : n.shape === "image" || gpuNode ? undefined : filter;
+        const voters = votes?.[n.id] ?? [];
+        const voteCount = voters.length;
+        const votedByMe = !!currentUserId && voters.includes(currentUserId);
+        const voteLabel = `👍 ${voteCount}`;
+        const votePillW = Math.max(38, voteLabel.length * 8 + 12);
+        return <g key={n.id} data-flow-node={n.id} transform={n.rot ? `rotate(${n.rot} ${n.x + n.w / 2} ${n.y + n.h / 2})` : undefined} style={{ cursor: votingMode ? "pointer" : onNodeDown ? "move" : undefined }} onPointerDown={onNodeDown ? (ev) => onNodeDown(ev, n) : undefined} onDoubleClick={onNodeDouble ? () => onNodeDouble(n) : undefined}>
+          <g filter={nodeFilter}><ShapeOutline n={n} theme={theme} fill={gpuNode ? "transparent" : c.fill} stroke={gpuNode ? "transparent" : c.stroke} fileUrl={fileUrl} /></g>
           {editing !== n.id && <NodeText n={n} fill={c.text} />}
+          {voteCount > 0 && (
+            <g
+              data-board-vote-badge={n.id}
+              data-board-vote-count={voteCount}
+              style={{ cursor: onToggleVote ? "pointer" : undefined }}
+              onPointerDown={onToggleVote ? (ev) => { ev.stopPropagation(); onToggleVote(n.id); } : undefined}
+            >
+              <rect
+                x={n.x + n.w - votePillW + 6}
+                y={n.y - 12}
+                width={votePillW}
+                height={22}
+                rx={11}
+                fill={votedByMe ? "#3370FF" : "#FFF3D6"}
+                stroke={votedByMe ? "#245BDB" : "#F0B400"}
+                strokeWidth={1.2}
+              />
+              <text
+                x={n.x + n.w - votePillW / 2 + 6}
+                y={n.y - 1}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fontSize={11}
+                fontWeight={600}
+                fill={votedByMe ? "#FFFFFF" : "#9A5B00"}
+                pointerEvents="none"
+              >
+                {voteLabel}
+              </text>
+            </g>
+          )}
           {sel && <rect x={n.x - 4} y={n.y - 4} width={n.w + 8} height={n.h + 8} rx={4} fill="none" stroke="#3370FF" strokeWidth={1.5} strokeDasharray="4 3" pointerEvents="none" />}
           {sel && onPortDown && (["top", "right", "bottom", "left"] as Port[]).map((p) => {
             const o = 16; // 飞书的连接点在图形外侧
@@ -561,7 +661,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
 export type FlowUpload = (f: File) => Promise<{ id: number; name: string; mime: string }>;
 export type FlowAssets = { docId: number; copy?: (sourceDocId: number, fileIds: number[], requestId: string, signal: AbortSignal) => Promise<{ mapping: Record<string, number> }> };
 
-export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, ai, onChange, onProps, peers, onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true }: {
+export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, ai, onChange, onProps, peers, onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true, currentUserId }: {
   graph: FlowGraph; blockProps?: Record<string, string>; height: number; readOnly: boolean; autoOpen?: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph, base: FlowGraph, extraProps?: Record<string, string>) => FlowChangeOutcome;
@@ -575,6 +675,7 @@ export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, 
   upload?: FlowUpload;
   assets?: FlowAssets;
   canCopy?: boolean;
+  currentUserId?: string;
 }) {
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
   const previewFrames = useMemo(() => (blockProps ? readBoardFramesFromProps(blockProps) : []), [blockProps]);
@@ -582,15 +683,19 @@ export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, 
     () => (blockProps ? readMindLayoutFromProps(blockProps) : { structure: "logic" as MindLayoutKind, relations: [] as MindRelation[] }),
     [blockProps],
   );
+  const previewExtras = useMemo(
+    () => (blockProps ? readWhiteboardExtrasFromProps(blockProps) : EMPTY_WHITEBOARD_EXTRAS),
+    [blockProps],
+  );
   const previewPins = useMemo(() => resolveBoardCommentPins(comments, graph), [comments, graph]);
   return <div contentEditable={false} className="group/flow relative w-full max-w-full overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
-    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
+    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} votes={previewExtras.votes} currentUserId={currentUserId} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} mindBoundaries={previewExtras.mindBoundaries} mindSummaries={previewExtras.mindSummaries} mindBadges={previewExtras.mindBadges} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       {previewPins.length > 0 && <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border border-[#FFD591] bg-[#FFF7E6] px-2 text-[12px] font-medium text-[#B25900] shadow-sm hover:bg-[#FFECCC]" data-flow-preview-pins><MessageSquare size={12} />{previewPins.length}</button>}
       <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
     </div>
     {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
-    {open && <FlowchartEditor initial={graph} blockProps={blockProps} readOnly={readOnly} ai={ai} onChange={onChange} onProps={onProps} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} />}
+    {open && <FlowchartEditor initial={graph} blockProps={blockProps} readOnly={readOnly} ai={ai} onChange={onChange} onProps={onProps} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} currentUserId={currentUserId} />}
   </div>;
 }
 
@@ -633,7 +738,7 @@ type EditorHistory = FlowHistory & {
   afterProps?: Record<string, string>;
 };
 
-export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, onProps, onClose, peers = [], onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true }: {
+export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, onProps, onClose, peers = [], onPresence, onComment, comments, activeThread, commentActions, upload, assets, canCopy = true, currentUserId }: {
   initial: FlowGraph; blockProps?: Record<string, string>; readOnly: boolean;
   ai?: (messages: AIMessage[]) => Promise<string>;
   onChange?: (next: FlowGraph, base: FlowGraph, extraProps?: Record<string, string>) => FlowChangeOutcome;
@@ -648,7 +753,15 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   upload?: FlowUpload;
   assets?: FlowAssets;
   canCopy?: boolean;
+  currentUserId?: string;
 }) {
+  const { t } = useI18n();
+  const qc = useContext(QueryClientContext);
+  const resolvedUserId = useMemo(() => {
+    if (currentUserId) return currentUserId;
+    const me = qc?.getQueryData<Me>(["me"]);
+    return me?.user?.id ? `u${me.user.id}` : "self";
+  }, [currentUserId, qc]);
   const [graph, setGraph] = useState(initial);
   const mindBoard = useRef(!!initial.mind?.length && !initial.nodes.length && !initial.strokes?.length).current;
   const [undo, setUndo] = useState<EditorHistory[]>([]);
@@ -690,16 +803,30 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     () => (blockProps ? readMindLayoutFromProps(blockProps) : { structure: "logic" as MindLayoutKind, relations: [] as MindRelation[] }),
     [blockProps],
   );
+  const crdtExtras = useMemo(
+    () => (blockProps ? readWhiteboardExtrasFromProps(blockProps) : EMPTY_WHITEBOARD_EXTRAS),
+    [blockProps],
+  );
   const [localFrames, setLocalFrames] = useState<BoardFrame[]>([]);
   const [dragFrames, setDragFrames] = useState<BoardFrame[] | null>(null);
   const [localMindStructure, setLocalMindStructure] = useState<MindLayoutKind>("logic");
   const [localMindRelations, setLocalMindRelations] = useState<MindRelation[]>([]);
+  const [localExtras, setLocalExtras] = useState<WhiteboardExtras>(EMPTY_WHITEBOARD_EXTRAS);
   const frames = dragFrames ?? (hasCrdtProps ? crdtFrames : localFrames);
   const mindStructure = hasCrdtProps ? crdtMindCfg.structure : localMindStructure;
   const mindRelations = hasCrdtProps ? crdtMindCfg.relations : localMindRelations;
+  const extras = hasCrdtProps ? crdtExtras : localExtras;
   const framesRef = useRef(frames); framesRef.current = frames;
   const mindStructureRef = useRef(mindStructure); mindStructureRef.current = mindStructure;
   const mindRelationsRef = useRef(mindRelations); mindRelationsRef.current = mindRelations;
+  const extrasRef = useRef(extras); extrasRef.current = extras;
+  const [votingMode, setVotingMode] = useState(false);
+  const [timerOpen, setTimerOpen] = useState(false);
+  const [minimapOpen, setMinimapOpen] = useState(() => typeof window === "undefined" || window.innerWidth >= 768);
+  const [mindViewMode, setMindViewMode] = useState<"canvas" | "outline">("canvas");
+  const [boundaryLabelDraft, setBoundaryLabelDraft] = useState("");
+  const [summaryLabelDraft, setSummaryLabelDraft] = useState("");
+  const [badgeTagDraft, setBadgeTagDraft] = useState("");
   const [selectedFrameId, setSelectedFrameId] = useState<string | null>(null);
   const [editingFrame, setEditingFrame] = useState<{ id: string; value: string } | null>(null);
   const [mindRelationFrom, setMindRelationFrom] = useState<string | null>(null);
@@ -714,7 +841,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   useEffect(() => { imageCopyMounted.current = true; return () => { imageCopyMounted.current = false; }; }, []);
   const [mindMenu, setMindMenu] = useState<{ left: number; top: number; maxHeight: number } | null>(null);
   const [mindOffer, setMindOffer] = useState<string | null>(null);
-  const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line" | "shape" | "textColor" | "textFormat" | "description"; left: number; top: number } | null>(null);
+  const [mindPaintMenu, setMindPaintMenu] = useState<{ kind: "fill" | "line" | "shape" | "textColor" | "textFormat" | "description" | "boundary" | "summary" | "badge"; left: number; top: number } | null>(null);
   useEffect(() => { setMindOffer(null); setMindPaintMenu(null); }, [mindSelected]);
   useEffect(() => {
     if (!mindMenu) return;
@@ -752,7 +879,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const [editing, setEditing] = useState<{ id: string; kind: "node" | "edge"; value: string } | null>(null);
   const [view, setView] = useState(() => { const b = boardContentBounds(initial, crdtMindCfg.structure, crdtFrames); return { x: b.x - 80, y: b.y - 80, zoom: 1 }; });
   const [drag, setDrag] = useState<Drag | null>(null);
-  const [menu, setMenu] = useState<"theme" | "import" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | null>(null);
+  const [menu, setMenu] = useState<"theme" | "import" | "export" | "ai" | "shape" | "fill" | "stroke" | "color" | "align" | "more" | "template" | "pen" | "ink-color" | "sticky" | null>(null);
   useEffect(() => { if (tool !== "pen" && menu === "pen") setMenu(null); if (tool !== "select") { setMindSelected(null); setMindRelationFrom(null); } }, [tool, menu]);
   useEffect(() => { if (mindSelected && !mindEditing && !layoutMindTopicsWithStructure(graph.mind ?? [], mindStructure, effectiveCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles).some((item) => item.topic.id === mindSelected)) setMindSelected(null); }, [graph.mind, graph.mindCollapsed, graph.mindStyles, graph.mindDescriptions, graph.mindDescriptionStyles, mindStructure, mindSelected, mindEditing, readOnly, viewFoldOverrides]);
   const [hand, setHand] = useState(false);
@@ -849,16 +976,20 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         { structure: "logic", relations: [] },
         { structure: mindStructureRef.current, relations: mindRelationsRef.current },
       ),
+      ...whiteboardExtrasPropWrites(EMPTY_WHITEBOARD_EXTRAS, extrasRef.current),
       ...patch,
     };
     const nextFrames = readBoardFramesFromProps(synthetic);
     const nextMind = readMindLayoutFromProps(synthetic);
+    const nextExtras = readWhiteboardExtrasFromProps(synthetic);
     setLocalFrames(nextFrames);
     framesRef.current = nextFrames;
     setLocalMindStructure(nextMind.structure);
     mindStructureRef.current = nextMind.structure;
     setLocalMindRelations(nextMind.relations);
     mindRelationsRef.current = nextMind.relations;
+    setLocalExtras(nextExtras);
+    extrasRef.current = nextExtras;
   };
   const commitExtraProps = (base: FlowGraph, next: FlowGraph, extraProps: Record<string, string>): FlowChangeOutcome => {
     const extraKeys = Object.keys(extraProps);
@@ -911,6 +1042,76 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       setUndo((u) => [...u.slice(-99), { before: result.graph, after: result.graph, beforeProps: reverseWrites, afterProps: forwardWrites }]);
       setRedo([]);
     }
+  };
+  const persistExtras = (nextExtras: WhiteboardExtras) => {
+    if (readOnly) return;
+    const before = extrasRef.current;
+    const forwardWrites = whiteboardExtrasPropWrites(before, nextExtras);
+    const reverseWrites = whiteboardExtrasPropWrites(nextExtras, before);
+    if (!hasCrdtProps) setLocalExtras(nextExtras);
+    extrasRef.current = nextExtras;
+    if (!Object.keys(forwardWrites).length) return;
+    const result = commitExtraProps(graph, graph, forwardWrites);
+    if (result.applied) {
+      setUndo((u) => [...u.slice(-99), { before: result.graph, after: result.graph, beforeProps: reverseWrites, afterProps: forwardWrites }]);
+      setRedo([]);
+    }
+  };
+  const toggleVoteOnNode = (nodeId: string) => {
+    if (readOnly) return;
+    const nextVotes = toggleNodeVote(extrasRef.current.votes, nodeId, resolvedUserId);
+    persistExtras({ ...extrasRef.current, votes: nextVotes });
+  };
+  const insertStickyNote = (preset: StickyPreset) => {
+    if (readOnly) return;
+    const center = { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
+    const sticky = createStickyNode(center, graph.nodes, preset);
+    commit({ ...graph, nodes: [...graph.nodes, sticky] });
+    setSelected(new Set([sticky.id]));
+    setMindSelected(null);
+    setSelectedFrameId(null);
+    setTool("select");
+    setHand(false);
+    setVotingMode(false);
+    setMenu(null);
+    setShowStarter(false);
+    setEditing({ id: sticky.id, kind: "node", value: "" });
+  };
+  const summaryTargetFor = (topicId: string | null): string | null => {
+    if (!topicId || !graph.mind?.length) return null;
+    if (graph.mind.some((item) => item.parent === topicId)) return topicId;
+    const found = graph.mind.find((item) => item.id === topicId);
+    return found?.parent ?? topicId;
+  };
+  const setMindBoundaryFor = (nodeId: string, boundary: { label?: string; color: string } | null) => {
+    const nextBoundaries = { ...extrasRef.current.mindBoundaries };
+    if (boundary) nextBoundaries[nodeId] = boundary;
+    else delete nextBoundaries[nodeId];
+    persistExtras({ ...extrasRef.current, mindBoundaries: nextBoundaries });
+  };
+  const setMindSummaryFor = (parentId: string, summary: { label: string; color: string } | null) => {
+    const nextSummaries = { ...extrasRef.current.mindSummaries };
+    if (summary) nextSummaries[parentId] = summary;
+    else delete nextSummaries[parentId];
+    persistExtras({ ...extrasRef.current, mindSummaries: nextSummaries });
+  };
+  const patchMindBadgeFor = (nodeId: string, patch: Partial<MindBadge> | null) => {
+    const nextBadges = { ...extrasRef.current.mindBadges };
+    if (patch === null) {
+      delete nextBadges[nodeId];
+    } else {
+      const merged: MindBadge = { ...nextBadges[nodeId], ...patch };
+      if (merged.priority === undefined) delete merged.priority;
+      if (merged.progress === undefined) delete merged.progress;
+      if (!merged.tag?.trim()) delete merged.tag;
+      else merged.tag = merged.tag.trim().slice(0, 16);
+      if (merged.priority === undefined && merged.progress === undefined && !merged.tag) {
+        delete nextBadges[nodeId];
+      } else {
+        nextBadges[nodeId] = merged;
+      }
+    }
+    persistExtras({ ...extrasRef.current, mindBadges: nextBadges });
   };
   const commit = (next: FlowGraph) => {
     if (readOnly) return;
@@ -969,9 +1170,17 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     }
     commitMind(graph, { ...graph, mindStyles: styles, mindPaints: paints, mindTextFormats: textFormats }); setMindOffer(null);
   };
-  const openMindPaintMenu = (kind: "fill" | "line" | "shape" | "textColor" | "textFormat" | "description", target: HTMLElement) => {
+  const openMindPaintMenu = (kind: "fill" | "line" | "shape" | "textColor" | "textFormat" | "description" | "boundary" | "summary" | "badge", target: HTMLElement) => {
     if (mindPaintMenu?.kind === kind) { setMindPaintMenu(null); return; }
-    const rect = target.getBoundingClientRect(), h = kind === "line" ? 264 : kind === "textColor" ? 250 : kind === "description" ? 250 : kind === "textFormat" ? 112 : kind === "shape" ? 86 : 180, w = kind === "shape" ? 144 : kind === "textFormat" ? 200 : 244;
+    if (kind === "boundary" && mindSelected) {
+      setBoundaryLabelDraft(extrasRef.current.mindBoundaries[mindSelected]?.label ?? "");
+    } else if (kind === "summary" && mindSelected) {
+      const targetParent = summaryTargetFor(mindSelected);
+      setSummaryLabelDraft((targetParent && extrasRef.current.mindSummaries[targetParent]?.label) || t("核心结论"));
+    } else if (kind === "badge" && mindSelected) {
+      setBadgeTagDraft(extrasRef.current.mindBadges[mindSelected]?.tag ?? "");
+    }
+    const rect = target.getBoundingClientRect(), h = kind === "line" ? 264 : kind === "textColor" ? 250 : kind === "description" ? 250 : kind === "badge" ? 240 : kind === "boundary" || kind === "summary" ? 188 : kind === "textFormat" ? 112 : kind === "shape" ? 86 : 180, w = kind === "shape" ? 144 : kind === "textFormat" ? 200 : kind === "badge" ? 264 : 244;
     let left = Math.max(8, Math.min(window.innerWidth - w - 8, rect.left));
     let top = rect.top >= h + 8 ? rect.top - h - 8 : Math.min(window.innerHeight - h - 8, rect.bottom + 8);
     // Keep the popup away from the visible tree when space permits.
@@ -1018,25 +1227,43 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     const result = commitMind(graph, { ...graph, mind: [...(graph.mind ?? []), ...topics] });
     if (result.applied && result.graph.mind?.some((topic) => topic.id === root)) { setMindSelected(root); setSelected(new Set()); setTool("select"); setHand(false); setShowStarter(false); }
   };
-  const addMindTopic = (sibling: boolean, selectedId = mindSelected) => {
+  const addMindTopic = (sibling: boolean, selectedId = mindSelected, openInlineEdit = true): string | undefined => {
     const parentTopic = graph.mind?.find((topic) => topic.id === selectedId);
     const parent = sibling ? parentTopic?.parent : parentTopic?.id;
-    if (readOnly || !parentTopic || !parent) return;
-    if ((graph.mind?.length ?? 0) >= 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return; }
+    if (readOnly || !parentTopic || !parent) return undefined;
+    if ((graph.mind?.length ?? 0) >= 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return undefined; }
     let ancestor = graph.mind?.find((topic) => topic.id === parent), depth = 0;
     while (ancestor?.parent && depth < 33) { depth++; ancestor = graph.mind?.find((topic) => topic.id === ancestor!.parent); }
-    if (!ancestor || depth >= 32) { setNotice({ ok: false, text: "思维导图层级已达上限。" }); return; }
+    if (!ancestor || depth >= 32) { setNotice({ ok: false, text: "思维导图层级已达上限。" }); return undefined; }
     const siblings = graph.mind!.filter((topic) => topic.parent === parent).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
     const index = siblings.findIndex((topic) => topic.id === parentTopic.id), next = sibling && index >= 0 ? siblings[index + 1] : undefined;
     const order = sibling && next ? (parentTopic.order + next.order) / 2 : Math.max(-1, ...siblings.map((topic) => topic.order)) + 1;
-    if (order > 1000000 || (next && (order <= parentTopic.order || order >= next.order))) { setNotice({ ok: false, text: "节点顺序空间不足，请在末尾添加。" }); return; }
+    if (order > 1000000 || (next && (order <= parentTopic.order || order >= next.order))) { setNotice({ ok: false, text: "节点顺序空间不足，请在末尾添加。" }); return undefined; }
     const topic: MindTopic = { id: newFlowId("m"), parent, order, text: "" };
     const result = commitMind(graph, { ...graph, mind: [...graph.mind!, topic], mindCollapsed: (graph.mindCollapsed ?? []).filter((id) => id !== parent) });
     if (result.applied && result.graph.mind?.some((item) => item.id === topic.id)) {
       setMindSelected(topic.id); setSelected(new Set());
-      const edit = { id: topic.id, value: topic.text, base: result.graph };
-      mindEditingRef.current = edit; setMindEditing(edit);
+      if (openInlineEdit) {
+        const edit = { id: topic.id, value: topic.text, base: result.graph };
+        mindEditingRef.current = edit; setMindEditing(edit);
+      }
+      return topic.id;
     }
+    return undefined;
+  };
+  const updateMindTitleDirect = (id: string, text: string) => {
+    if (readOnly || !graph.mind) return;
+    const prev = graph.mind.find((item) => item.id === id);
+    const trimmed = text.slice(0, 500);
+    if (!prev || prev.text === trimmed) return;
+    commitMind(graph, { ...graph, mind: graph.mind.map((item) => (item.id === id ? { ...item, text: trimmed } : item)) });
+  };
+  const removeMindTopicById = (targetId: string) => {
+    if (readOnly || !targetId || !graph.mind) return;
+    const ids = new Set([targetId]); let previous = 0;
+    while (ids.size !== previous) { previous = ids.size; for (const topic of graph.mind) if (topic.parent && ids.has(topic.parent)) ids.add(topic.id); }
+    const result = commitMind(graph, { ...graph, mind: graph.mind.filter((topic) => !ids.has(topic.id)) });
+    if (mindSelected && !result.graph.mind?.some((topic) => topic.id === mindSelected)) setMindSelected(null);
   };
   const addMindParent = () => {
     if (readOnly || !mindSelected || !graph.mind) return;
@@ -1196,6 +1423,10 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       structureOverride ?? mindStructure,
       framesRef.current,
       readOnly && g === graph ? effectiveCollapsed : undefined,
+      mindRelationsRef.current,
+      extrasRef.current.mindBoundaries,
+      extrasRef.current.mindSummaries,
+      extrasRef.current.mindBadges,
     );
     // 左侧留出竖向工具条，上下留出浮动栏。
     const padL = compact ? 24 : readOnly ? 40 : 90, padR = (compact ? 24 : 40) + extraRight, usableW = Math.max(100, viewport.w - padL - padR), usableH = Math.max(100, viewport.h - (compact ? 56 : 160));
@@ -1336,7 +1567,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (recoveryOpen || editing || editingFrame || mindEditing || mindDescriptionEditing || (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement)) return;
-      if (e.key === "Escape") { e.preventDefault(); if (drag?.kind === "mind") setDrag(null); else if (mindRelationFrom) setMindRelationFrom(null); else if (commentDraft) setCommentDraft(null); else if (openPinId !== null) setOpenPinId(null); else if (tool === "comment") setTool("select"); else if (menu) setMenu(null); else if (mindSelected) setMindSelected(null); else if (selectedFrameId) setSelectedFrameId(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
+      if (e.key === "Escape") { e.preventDefault(); if (drag?.kind === "mind") setDrag(null); else if (mindRelationFrom) setMindRelationFrom(null); else if (votingMode) setVotingMode(false); else if (commentDraft) setCommentDraft(null); else if (openPinId !== null) setOpenPinId(null); else if (tool === "comment") setTool("select"); else if (menu) setMenu(null); else if (mindViewMode === "outline") setMindViewMode("canvas"); else if (mindSelected) setMindSelected(null); else if (selectedFrameId) setSelectedFrameId(null); else if (selected.size) setSelected(new Set()); else requestClose(); return; }
       if ((e.key === "Delete" || e.key === "Backspace") && !readOnly) { e.preventDefault(); if (mindSelected) removeMindTopic(); else removeSelected(); }
       const onButton = e.target instanceof HTMLElement && !!e.target.closest("button");
       if (mindSelected && !readOnly && !onButton && e.key === "Tab") { if (e.shiftKey && !graph.mind?.find((topic) => topic.id === mindSelected)?.parent) return; e.preventDefault(); if (e.shiftKey) addMindParent(); else addMindTopic(false); }
@@ -1867,13 +2098,13 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     <div className="mb-2 text-subtle">画笔颜色</div><div className="flex flex-wrap gap-2">{inkColors.map(([color, label]) => <button key={color} type="button" aria-label={`画笔颜色 ${label}`} title={label} aria-pressed={activeInkColor === color} onClick={() => { penKind === "marker" ? setMarkerColor(color) : setPenColor(color); setMenu(null); }} className={cn("size-5 rounded-full border border-[#bbbfc4]", activeInkColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
   </div>;
   const libraryGroups: { title: string; shapes: Shape[] }[] = [
-    { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "note", "text", ...(upload ? ["image" as const] : [])] },
+    { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "sticky", "note", "text", ...(upload ? ["image" as const] : [])] },
     { title: "泳道", shapes: ["swimlane", "swimlaneV"] },
     { title: "流程图", shapes: ["terminator", "rect", "diamond", "parallelogram", "document", "cylinder", "hexagon"] },
     { title: "类图", shapes: ["class", "note"] },
     { title: "时序图", shapes: ["actor", "lifeline", "note"] },
   ];
-  const ICON_BOX: Partial<Record<Shape, [number, number, number, number]>> = { actor: [33, 6, 30, 106], lifeline: [18, 8, 60, 82], swimlane: [6, 16, 84, 64], swimlaneV: [14, 6, 68, 84], class: [14, 12, 68, 72], triangle: [14, 14, 68, 68], note: [16, 12, 64, 72] };
+  const ICON_BOX: Partial<Record<Shape, [number, number, number, number]>> = { actor: [33, 6, 30, 106], lifeline: [18, 8, 60, 82], swimlane: [6, 16, 84, 64], swimlaneV: [14, 6, 68, 84], class: [14, 12, 68, 72], triangle: [14, 14, 68, 68], note: [16, 12, 64, 72], sticky: [14, 14, 68, 68] };
   const shapeIcon = (id: Shape) => { const [x, y, w, h] = ICON_BOX[id] ?? [10, 22, 76, 52]; return <svg viewBox="0 0 96 96" className="size-6" fill="none"><ShapeOutline n={{ id: "i", x, y, w, h, shape: id, text: "" }} theme={{ ...THEMES[0], radius: 4, strokeWidth: 6 }} fill="none" stroke="currentColor" />{id === "text" && <text x="48" y="66" textAnchor="middle" fontSize="52" fill="currentColor">T</text>}</svg>; };
   const filteredGroups = libraryGroups.map((g) => ({ ...g, shapes: g.shapes.filter((id) => !libQuery.trim() || SHAPES.find((x) => x.id === id)!.label.includes(libQuery.trim())) })).filter((g) => g.shapes.length);
   // Floating style toolbar anchored above the selection (Feishu: shape ▾ / 填充 ▾ / 边框 ▾ / 字色 ▾ / 字号 ▾ / 更多).
@@ -1907,6 +2138,16 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const groupBox = !readOnly && tool === "select" && selectedNodes.length + selectedStrokes.length >= 2 && !selectedEdges.length ? selectionBounds(selectedNodes, selectedStrokes) : null;
   const boardPins = resolveBoardCommentPins(comments, renderedGraph, effectiveCollapsed);
   const openPin = openPinId !== null ? boardPins.find((p) => p.root.id === openPinId) ?? null : null;
+  const rankedVotes = useMemo(() => topVotedNodes(extras.votes, graph.nodes, 3), [extras.votes, graph.nodes]);
+  const totalVotes = useMemo(
+    () => Object.values(extras.votes).reduce((acc, list) => acc + list.length, 0),
+    [extras.votes],
+  );
+  const hasMindTopics = !!(graph.mind && graph.mind.length > 0);
+  const summaryTargetId = summaryTargetFor(mindSelected);
+  const activeBoundary = mindSelected ? extras.mindBoundaries[mindSelected] : undefined;
+  const activeSummary = summaryTargetId ? extras.mindSummaries[summaryTargetId] : undefined;
+  const activeBadge = mindSelected ? extras.mindBadges[mindSelected] : undefined;
   const worldToScreen = (wx: number, wy: number) => {
     const r = svgWrap.current?.getBoundingClientRect();
     if (!r) return { x: 240, y: 180 };
@@ -1960,8 +2201,30 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       onDragOver={(e) => { if (upload && !readOnly && [...e.dataTransfer.items].some((i) => i.kind === "file")) e.preventDefault(); }}
       onDrop={(e) => { const f = [...e.dataTransfer.files].find((x) => x.type.startsWith("image/")); if (!f || !upload || readOnly) return; e.preventDefault(); void insertImage(f, toWorld(e.clientX, e.clientY)); }}
       onWheel={(e) => { autoFit.current = false; if (e.ctrlKey || e.metaKey) { const p = toWorld(e.clientX, e.clientY); const zoom = Math.min(3, Math.max(0.2, view.zoom * (e.deltaY < 0 ? 1.1 : 1 / 1.1))); setView({ zoom, x: p.x - (p.x - view.x) * (view.zoom / zoom), y: p.y - (p.y - view.y) * (view.zoom / zoom) }); } else setView((v) => ({ ...v, x: v.x + e.deltaX / v.zoom, y: v.y + e.deltaY / v.zoom })); }}>
+      {mindViewMode === "outline" && hasMindTopics ? (
+        <div className="absolute inset-0 z-10 pt-14">
+          <MindMapOutlineView
+            topics={graph.mind ?? []}
+            collapsed={effectiveCollapsed}
+            paints={graph.mindPaints}
+            badges={extras.mindBadges}
+            boundaries={extras.mindBoundaries}
+            summaries={extras.mindSummaries}
+            selectedId={mindSelected}
+            readOnly={readOnly}
+            onSelect={(id) => { setMindSelected(id); setSelected(new Set()); }}
+            onToggleFold={toggleMindFold}
+            onUpdateTitle={updateMindTitleDirect}
+            onAddChild={(parentId) => addMindTopic(false, parentId, false)}
+            onAddSibling={(topicId) => addMindTopic(true, topicId, false)}
+            onDelete={removeMindTopicById}
+            onSwitchToCanvas={() => setMindViewMode("canvas")}
+          />
+        </div>
+      ) : <>
       <WhiteboardGpuLayer graph={mindStructure === "logic" ? renderedGraph : { ...renderedGraph, mind: undefined }} view={view} selected={selected} draftStroke={inkPreview} erasing={erasePreview} mindCollapsed={effectiveCollapsed} mindSelected={mindSelected} mindDescriptionEditing={mindDescriptionEditing} mindBoard={mindBoard} onBackendReady={(backend) => { if (backend === "webgpu" || backend === "webgl2") setGpuActive(true); }} />
       <FlowSvg graph={renderedGraph} width="100%" height="100%" viewBox={viewBox} selected={selected} gpuBacked={gpuActive} draftStroke={inkPreview} erasing={erasePreview} frames={frames} selectedFrameId={selectedFrameId} editingFrameId={editingFrame?.id ?? null}
+        votes={extras.votes} currentUserId={resolvedUserId} votingMode={votingMode} onToggleVote={readOnly ? undefined : toggleVoteOnNode}
         onFrameHeaderDown={readOnly ? undefined : (e, frame) => {
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
           finishEdit(); finishFrameTitleEdit();
@@ -1981,6 +2244,9 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         onFrameDelete={readOnly ? undefined : deleteBoardFrame}
         mindStructure={mindStructure} mindRelations={mindRelations} mindRelationFrom={mindRelationFrom}
         onRemoveMindRelation={readOnly ? undefined : (relId) => { persistMindLayout(mindStructure, mindRelations.filter((r) => r.id !== relId)); setNotice({ ok: true, text: "已删除跨分支关联线" }); }}
+        mindBoundaries={extras.mindBoundaries} mindSummaries={extras.mindSummaries} mindBadges={extras.mindBadges}
+        onEditMindBoundary={readOnly ? undefined : (nodeId) => { setMindSelected(nodeId); setSelected(new Set()); setBoundaryLabelDraft(extrasRef.current.mindBoundaries[nodeId]?.label ?? ""); const pos = mindPositions.find((m) => m.topic.id === nodeId); const scr = pos ? worldToScreen(pos.x, pos.y) : { x: 240, y: 160 }; setMindPaintMenu({ kind: "boundary", left: Math.max(8, Math.min(window.innerWidth - 260, scr.x)), top: Math.max(56, Math.min(window.innerHeight - 210, scr.y)) }); }}
+        onEditMindSummary={readOnly ? undefined : (parentId) => { setMindSelected(parentId); setSelected(new Set()); setSummaryLabelDraft(extrasRef.current.mindSummaries[parentId]?.label ?? t("核心结论")); const pos = mindPositions.find((m) => m.topic.id === parentId); const scr = pos ? worldToScreen(pos.x + pos.w, pos.y) : { x: 240, y: 160 }; setMindPaintMenu({ kind: "summary", left: Math.max(8, Math.min(window.innerWidth - 260, scr.x)), top: Math.max(56, Math.min(window.innerHeight - 210, scr.y)) }); }}
         mindSelected={mindSelected} mindEditing={mindEditing} mindDescriptionEditing={mindDescriptionEditing} mindCollapsed={effectiveCollapsed} mindDragPreview={mindDragPreview} onMindFold={!movingMind && !mindEditing && !mindDescriptionEditing && (readOnly || tool === "select") ? toggleMindFold : undefined} onMindAddChild={!movingMind && !readOnly && tool === "select" && !mindEditing && !mindDescriptionEditing ? (id) => addMindTopic(false, id) : undefined} onMindSelect={tool === "pen" || tool === "eraser" ? undefined : (topic, event) => {
         if (event.pointerType === "touch" && (!event.isPrimary || suppressTouch.current)) return;
         if (tool === "comment" && commentActions) {
@@ -2052,6 +2318,10 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         onNodeDown={(e, n) => { setMindSelected(null); setMindRelationFrom(null); setSelectedFrameId(null);
           e.stopPropagation(); setMenu(null); setOpenPinId(null);
           if (e.pointerType === "touch" && (!e.isPrimary || suppressTouch.current)) return;
+          if (votingMode && !readOnly) {
+            toggleVoteOnNode(n.id);
+            return;
+          }
           if (tool === "comment" && commentActions) {
             const label = n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形";
             openCommentComposer({ kind: "node", targetId: n.id, x: Math.round(n.x + n.w), y: Math.round(n.y) }, label, e.clientX, e.clientY);
@@ -2272,6 +2542,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
           </div>}
         </div>
       </div>, compact ? document.body : svgWrap.current)}
+      </>}
     </div>
     {compact && connectFrom && <div className="absolute bottom-[68px] left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-lg border bg-surface px-3 py-2 text-[13px] shadow-md" role="status">请选择要连接的图形<button type="button" className="text-primary" onClick={() => setConnectFrom(null)}>取消</button></div>}
 
@@ -2291,23 +2562,64 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     {!readOnly && !(compact && (connectFrom || (barPos && !drag && !editing))) && <aside className={cn("absolute z-10 flex gap-0.5 rounded-xl border border-[#DEE0E3] bg-surface p-1.5 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "bottom-[68px] left-1/2 max-w-[calc(100%-24px)] -translate-x-1/2 flex-row overflow-x-auto" : "top-1/2 -translate-y-1/2 flex-col")} style={compact ? undefined : { left: library ? 272 : 12 }} aria-label="工具">
       <button type="button" className={cn(railBtn, library && "bg-[#E1EAFF]")} title="图形库" onClick={() => setLibrary(!library)} data-flow-library-toggle><Shapes size={18} className="text-[#3370FF]" /></button>
       <span className={cn("bg-[#DEE0E3]", compact ? "mx-0.5 my-1 h-8 w-px shrink-0" : "mx-1 my-0.5 h-px")} />
-      <button type="button" className={cn(railBtn, tool === "select" && !hand && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => { setTool("select"); setHand(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
-      <button type="button" className={cn(railBtn, (tool === "pen" || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title="画笔" aria-label="画笔" aria-pressed={tool === "pen" || tool === "eraser"} onClick={() => { setTool("pen"); setHand(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "select" && !hand && !votingMode && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => { setTool("select"); setHand(false); setVotingMode(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
+      <button type="button" className={cn(railBtn, ((tool === "pen" && penKind === "pen") || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title="画笔" aria-label="画笔" aria-pressed={(tool === "pen" && penKind === "pen") || tool === "eraser"} onClick={() => { setTool("pen"); setPenKind("pen"); setHand(false); setVotingMode(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "pen" && penKind === "marker" && "bg-[#FFF5C7] text-[#B25900]")} title={t("荧光笔")} aria-label={t("荧光笔")} aria-pressed={tool === "pen" && penKind === "marker"} onClick={() => { setTool("pen"); setPenKind("marker"); setHand(false); setVotingMode(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-board-tool="highlighter"><Highlighter size={18} /></button>
+      <button type="button" className={cn(railBtn, menu === "sticky" && "bg-[#FFF3B0] text-[#9A5B00]")} title={t("便利贴")} aria-label={t("便利贴")} aria-expanded={menu === "sticky"} onClick={() => { setMenu(menu === "sticky" ? null : "sticky"); setVotingMode(false); }} data-board-add-sticky><StickyNote size={18} /></button>
       <button type="button" className={railBtn} aria-label="插入思维导图" title="插入思维导图" onClick={addMindMap} data-flow-mindmap-tool><ListTree size={18}/></button>
       <button type="button" className={railBtn} aria-label="分区画框" title="分区画框 (Frame)" onClick={addBoardFrame} data-board-frame-tool><Frame size={18}/></button>
-      <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => { setTool("round"); setHand(false); setShowStarter(false); }}><Square size={18} /></button>
-      <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => { setTool("text"); setHand(false); setShowStarter(false); }}><Type size={18} /></button>
-      <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => { setTool("diamond"); setHand(false); setShowStarter(false); }}><Diamond size={18} /></button>
-      <button type="button" className={cn(railBtn, tool === "note" && "bg-[#E1EAFF] text-primary")} title="便签" onClick={() => { setTool("note"); setHand(false); setShowStarter(false); }}><svg viewBox="0 0 96 96" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={7}><path d="M14,12 H66 L82,28 V84 H14 Z M66,12 V28 H82" /></svg></button>
-      {commentActions && <button type="button" className={cn(railBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} title="评论图钉（点击画布或对象添加锚点评论）" aria-label="评论图钉" aria-pressed={tool === "comment"} onClick={() => { setTool((cur) => cur === "comment" ? "select" : "comment"); setSelected(new Set()); setHand(false); setShowStarter(false); setMenu(null); }} data-flow-comment-tool><MessageSquare size={18} /></button>}
+      <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => { setTool("round"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Square size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => { setTool("text"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Type size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => { setTool("diamond"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Diamond size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "note" && "bg-[#E1EAFF] text-primary")} title="便签" onClick={() => { setTool("note"); setHand(false); setVotingMode(false); setShowStarter(false); }}><svg viewBox="0 0 96 96" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={7}><path d="M14,12 H66 L82,28 V84 H14 Z M66,12 V28 H82" /></svg></button>
+      {commentActions && <button type="button" className={cn(railBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} title="评论图钉（点击画布或对象添加锚点评论）" aria-label="评论图钉" aria-pressed={tool === "comment"} onClick={() => { setTool((cur) => cur === "comment" ? "select" : "comment"); setSelected(new Set()); setHand(false); setVotingMode(false); setShowStarter(false); setMenu(null); }} data-flow-comment-tool><MessageSquare size={18} /></button>}
       {upload && <button type="button" className={railBtn} title="插入图片（也可粘贴或拖入画板）" onClick={() => imageRef.current?.click()} data-flow-image-btn><ImageIcon size={18} /></button>}
       <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void insertImage(f); }} data-flow-image-input />
     </aside>}
+    {!readOnly && menu === "sticky" && (
+      <div
+        role="dialog"
+        aria-label={t("选择便利贴颜色")}
+        data-board-sticky-popover
+        onPointerDown={(e) => e.stopPropagation()}
+        className={cn(
+          "absolute z-30 w-[212px] rounded-xl border border-[#DEE0E3] bg-surface p-3 shadow-[0_8px_24px_rgba(31,35,41,0.14)] dark:border-border",
+          compact ? "bottom-[124px] left-1/2 -translate-x-1/2" : "top-1/2 -translate-y-1/2",
+        )}
+        style={compact ? undefined : { left: library ? 328 : 68 }}
+      >
+        <div className="mb-2 flex items-center justify-between text-[12px] font-medium text-subtle">
+          <span>{t("插入便利贴")}</span>
+          <button type="button" aria-label={t("关闭")} onClick={() => setMenu(null)} className="grid size-5 place-items-center rounded hover:bg-hover"><X size={12} /></button>
+        </div>
+        <div className="grid grid-cols-5 gap-2">
+          {STICKY_PRESETS.map((preset) => (
+            <button
+              key={preset.id}
+              type="button"
+              data-board-sticky-color={preset.id}
+              title={t(preset.label)}
+              aria-label={t(preset.label)}
+              onClick={() => insertStickyNote(preset)}
+              className="group relative flex h-8 w-8 items-center justify-center rounded-md border shadow-sm transition-transform hover:scale-105"
+              style={{ background: preset.fill, borderColor: preset.stroke }}
+            >
+              <span
+                className="absolute bottom-0 right-0 size-2.5 rounded-tl-[2px]"
+                style={{ background: preset.fold }}
+                aria-hidden
+              />
+            </button>
+          ))}
+        </div>
+        <p className="mt-2 text-[11px] text-subtle">{t("点击颜色立即插入并输入文字")}</p>
+      </div>
+    )}
     {readOnly && commentActions && <div className={cn(floatBar, "absolute left-3 top-16 z-20")}>
       <button type="button" className={cn(barBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} aria-label="评论图钉" aria-pressed={tool === "comment"} onClick={() => setTool((cur) => cur === "comment" ? "select" : "comment")} data-flow-comment-tool><MessageSquare size={15} /><span>{tool === "comment" ? "点击画布落钉" : "评论"}</span></button>
     </div>}
 
-    {!readOnly && mindSelected && !mindEditing && !mindDescriptionEditing && !movingMind && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
+    {!readOnly && mindViewMode === "canvas" && mindSelected && !mindEditing && !mindDescriptionEditing && !movingMind && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
       <FeishuSelect
         ariaLabel="导图结构"
         title="切换思维导图结构"
@@ -2341,6 +2653,45 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       >
         <Link2 size={14} />
         <span>关联线</span>
+      </button>
+      <button
+        type="button"
+        data-mind-boundary-btn
+        data-mind-paint-trigger
+        aria-label={t("外框")}
+        aria-expanded={mindPaintMenu?.kind === "boundary"}
+        title={t("为当前分支添加或编辑外框")}
+        className={cn(barBtn, (activeBoundary || mindPaintMenu?.kind === "boundary") && "bg-[#E1EAFF] text-[#3370FF]")}
+        onClick={(event) => openMindPaintMenu("boundary", event.currentTarget)}
+      >
+        <BoxSelect size={14} />
+        <span>{t("外框")}</span>
+      </button>
+      <button
+        type="button"
+        data-mind-summary-btn
+        data-mind-paint-trigger
+        aria-label={t("概要")}
+        aria-expanded={mindPaintMenu?.kind === "summary"}
+        title={t("为子分支添加花括号概要")}
+        className={cn(barBtn, (activeSummary || mindPaintMenu?.kind === "summary") && "bg-[#F3EEFF] text-[#722ED1]")}
+        onClick={(event) => openMindPaintMenu("summary", event.currentTarget)}
+      >
+        <Braces size={14} />
+        <span>{t("概要")}</span>
+      </button>
+      <button
+        type="button"
+        data-mind-badge-btn
+        data-mind-paint-trigger
+        aria-label={t("徽章")}
+        aria-expanded={mindPaintMenu?.kind === "badge"}
+        title={t("设置优先级、进度或标签徽章")}
+        className={cn(barBtn, (activeBadge || mindPaintMenu?.kind === "badge") && "bg-[#FFF1E0] text-[#DE7802]")}
+        onClick={(event) => openMindPaintMenu("badge", event.currentTarget)}
+      >
+        <Tag size={14} />
+        <span>{t("徽章")}</span>
       </button>
       <span className="mx-0.5 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
       <button type="button" data-mind-paint-trigger aria-label="节点形状" aria-expanded={mindPaintMenu?.kind === "shape"} title="更改图形" className={barBtn} onClick={(event) => openMindPaintMenu("shape", event.currentTarget)}>{selectedShape === "text" ? <Type size={17}/> : selectedShape === "oval" ? <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="9" cy="9" rx="7" ry="5"/></svg> : <Square size={17}/>}<ChevronDown size={11}/></button>
@@ -2387,8 +2738,273 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); removeMindTopic(); }}>删除 <span className="text-[#8f959e]">⌫</span></button>
     </div>}
 
-    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="dialog" aria-label={{ fill: "节点填充", line: "节点连线样式", shape: "更改图形", textColor: "文字颜色和背景", textFormat: "文字格式", description: "描述样式" }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
-      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: "填充颜色", line: "连线样式", shape: "更改图形", textColor: "文字颜色", description: "描述样式" }[mindPaintMenu.kind]}</div>}
+    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="dialog" aria-label={{ fill: "节点填充", line: "节点连线样式", shape: "更改图形", textColor: "文字颜色和背景", textFormat: "文字格式", description: "描述样式", boundary: t("分支外框"), summary: t("分支概要"), badge: t("节点徽章") }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : mindPaintMenu.kind === "badge" ? 264 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
+      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: "填充颜色", line: "连线样式", shape: "更改图形", textColor: "文字颜色", description: "描述样式", boundary: t("分支外框"), summary: t("分支概要"), badge: t("优先级与进度徽章") }[mindPaintMenu.kind]}</div>}
+      {mindPaintMenu.kind === "boundary" && (
+        <div className="space-y-2.5" data-mind-boundary-popover>
+          <input
+            type="text"
+            maxLength={40}
+            value={boundaryLabelDraft}
+            onChange={(e) => setBoundaryLabelDraft(e.target.value)}
+            placeholder={t("外框标签（如：阶段一）")}
+            data-mind-boundary-input
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                setMindBoundaryFor(mindSelected, {
+                  ...(boundaryLabelDraft.trim() ? { label: boundaryLabelDraft.trim() } : {}),
+                  color: activeBoundary?.color ?? "#3370ff",
+                });
+                setMindPaintMenu(null);
+              }
+            }}
+            className="h-8 w-full select-text rounded-md border border-[#DEE0E3] bg-background px-2 text-[12px] text-foreground outline-none focus:border-primary"
+          />
+          <div className="flex items-center gap-1.5">
+            {MIND_BOUNDARY_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                aria-label={color}
+                onClick={() =>
+                  setMindBoundaryFor(mindSelected, {
+                    ...(boundaryLabelDraft.trim() ? { label: boundaryLabelDraft.trim() } : {}),
+                    color,
+                  })
+                }
+                className={cn(
+                  "size-6 rounded-full border border-[#d4d7dc]",
+                  (activeBoundary?.color ?? "#3370ff") === color && "ring-2 ring-[#3370ff] ring-offset-1",
+                )}
+                style={{ background: color }}
+              />
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-1.5 pt-1">
+            {activeBoundary && (
+              <button
+                type="button"
+                data-mind-boundary-remove
+                onClick={() => { setMindBoundaryFor(mindSelected, null); setMindPaintMenu(null); }}
+                className="h-7 rounded-md border border-[#f5b5b2] px-2.5 text-[12px] text-[#d83931] hover:bg-[#fde8e8]"
+              >
+                {t("移除外框")}
+              </button>
+            )}
+            <button
+              type="button"
+              data-mind-boundary-save
+              onClick={() => {
+                setMindBoundaryFor(mindSelected, {
+                  ...(boundaryLabelDraft.trim() ? { label: boundaryLabelDraft.trim() } : {}),
+                  color: activeBoundary?.color ?? "#3370ff",
+                });
+                setMindPaintMenu(null);
+              }}
+              className="h-7 rounded-md bg-primary px-3 text-[12px] font-medium text-white hover:bg-primary/90"
+            >
+              {t("应用")}
+            </button>
+          </div>
+        </div>
+      )}
+      {mindPaintMenu.kind === "summary" && summaryTargetId && (
+        <div className="space-y-2.5" data-mind-summary-popover>
+          <input
+            type="text"
+            maxLength={80}
+            value={summaryLabelDraft}
+            onChange={(e) => setSummaryLabelDraft(e.target.value)}
+            placeholder={t("概要内容（如：核心结论）")}
+            data-mind-summary-input
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                e.preventDefault();
+                setMindSummaryFor(summaryTargetId, {
+                  label: summaryLabelDraft.trim() || t("概要"),
+                  color: activeSummary?.color ?? "#722ed1",
+                });
+                setMindPaintMenu(null);
+              }
+            }}
+            className="h-8 w-full select-text rounded-md border border-[#DEE0E3] bg-background px-2 text-[12px] text-foreground outline-none focus:border-primary"
+          />
+          <div className="flex items-center gap-1.5">
+            {MIND_SUMMARY_COLORS.map((color) => (
+              <button
+                key={color}
+                type="button"
+                aria-label={color}
+                onClick={() =>
+                  setMindSummaryFor(summaryTargetId, {
+                    label: summaryLabelDraft.trim() || t("概要"),
+                    color,
+                  })
+                }
+                className={cn(
+                  "size-6 rounded-full border border-[#d4d7dc]",
+                  (activeSummary?.color ?? "#722ed1") === color && "ring-2 ring-[#722ed1] ring-offset-1",
+                )}
+                style={{ background: color }}
+              />
+            ))}
+          </div>
+          <div className="flex items-center justify-end gap-1.5 pt-1">
+            {activeSummary && (
+              <button
+                type="button"
+                data-mind-summary-remove
+                onClick={() => { setMindSummaryFor(summaryTargetId, null); setMindPaintMenu(null); }}
+                className="h-7 rounded-md border border-[#f5b5b2] px-2.5 text-[12px] text-[#d83931] hover:bg-[#fde8e8]"
+              >
+                {t("移除概要")}
+              </button>
+            )}
+            <button
+              type="button"
+              data-mind-summary-save
+              onClick={() => {
+                setMindSummaryFor(summaryTargetId, {
+                  label: summaryLabelDraft.trim() || t("概要"),
+                  color: activeSummary?.color ?? "#722ed1",
+                });
+                setMindPaintMenu(null);
+              }}
+              className="h-7 rounded-md bg-[#722ed1] px-3 text-[12px] font-medium text-white hover:bg-[#5b21b6]"
+            >
+              {t("应用")}
+            </button>
+          </div>
+        </div>
+      )}
+      {mindPaintMenu.kind === "badge" && (
+        <div className="space-y-3" data-mind-badge-popover>
+          <div>
+            <div className="mb-1 text-[11px] text-subtle">{t("优先级")}</div>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => patchMindBadgeFor(mindSelected, { priority: undefined })}
+                className={cn(
+                  "h-7 flex-1 rounded-md border text-[11px] font-medium",
+                  activeBadge?.priority === undefined ? "border-primary bg-[#e1eaff] text-primary" : "border-[#dee0e3] hover:bg-hover",
+                )}
+              >
+                {t("无")}
+              </button>
+              {MIND_PRIORITIES.map((p: MindPriority) => {
+                const meta = priorityBadgeMeta(p);
+                const selectedP = activeBadge?.priority === p;
+                return (
+                  <button
+                    key={p}
+                    type="button"
+                    data-mind-badge-pick-priority={p}
+                    onClick={() => patchMindBadgeFor(mindSelected, { priority: selectedP ? undefined : p })}
+                    className={cn("h-7 flex-1 rounded-md border text-[11px] font-semibold transition-all", selectedP && "ring-2 ring-primary/40")}
+                    style={{
+                      background: selectedP ? meta.bg : undefined,
+                      color: meta.fg,
+                      borderColor: selectedP ? meta.fg : meta.border,
+                    }}
+                  >
+                    {meta.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] text-subtle">{t("完成进度")}</div>
+            <div className="grid grid-cols-6 gap-1">
+              <button
+                type="button"
+                onClick={() => patchMindBadgeFor(mindSelected, { progress: undefined })}
+                className={cn(
+                  "h-7 rounded-md border text-[11px]",
+                  activeBadge?.progress === undefined ? "border-primary bg-[#e1eaff] font-medium text-primary" : "border-[#dee0e3] hover:bg-hover",
+                )}
+              >
+                {t("无")}
+              </button>
+              {MIND_PROGRESS_STEPS.map((prog: MindProgress) => {
+                const selectedProg = activeBadge?.progress === prog;
+                return (
+                  <button
+                    key={prog}
+                    type="button"
+                    data-mind-badge-pick-progress={prog}
+                    onClick={() => patchMindBadgeFor(mindSelected, { progress: selectedProg ? undefined : prog })}
+                    className={cn(
+                      "h-7 rounded-md border text-[11px] tabular-nums",
+                      selectedProg ? "border-primary bg-[#e1eaff] font-semibold text-primary" : "border-[#dee0e3] hover:bg-hover",
+                    )}
+                  >
+                    {prog}%
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <div>
+            <div className="mb-1 text-[11px] text-subtle">{t("标签")}</div>
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                maxLength={16}
+                value={badgeTagDraft}
+                onChange={(e) => setBadgeTagDraft(e.target.value)}
+                placeholder={t("输入简短标签")}
+                data-mind-badge-tag-input
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.nativeEvent.isComposing) {
+                    e.preventDefault();
+                    patchMindBadgeFor(mindSelected, { tag: badgeTagDraft.trim() || undefined });
+                  }
+                }}
+                className="h-7 min-w-0 flex-1 select-text rounded-md border border-[#DEE0E3] bg-background px-2 text-[12px] text-foreground outline-none focus:border-primary"
+              />
+              <button
+                type="button"
+                onClick={() => patchMindBadgeFor(mindSelected, { tag: badgeTagDraft.trim() || undefined })}
+                className="h-7 shrink-0 rounded-md bg-primary px-2.5 text-[11px] font-medium text-white hover:bg-primary/90"
+              >
+                {t("应用")}
+              </button>
+            </div>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {["核心", "待确认", "阻塞", "已完成"].map((presetTag) => (
+                <button
+                  key={presetTag}
+                  type="button"
+                  onClick={() => { setBadgeTagDraft(presetTag); patchMindBadgeFor(mindSelected, { tag: presetTag }); }}
+                  className={cn(
+                    "rounded-full border px-2 py-0.5 text-[11px]",
+                    activeBadge?.tag === presetTag
+                      ? "border-[#722ed1] bg-[#f0ebff] font-medium text-[#6425d0]"
+                      : "border-[#dee0e3] text-subtle hover:bg-hover",
+                  )}
+                >
+                  {t(presetTag)}
+                </button>
+              ))}
+            </div>
+          </div>
+          {activeBadge && (
+            <div className="flex justify-end border-t border-[#eff0f1] pt-2">
+              <button
+                type="button"
+                data-mind-badge-clear
+                onClick={() => { setBadgeTagDraft(""); patchMindBadgeFor(mindSelected, null); setMindPaintMenu(null); }}
+                className="text-[11px] text-[#d83931] hover:underline"
+              >
+                {t("清除全部徽章")}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
       {mindPaintMenu.kind === "shape" && <div className="flex gap-1">{(["text", "oval", "rect"] as const).map((shape) => <button key={shape} type="button" aria-label={{ text: "文字形状", oval: "椭圆形状", rect: "矩形形状" }[shape]} aria-pressed={selectedShape === shape} className={cn("grid size-8 place-items-center rounded hover:bg-hover", selectedShape === shape && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => { updateMindStyle({ shape }); setMindPaintMenu(null); }}>{shape === "text" ? <Type size={17}/> : shape === "oval" ? <Circle size={17} className="scale-y-75"/> : <Square size={17}/>}</button>)}</div>}
       {mindPaintMenu.kind === "textFormat" && <><div className="flex gap-1 border-b border-[#e5e6eb] pb-2">{([ ["bold", "加粗", Bold], ["strike", "删除线", Strikethrough], ["underline", "下划线", Underline], ["italic", "斜体", Italic] ] as const).map(([key, label, Icon]) => <button key={key} type="button" aria-label={label} aria-pressed={!!currentTextFormat[key]} className={cn("grid size-8 place-items-center rounded hover:bg-hover", currentTextFormat[key] && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ [key]: currentTextFormat[key] ? undefined : true })}><Icon size={16}/></button>)}</div><div className="mt-2 flex gap-1">{([ ["left", "左对齐", AlignLeft], ["center", "居中对齐", AlignCenter], ["right", "右对齐", AlignRight] ] as const).map(([align, label, Icon]) => <button key={align} type="button" aria-label={label} aria-pressed={(currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align} className={cn("grid h-8 flex-1 place-items-center rounded hover:bg-hover", (currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ align })}><Icon size={16}/></button>)}</div></>}
       {mindPaintMenu.kind === "textColor" && <><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="自动文字颜色" className="size-6 rounded border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindStyle({ color: undefined })}>A</button>{MIND_PALETTE.slice(0, 7).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字`} aria-pressed={graph.mindStyles?.[mindSelected]?.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646A73]">背景颜色</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="无文字背景" className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindTextFormat({ highlight: undefined })}/>{MIND_PALETTE.slice(4, 11).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字背景`} aria-pressed={currentTextFormat.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindTextFormat({ highlight: color })}/>)}</div><div className="mt-2 flex gap-3"><label className="relative cursor-pointer text-[#646A73]">自定义文字色<input aria-label="自定义文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646A73]">自定义背景色<input aria-label="自定义文字背景" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentTextFormat.highlight ?? "#fff5c7"} onChange={(event) => updateMindTextFormat({ highlight: event.target.value })}/></label></div></>}
@@ -2424,8 +3040,63 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     {/* 左上：返回 */}
     <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />{mindBoard ? "思维导图" : "流程图"}</button>
 
-    {/* 右上：评论徽标 / 风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
+    {/* 右上：大纲切换 / 投票 / 计时 / 评论徽标 / 风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
     <div className={cn(floatBar, "absolute right-3 top-3 z-20")} data-flow-global-tools>
+      {(hasMindTopics || mindBoard) && (
+        <button
+          type="button"
+          data-mind-view-toggle
+          aria-pressed={mindViewMode === "outline"}
+          aria-label={mindViewMode === "outline" ? t("导图视图") : t("大纲视图")}
+          title={mindViewMode === "outline" ? t("切换回导图视图") : t("切换到大纲视图")}
+          className={cn(barBtn, mindViewMode === "outline" && "bg-[#E1EAFF] text-primary")}
+          onClick={() => setMindViewMode((m) => (m === "outline" ? "canvas" : "outline"))}
+        >
+          {mindViewMode === "outline" ? <Network size={15} /> : <List size={15} />}
+          <span className="hidden md:inline">{mindViewMode === "outline" ? t("导图视图") : t("大纲视图")}</span>
+        </button>
+      )}
+      {!readOnly && (
+        <button
+          type="button"
+          data-board-voting-toggle
+          aria-pressed={votingMode}
+          aria-label={t("团队投票")}
+          title={votingMode ? t("点击任意便利贴或图形投票/取消投票") : t("开启团队投票模式")}
+          className={cn(barBtn, votingMode && "bg-[#E1EAFF] font-medium text-[#3370FF]")}
+          onClick={() => {
+            setVotingMode((v) => {
+              const next = !v;
+              if (next) {
+                setTool("select");
+                setHand(false);
+                setMenu(null);
+              }
+              return next;
+            });
+          }}
+        >
+          <ThumbsUp size={15} />
+          <span className="hidden md:inline">{t("投票")}</span>
+          {totalVotes > 0 && (
+            <span className="rounded-full bg-[#3370FF] px-1.5 py-0.5 text-[10px] font-semibold leading-none text-white">
+              {totalVotes}
+            </span>
+          )}
+        </button>
+      )}
+      <button
+        type="button"
+        data-board-timer-toggle-btn
+        aria-pressed={timerOpen}
+        aria-label={t("倒计时器")}
+        title={t("头脑风暴倒计时")}
+        className={cn(barBtn, timerOpen && "bg-[#E1EAFF] text-[#3370FF]")}
+        onClick={() => setTimerOpen((open) => !open)}
+      >
+        <Timer size={15} />
+        <span className="hidden md:inline">{t("计时")}</span>
+      </button>
       {boardPins.length > 0 && (
         <button
           type="button"
@@ -2509,15 +3180,73 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         onClose={() => setOpenPinId(null)}
       />
     )}
+    {timerOpen && (
+      <div className="absolute right-3 top-16 z-20">
+        <WhiteboardTimer onClose={() => setTimerOpen(false)} />
+      </div>
+    )}
+    {rankedVotes.length > 0 && mindViewMode === "canvas" && (
+      <div
+        data-board-vote-leaderboard
+        onPointerDown={(e) => e.stopPropagation()}
+        className="absolute left-1/2 top-14 z-20 flex max-w-[min(560px,calc(100%-32px))] -translate-x-1/2 items-center gap-1.5 overflow-x-auto rounded-full border border-[#FFD591] bg-[#FFFDF5]/95 px-3 py-1 text-[12px] shadow-sm backdrop-blur-md dark:border-border dark:bg-surface/95"
+      >
+        <ThumbsUp size={13} className="shrink-0 text-[#3370FF]" />
+        <span className="shrink-0 font-medium text-subtle">{t("热门投票")}</span>
+        {rankedVotes.map((item, idx) => (
+          <button
+            key={item.nodeId}
+            type="button"
+            data-board-vote-rank={idx + 1}
+            onClick={() => {
+              const target = graph.nodes.find((n) => n.id === item.nodeId);
+              if (target) {
+                autoFit.current = false;
+                setView((v) => ({ ...v, x: target.x + target.w / 2 - size.w / (2 * v.zoom), y: target.y + target.h / 2 - size.h / (2 * v.zoom) }));
+                setSelected(new Set([target.id]));
+              }
+            }}
+            className="flex shrink-0 items-center gap-1 rounded-full bg-[#EEF3FE] px-2 py-0.5 text-[11px] font-medium text-[#1F2329] hover:bg-[#DCEBFF] dark:bg-hover dark:text-foreground"
+          >
+            <span className="max-w-[96px] truncate">{item.label}</span>
+            <span className="font-semibold text-[#3370FF] tabular-nums">{item.count}</span>
+          </button>
+        ))}
+      </div>
+    )}
     {notice && <div role={notice.ok ? "status" : "alert"} className={cn("absolute left-1/2 top-16 z-20 max-w-[520px] -translate-x-1/2 rounded-md border bg-surface px-3 py-1.5 text-[12px] shadow", notice.ok ? "text-[#1F2329]" : "text-destructive")}>{notice.text}<button type="button" className="ml-2 text-subtle" onClick={() => setNotice(null)}>×</button></div>}
 
     {recovery.length > 0 && <div className="pointer-events-none absolute right-0 top-16 z-[95] flex justify-center px-3" style={{ left: !readOnly && library && !compact ? 260 : 0 }}><div ref={recoveryBannerRef} role="alert" className="pointer-events-auto flex w-full max-w-[480px] items-center gap-2 rounded-lg border border-[#ffd591] bg-[#fff7e6] px-3 py-2 text-[12px] text-[#7a4b00] shadow-md"><span>{recovery.some((item) => item.conflicts.includes("permission") || item.conflicts.includes("document")) ? "文档状态或编辑权限已变化" : "协作者修改了同一对象"}，部分操作未应用；原输入已暂存。</span><button type="button" className="ml-auto shrink-0 underline" onClick={() => setRecoveryOpen(true)}>查看未应用内容</button></div></div>}
     {recoveryOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label={mindBoard ? "未应用的思维导图内容" : "未应用的流程图内容"}><div ref={recoveryDialogRef} className="max-h-[calc(100dvh-32px)] w-full max-w-[560px] overflow-y-auto rounded-xl border bg-surface p-4 shadow-xl"><h2 className="text-[16px] font-semibold">{mindBoard ? "未应用的思维导图内容" : "未应用的流程图内容"}</h2><p className="mt-2 text-[13px] text-subtle">请复制保留文字，或下载完整备份，再根据最新画布重新操作。关闭编辑器会丢失这些暂存内容。</p><textarea aria-label="未应用内容" readOnly value={describeUnappliedFlows(recovery)} className="mt-3 h-40 w-full select-text rounded-md border bg-surface p-3 text-[13px] outline-none"/><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => download(mindBoard ? "思维导图未应用内容.json" : "流程图未应用内容.json", new Blob([JSON.stringify({ version: 1, attempts: recovery }, null, 2)], { type: "application/json" }))}>下载完整备份</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => setRecoveryOpen(false)}>继续编辑</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); }}>已保留，清除暂存</button><button type="button" className="rounded-md bg-[#d83931] px-3 py-1.5 text-[13px] text-white" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); onClose(); }}>丢弃并退出</button></div></div></div>}
 
-    {/* 右下：撤销重做、缩放 */}
+    {/* 右下：缩略图导航 + 撤销重做、缩放 */}
+    {minimapOpen && mindViewMode === "canvas" && (
+      <div className="absolute bottom-16 right-4 z-20">
+        <WhiteboardMinimap
+          graph={renderedGraph}
+          frames={frames}
+          mindStructure={mindStructure}
+          mindCollapsed={effectiveCollapsed}
+          view={view}
+          viewportSize={size}
+          onPanTo={(wx, wy) => {
+            autoFit.current = false;
+            setView((v) => ({
+              ...v,
+              x: wx - size.w / (2 * v.zoom),
+              y: wy - size.h / (2 * v.zoom),
+            }));
+          }}
+          onClose={() => setMinimapOpen(false)}
+        />
+      </div>
+    )}
     <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">
       {!readOnly && <div className={floatBar}><button type="button" className={railBtn} title="撤销" disabled={!undo.length} onClick={doUndo}><Undo2 size={16} /></button><button type="button" className={railBtn} title="重做" disabled={!redo.length} onClick={doRedo}><Redo2 size={16} /></button></div>}
       <div className={floatBar}>
+        {mindViewMode === "canvas" && (
+          <button type="button" className={cn(railBtn, minimapOpen && "bg-[#E1EAFF] text-primary")} title={t("缩略图导航")} aria-label={t("缩略图导航")} aria-pressed={minimapOpen} onClick={() => setMinimapOpen((v) => !v)} data-board-minimap-toggle><MapIcon size={16} /></button>
+        )}
         <button type="button" className={cn(railBtn, hand && "bg-[#E1EAFF] text-primary")} title="抓手（拖动画布，也可按住空格）" onClick={() => setHand(!hand)} data-flow-hand><Hand size={16} /></button>
         <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
         <button type="button" className={railBtn} title="缩小" onClick={() => { autoFit.current = false; setView((v) => ({ ...v, zoom: Math.max(0.2, v.zoom / 1.2) })); }}><Minus size={16} /></button>
