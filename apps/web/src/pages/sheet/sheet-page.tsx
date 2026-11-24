@@ -31,6 +31,7 @@ import { t, useI18n } from "@/lib/i18n";
 import { colorFor } from "@/lib/presence";
 import { Avatar } from "@/components/brand";
 import { ShareDialog } from "@/components/share-dialog";
+import { DocumentWatermark } from "@/components/document-watermark";
 import { SheetColorIcon } from "@/components/feishu-icons";
 import { ask, askText } from "@/components/ui/ask";
 import { ResourceTypeNotice } from "@/pages/resource-type-notice";
@@ -1892,11 +1893,11 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   return (
     <div className={`relative flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white text-[#1f2329] ${fullscreen ? "fixed inset-0 z-50" : "h-dvh"}`} data-sheet-page={sheetId}>
       {/* Header matching Feishu spreadsheet chrome */}
-      <header className="flex h-14 min-w-0 shrink-0 items-center gap-2 border-b border-[#e5e6eb] pl-14 pr-3 sm:pr-5 md:pl-4">
+      <header className="flex h-14 min-w-0 shrink-0 items-center gap-1.5 border-b border-[#e5e6eb] pl-14 pr-2 sm:gap-2 sm:pr-5 md:pl-4">
         <button type="button" aria-label={t("返回主页")} title={t("返回主页")} onClick={() => go("#/")} className="hidden size-8 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:grid">
           <Home size={16} />
         </button>
-        <SheetColorIcon className="size-6 shrink-0" />
+        <SheetColorIcon className="size-5 shrink-0 sm:size-6" />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 items-center gap-1 text-[13px] text-[#646a73]">
             <span className="hidden truncate sm:inline">{rootLabel}</span>
@@ -1918,7 +1919,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   if (e.key === "Enter") void handleRenameWorkbookTitle();
                   if (e.key === "Escape") setEditingTitle(false);
                 }}
-                className="h-6 min-w-28 max-w-64 rounded border border-[#3370ff] px-1.5 text-[14px] font-medium text-[#1f2329] outline-none"
+                className="h-6 min-w-0 max-w-full flex-1 rounded border border-[#3370ff] px-1.5 text-[14px] font-medium text-[#1f2329] outline-none sm:min-w-28 sm:max-w-64 sm:flex-none"
               />
             ) : (
               <button
@@ -1929,7 +1930,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                   setTitleDraft(titleText);
                   setEditingTitle(true);
                 }}
-                className="truncate rounded px-1 text-left text-[14px] font-medium text-[#1f2329] hover:bg-[#f2f3f5]"
+                className="min-w-0 truncate rounded px-1 text-left text-[14px] font-medium text-[#1f2329] hover:bg-[#f2f3f5]"
               >
                 {titleText}
               </button>
@@ -1938,9 +1939,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               <Pin size={13} />
             </button>
           </div>
-          <div className="mt-0.5 flex items-center gap-2 text-[11px] text-[#8f959e]">
-            <span data-sheet-save-status>{savingCount > 0 ? t("正在保存…") : canEdit ? t("已经保存到云端") : t("只读权限")}</span>
-            {formatBrush && <span className="rounded bg-[#edf3ff] px-1.5 text-[#3370ff]">{t("格式刷激活：点击单元格应用样式")}</span>}
+          <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-[#8f959e]">
+            <span data-sheet-save-status className="truncate">{savingCount > 0 ? t("正在保存…") : canEdit ? t("已经保存到云端") : t("只读权限")}</span>
+            {formatBrush && <span className="truncate rounded bg-[#edf3ff] px-1.5 text-[#3370ff]">{t("格式刷激活：点击单元格应用样式")}</span>}
           </div>
         </div>
 
@@ -1955,12 +1956,14 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         <button
           ref={shareBtnRef}
           type="button"
+          aria-label={t("分享")}
+          title={t("分享")}
           onClick={() => setShareOpen(true)}
           data-sheet-share
-          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-[#1456f0] px-3 text-[13px] font-medium text-white hover:bg-[#0e46cc]"
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-[#1456f0] px-2.5 text-[13px] font-medium text-white hover:bg-[#0e46cc] sm:px-3"
         >
           <Share2 size={14} />
-          <span>{t("分享")}</span>
+          <span className="hidden sm:inline">{t("分享")}</span>
         </button>
 
         {onGlobalSearch && (
@@ -1969,7 +1972,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           </button>
         )}
 
-        <div ref={moreMenuRef} className="relative">
+        <div ref={moreMenuRef} className="relative shrink-0">
           <button type="button" aria-label={t("更多操作")} aria-expanded={moreMenuOpen} onClick={() => setMoreMenuOpen((v) => !v)} className="grid size-8 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5]">
             <MoreHorizontal size={17} />
           </button>
@@ -1983,7 +1986,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           )}
         </div>
 
-        <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={28} title={me.user.name} />
+        <span className="hidden shrink-0 sm:inline-flex">
+          <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={28} title={me.user.name} />
+        </span>
       </header>
 
       <input
@@ -2068,7 +2073,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       )}
 
       {/* Name Box + fx + Formula Bar */}
-      <div className="relative flex h-[30px] min-w-0 shrink-0 items-center border-b border-[#e5e6eb] bg-white text-[12px]">
+      <div className="relative flex h-[34px] min-w-0 shrink-0 items-center border-b border-[#e5e6eb] bg-white text-[12px] sm:h-[30px]">
         <input
           aria-label={t("单元格名称框")}
           data-sheet-address
@@ -2091,7 +2096,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
               }
             }
           }}
-          className="h-full w-16 shrink-0 border-r border-[#eef0f3] px-2 text-center text-[#4b5058] outline-none focus:bg-[#f5f7ff]"
+          className="h-full w-12 shrink-0 border-r border-[#eef0f3] px-1.5 text-center text-[#4b5058] outline-none focus:bg-[#f5f7ff] sm:w-16 sm:px-2"
         />
         <div className="relative flex shrink-0 items-center">
           <button
@@ -2105,7 +2110,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             fx
           </button>
           {fxMenuOpen && (
-            <div role="menu" className="absolute left-0 top-7 z-50 max-h-64 w-64 overflow-y-auto rounded-md border border-[#dee0e3] bg-white py-1 shadow-lg">
+            <div role="menu" className="absolute left-0 top-7 z-50 max-h-64 w-64 max-w-[calc(100vw-16px)] overflow-y-auto rounded-md border border-[#dee0e3] bg-white py-1 shadow-lg">
               {FORMULA_QUICK_LIST.map((fn) => (
                 <button
                   key={fn.name}
@@ -2800,38 +2805,48 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       </div>
 
       {activePanel && (
-        <SheetSidePanel
-          mode={activePanel}
-          onChangeMode={setActivePanel}
-          onClose={() => setActivePanel(null)}
-          sheets={sheets}
-          activeSheet={activeSheet}
-          evaluatedWorkbook={evaluatedWorkbook}
-          selectionBoundsRect={selectionBounds(selection)}
-          focusedPoint={selection.focus}
-          userId={userId}
-          role={role}
-          canEdit={canEdit}
-          canComment={canComment}
-          comments={allComments}
-          rowPosById={gridMap.rowPosById}
-          colPosById={gridMap.colPosById}
-          shareMembers={sharesQuery.data?.members ?? []}
-          editingChartId={selectedChartId}
-          onSelectEditingChart={setSelectedChartId}
-          onSelectRange={(rect) => {
-            setSelection({ anchor: { row: rect.top, col: rect.left }, focus: { row: rect.bottom, col: rect.right } });
-          }}
-          onUpdateValidations={handleUpdateValidations}
-          onUpdateCondFormats={handleUpdateCondFormats}
-          onUpdateProtectedRanges={handleUpdateProtectedRanges}
-          onUpdateCharts={handleUpdateCharts}
-          onUpdatePivotTables={handleUpdatePivotTables}
-          onMaterializePivot={handleMaterializePivot}
-          onCreateComment={handleCreateComment}
-          onToggleResolveComment={handleToggleResolveComment}
-          onDeleteComment={handleDeleteComment}
-        />
+        <>
+          <div className="fixed inset-0 z-30 bg-black/25 md:hidden" aria-hidden="true" onClick={() => setActivePanel(null)} />
+          <div
+            data-sheet-panel-overlay
+            className={`fixed inset-y-0 right-0 z-40 flex w-[min(100vw,360px)] shadow-xl md:static md:z-auto md:w-auto md:shrink-0 md:shadow-none [&>aside]:static [&>aside]:w-full [&>aside]:shadow-none ${
+              activePanel === "pivot" ? "md:[&>aside]:w-[400px]" : "md:[&>aside]:w-80"
+            }`}
+          >
+            <SheetSidePanel
+              mode={activePanel}
+              onChangeMode={setActivePanel}
+              onClose={() => setActivePanel(null)}
+              sheets={sheets}
+              activeSheet={activeSheet}
+              evaluatedWorkbook={evaluatedWorkbook}
+              selectionBoundsRect={selectionBounds(selection)}
+              focusedPoint={selection.focus}
+              userId={userId}
+              role={role}
+              canEdit={canEdit}
+              canComment={canComment}
+              comments={allComments}
+              rowPosById={gridMap.rowPosById}
+              colPosById={gridMap.colPosById}
+              shareMembers={sharesQuery.data?.members ?? []}
+              editingChartId={selectedChartId}
+              onSelectEditingChart={setSelectedChartId}
+              onSelectRange={(rect) => {
+                setSelection({ anchor: { row: rect.top, col: rect.left }, focus: { row: rect.bottom, col: rect.right } });
+              }}
+              onUpdateValidations={handleUpdateValidations}
+              onUpdateCondFormats={handleUpdateCondFormats}
+              onUpdateProtectedRanges={handleUpdateProtectedRanges}
+              onUpdateCharts={handleUpdateCharts}
+              onUpdatePivotTables={handleUpdatePivotTables}
+              onMaterializePivot={handleMaterializePivot}
+              onCreateComment={handleCreateComment}
+              onToggleResolveComment={handleToggleResolveComment}
+              onDeleteComment={handleDeleteComment}
+            />
+          </div>
+        </>
       )}
       </div>
 
@@ -2843,12 +2858,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
           : SHEET_STARTER_TEMPLATES;
         return (
           <div
-            className="pointer-events-none absolute inset-x-0 bottom-12 z-20 flex justify-center px-4"
+            className="pointer-events-none absolute inset-x-0 bottom-12 z-20 flex justify-center px-3 sm:px-4"
             data-sheet-templates
           >
-            <div className="pointer-events-auto w-full max-w-[660px] rounded-xl bg-white/90 p-3 backdrop-blur-[2px]">
-              <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="flex h-8 w-64 items-center gap-1.5 rounded-md border border-[#dee0e3] bg-white px-2.5 text-[12px] text-[#8f959e] focus-within:border-[#3370ff]">
+            <div className="pointer-events-auto max-h-[55dvh] w-full max-w-[660px] overflow-y-auto rounded-xl bg-white/95 p-3 shadow-sm backdrop-blur-[2px] sm:max-h-none sm:overflow-visible sm:bg-white/90 sm:shadow-none">
+              <div className="mb-3 flex items-center justify-between gap-2 sm:gap-3">
+                <div className="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-md border border-[#dee0e3] bg-white px-2.5 text-[12px] text-[#8f959e] focus-within:border-[#3370ff] sm:w-64 sm:flex-none">
                   <Search size={13} className="shrink-0" />
                   <input
                     value={templateQuery}
@@ -2929,7 +2944,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
       {/* Find & Replace Dialog */}
       {findOpen && (
-        <div className="fixed right-6 top-36 z-50 w-72 rounded-lg border border-[#dee0e3] bg-white p-3.5 shadow-xl" role="dialog" aria-label={t("查找和替换")}>
+        <div className="fixed right-2 top-28 z-50 w-[min(18rem,calc(100vw-16px))] rounded-lg border border-[#dee0e3] bg-white p-3.5 shadow-xl sm:right-6 sm:top-36 sm:w-72" role="dialog" aria-label={t("查找和替换")}>
           <div className="flex items-center justify-between text-[13px] font-medium">
             <span>{t("查找和替换")}</span>
             <button type="button" onClick={() => setFindOpen(false)}><X size={15} /></button>
@@ -3007,6 +3022,12 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       {shareOpen && meta.data && (
         <ShareDialog meta={meta.data as DocMeta} userId={userId} anchorRef={shareBtnRef} onClose={() => setShareOpen(false)} />
       )}
+      <DocumentWatermark
+        workspaceId={meta.data?.workspaceId}
+        userName={me.user.name}
+        userEmail={me.user.email}
+        copyProtected={!!meta.data?.copyProtected}
+      />
     </div>
   );
 }

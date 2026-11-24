@@ -33,6 +33,7 @@ import { DocWidthOptions } from "./doc-width-options";
 import { DocReactionsBar } from "./doc-reactions";
 import { computeHeadingNumbers } from "@/editor/doc-outline-fold";
 import { DocumentInfoDialog } from "./document-info-dialog";
+import { DocumentWatermark } from "@/components/document-watermark";
 import { documentTextStats } from "./doc-info-stats";
 import { cn } from "@/lib/utils";
 import { NotificationBell } from "./notification-bell";
@@ -1629,6 +1630,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           <div className="flex min-h-full flex-col">
           <div className={cn("flex flex-1", showTemplates && "min-h-full")}>
           {outline.length > 0 && <OutlineTrigger hostRef={scrollArea} buttonRef={outlineTrigger} panelId={outlinePanelId} expanded={outlineVisible} yieldToSidePanel={(commentsAvailable && commentsOpen) || !!history} onToggle={() => setOutlineOpen((value) => !value)} />}
+          {outlineVisible && !outlineWide && (
+            <div className="fixed inset-0 z-[35] bg-black/25 md:hidden" aria-hidden="true" onClick={() => { setOutlineOpen(false); focusOutlineEntry(); }} />
+          )}
           {outlineVisible && (
             <OutlinePanel
               id={outlinePanelId}
@@ -1651,7 +1655,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
             />
           )}
           <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent && !prefs.locked} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} data-doc-font={prefs.fontFamily} data-doc-fontsize={prefs.fontSize} className={cn("mx-auto w-full px-7 sm:px-16", docWidthClass(width), docFontFamilyClass(prefs.fontFamily), docFontSizeClass(prefs.fontSize), hasCover ? "pt-8" : "pt-12 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-36")}>
+          <DocumentCover key={`${me.user.id}:${id}`} id={id} userId={me.user.id} visible={metadataVerified} enabled={canEditContent && !prefs.locked} hasIcon={!!displayDocumentIcon(meta.data?.icon)} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onRevalidate={() => { void meta.refetch(); }}>{({ addButton, hasCover }) => <article data-document-focus-scope data-print-doc={downloadAllowed ? "1" : undefined} data-document-print-restricted={!downloadAllowed ? "true" : undefined} data-doc-wide={width !== "default" ? "true" : undefined} data-doc-width={width} data-doc-font={prefs.fontFamily} data-doc-fontsize={prefs.fontSize} className={cn("mx-auto w-full px-4 sm:px-16", docWidthClass(width), docFontFamilyClass(prefs.fontFamily), docFontSizeClass(prefs.fontSize), hasCover ? "pt-6 sm:pt-8" : "pt-8 sm:pt-14", showTemplates ? "flex min-h-full flex-col pb-12" : "pb-36")}>
             {downloadAllowed && printSettings.showHeader && (printSettings.headerText.trim() || title.trim()) && (
               <div data-doc-print-header className="mb-5 border-b border-[#DEE0E3] pb-2 text-[11px] text-[#646A73]">
                 <div className="flex items-center justify-between gap-4">
@@ -1677,9 +1681,9 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
               findMatches={displayedMatches}
               activeFindMatch={activeMatch}
               onEnter={() => body.current?.querySelector<HTMLElement>("[data-editor]")?.focus()}
-              className="text-[32px] font-medium leading-[1.3] tracking-tight [&_textarea]:font-medium [&_textarea]:leading-[1.3]"
+              className="text-[24px] font-medium leading-[1.3] tracking-tight sm:text-[32px] [&_textarea]:font-medium [&_textarea]:leading-[1.3]"
             /></DocumentIconEditor>{metadataVerified && meta.data && <DocAuthorLine name={meta.data.creatorName} seed={meta.data.creatorId} updatedAt={meta.data.updatedAt} />}</div>
-            <div ref={body} className="mt-8" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
+            <div ref={body} className="mt-5 sm:mt-8" data-document-print-restricted={!downloadAllowed ? "true" : undefined}>
               <Editor
                 sync={sync}
                 userId={me.user.id}
@@ -1805,7 +1809,7 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           {showReferences && <div className="flex shrink-0">
             {outlineVisible && <div aria-hidden="true" className={cn("hidden xl:block xl:shrink-0", outlinePinned ? "xl:w-[248px]" : "xl:w-14", ((commentsAvailable && commentsOpen) || history) && "xl:hidden min-[1680px]:block")} />}
             <div className={cn("min-w-0 flex-1", outlineVisible && !((commentsAvailable && commentsOpen) || history) && (outlinePinned ? "min-[1456px]:pr-[248px]" : "xl:pr-14"))}>
-              <div data-document-focus-scope data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full px-7 pb-16 sm:px-16", docWidthClass(width))}>
+              <div data-document-focus-scope data-document-print-restricted={!downloadAllowed ? "true" : undefined} className={cn("mx-auto w-full px-4 pb-16 sm:px-16", docWidthClass(width))}>
                 <DocumentReferencesPanel key={`${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} docType={meta.data?.docType} enabled={permissionsVerified} synced={sync.caughtUp && sync.status === "synced" && sync.client.unacked === 0} syncVersion={sync.version} allowCopy={contentCopyAllowed} hideWhenEmpty={!referencesPinnedOpen} onHide={canEditContent ? async () => { const ok = await changeReferenceVisibility(false); if (ok) setReferencesPinnedOpen(false); return ok; } : undefined} hiding={referenceVisibilityBusy} />
               </div>
             </div>
@@ -1842,25 +1846,38 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
       </div>
       {presenting && metadataVerified && meta.data && sync.client.doc && <DocumentPresentation key={`presentation:${me.user.id}:${id}`} id={id} userId={me.user.id} title={title} icon={meta.data.icon} view={sync.client.doc.view()} synced={sync.status === "synced" && sync.caughtUp && sync.client.unacked === 0} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} commentsOpen={commentsAvailable && commentsOpen} onComments={commentsAvailable ? toggleComments : undefined} onRevalidate={() => { void meta.refetch(); }} onClose={closePresentation} commentDoc={sync.client.doc} comments={commentsAvailable ? comments.data ?? [] : []} activeThread={activeThread} contentRef={presentationBody} onActivateComment={commentsAvailable ? (thread) => { pendingCommentScroll.current = null; setActiveThread(thread); setCommentsTarget({ doc: id, user: me.user.id, session: commentSession }); } : undefined}>{commentsPanel}</DocumentPresentation>}
       {preview && <AttachmentPreview src={preview.src} name={preview.alt} mime={preview.mime} allowCopy={contentCopyAllowed} allowPrint={downloadAllowed} onClose={() => setPreview(null)} />}
-      {aiOpen && runAI && <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />}
+      {aiOpen && runAI && (
+        <>
+          <div className="fixed inset-0 z-[35] bg-black/25 md:hidden" aria-hidden="true" onClick={() => setAiOpen(false)} />
+          <DocAIPanel title={title} body={docMarkdown} ai={runAI} canInsert={canEditContent} onInsert={appendMarkdown} onClose={() => setAiOpen(false)} />
+        </>
+      )}
       {suggestionsOpen && metadataVerified && (
-        <SuggestionPanel
-          suggestions={suggestionsList}
-          blocks={suggestionBlocks}
-          currentUserId={me.user.id}
-          canEdit={canEditRole}
-          canManage={meta.data?.role === "manage"}
-          canSuggest={canSuggest}
-          suggestMode={docMode === "suggest"}
-          busy={suggestionBusy}
-          onCreate={handleCreateSuggestion}
-          onAccept={handleAcceptSuggestion}
-          onReject={handleRejectSuggestion}
-          onWithdraw={handleWithdrawSuggestion}
-          onAcceptAll={handleAcceptAllSuggestions}
-          onRejectAll={handleRejectAllSuggestions}
-          onClose={() => setSuggestionsOpen(false)}
-        />
+        <>
+          <div className="fixed inset-0 z-[35] bg-black/25 md:hidden" aria-hidden="true" onClick={() => setSuggestionsOpen(false)} />
+          <div
+            data-doc-side-overlay="suggestions"
+            className="fixed inset-y-0 right-0 z-40 flex w-[min(100vw,360px)] shadow-xl md:static md:z-auto md:w-auto md:shadow-none [&>aside]:w-full md:[&>aside]:w-[340px]"
+          >
+            <SuggestionPanel
+              suggestions={suggestionsList}
+              blocks={suggestionBlocks}
+              currentUserId={me.user.id}
+              canEdit={canEditRole}
+              canManage={meta.data?.role === "manage"}
+              canSuggest={canSuggest}
+              suggestMode={docMode === "suggest"}
+              busy={suggestionBusy}
+              onCreate={handleCreateSuggestion}
+              onAccept={handleAcceptSuggestion}
+              onReject={handleRejectSuggestion}
+              onWithdraw={handleWithdrawSuggestion}
+              onAcceptAll={handleAcceptAllSuggestions}
+              onRejectAll={handleRejectAllSuggestions}
+              onClose={() => setSuggestionsOpen(false)}
+            />
+          </div>
+        </>
       )}
       {sharing && metadataVerified && meta.data && <ShareDialog meta={meta.data} userId={me.user.id} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
       {printOpen && downloadAllowed && (
@@ -1918,24 +1935,27 @@ export function DocPage({ id, linkedVersion, me, sidebarDocked = false, onGlobal
           onClose={() => { setHistory(null); if (linkedVersion !== undefined) location.hash = withoutVersionHash(location.hash); }}
         />
       )}
-      {meta.data?.copyProtected && (
-        <div
-          className="pointer-events-none fixed inset-0 z-50 select-none overflow-hidden"
-          data-watermark
-          aria-hidden
-        >
-          {Array.from({ length: 24 }, (_, i) => (
-            <span
-              key={i}
-              className="absolute whitespace-nowrap text-[13px] text-[#1f2329]/[0.06] dark:text-white/[0.05]"
-              style={{ left: `${(i % 6) * 20 + 4}%`, top: `${Math.floor(i / 6) * 25 + 8}%`, transform: "rotate(-24deg)" }}
-            >
-              {me.user.name} {me.user.email}
-            </span>
-          ))}
-        </div>
+      <DocumentWatermark
+        workspaceId={meta.data?.workspaceId}
+        userName={me.user.name}
+        userEmail={me.user.email}
+        copyProtected={!!meta.data?.copyProtected}
+      />
+      {!presenting && commentsPanel && (
+        <>
+          <div
+            className="fixed inset-0 z-[35] bg-black/25 md:hidden"
+            aria-hidden="true"
+            onClick={() => {
+              freezeCommentDrafts();
+              setCommentsTarget(null);
+              setDraft(null);
+              setActiveThread(null);
+            }}
+          />
+          {commentsPanel}
+        </>
       )}
-      {!presenting && commentsPanel}
     </div>
   );
 }
@@ -2069,15 +2089,15 @@ function TopBar({
           {meta?.kind === "base" ? <BaseIcon /> : <DocumentGlyph icon={meta?.icon} fallback={isBoardDoc(meta) ? <WhiteboardIcon className="size-4 text-[#34c759]" /> : <DocIcon />} />}
         </span>
         {ancestors.map((a, i) => (
-          <span key={a.id} className="flex min-w-0 items-center gap-1.5">
+          <span key={a.id} className="hidden min-w-0 items-center gap-1.5 sm:flex">
             <ChevronRight size={13} className={cn("shrink-0 text-subtle", i === 0 && "hidden sm:block")} aria-hidden />
             <a href={hrefOf(a)} className="truncate text-muted-foreground hover:text-foreground">
               {docTitle(a)}
             </a>
           </span>
         ))}
-        <ChevronRight size={13} className={cn("shrink-0 text-subtle", !ancestors.length && "hidden sm:block")} aria-hidden />
-        <span className="truncate font-medium text-foreground">{meta ? docTitle({ title, docType: meta.docType }) : "…"}</span>
+        <ChevronRight size={13} className="hidden shrink-0 text-subtle sm:block" aria-hidden />
+        <span className="min-w-0 flex-1 truncate font-medium text-foreground">{meta ? docTitle({ title, docType: meta.docType }) : "…"}</span>
         {metadataVerified && meta && <StarButton docId={meta.id} />}
       </nav>
       <span className="hidden items-center gap-1 text-[11px] text-subtle sm:flex" data-status={draftConflict ? "blocked" : status} data-header-meta title={metaTitle}><span className="size-1.5 rounded-full" style={{ background: draftConflict || directorySync === "blocked" ? "#D83931" : directorySync === "pending" ? "#FF8800" : s.color }} />{metaText}</span>
@@ -2089,12 +2109,12 @@ function TopBar({
             <Lock size={12} />已锁定
           </button>
         )}
-        <Button ref={shareAnchor} size="sm" disabled={!meta || !metadataVerified} className="h-8 gap-1.5 bg-[#3370ff] px-3 text-[13px] font-medium text-white hover:bg-[#245bdb]" onClick={onShare}>
+        <Button ref={shareAnchor} size="sm" disabled={!meta || !metadataVerified} className="h-8 gap-1.5 bg-[#3370ff] px-2.5 text-[13px] font-medium text-white hover:bg-[#245bdb] sm:px-3" onClick={onShare}>
           <BuildingIcon className="size-4" />分享
         </Button>
         {!readOnly && <ModeMenu mode={docMode} onChange={onDocModeChange} />}
         <NotificationBell onOpenDoc={(notification) => navigateDocumentHash(mentionNotificationHash(notification))} />
-        <DocMenu userId={userId} onAI={onAI} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} prefs={prefs} onPrefsChange={onPrefsChange} canLock={canLock} onComments={onComments} onFind={onFind} onPrint={onPrint} />
+        <DocMenu userId={userId} onAI={onAI} onToggleSuggestions={onToggleSuggestions} onSaveTemplate={onSaveTemplate} meta={metadataVerified ? meta : undefined} onHistory={metadataVerified ? onHistory : undefined} onSavedVersions={metadataVerified ? onSavedVersions : undefined} onPresentation={metadataVerified ? onPresentation : undefined} onCreateVersion={metadataVerified ? onCreateVersion : undefined} onTitleCheck={metadataVerified ? onTitleCheck : undefined} onDocumentInfo={metadataVerified ? onDocumentInfo : undefined} onMentionedPeople={metadataVerified ? onMentionedPeople : undefined} onCommentHistory={metadataVerified ? onCommentHistory : undefined} onExport={onExport} onImport={onImport} onOutline={onOutline} onShowReferences={onShowReferences} width={width} onWidthChange={onWidthChange} prefs={prefs} onPrefsChange={onPrefsChange} canLock={canLock} onComments={onComments} onFind={onFind} onPrint={onPrint} />
         <span className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <button onClick={onGlobalSearch} title="搜索文档" aria-label="搜索文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover lg:grid"><SearchIcon className="size-[17px]" /></button>
         <button onClick={onCreate} disabled={creating} title="新建文档" aria-label="新建文档" className="hidden size-8 place-items-center rounded-md text-muted-foreground hover:bg-hover disabled:opacity-50 lg:grid"><AddIcon className="size-[18px]" /></button>
@@ -2133,7 +2153,7 @@ function ModeMenu({ mode, onChange }: { mode: "edit" | "suggest" | "read"; onCha
   const label = mode === "read" ? "阅读" : mode === "suggest" ? "建议" : "编辑";
   const aria = mode === "read" ? "阅读模式" : mode === "suggest" ? "修订建议模式" : "编辑模式";
   return <div ref={ref} className="relative">
-    <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu" aria-label={aria} data-doc-mode-trigger className={cn("flex h-9 items-center gap-1 rounded-md border px-2 text-[13px] hover:bg-hover sm:h-8 sm:px-2.5", mode === "suggest" ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "text-foreground")}>{mode === "suggest" ? <FileEdit size={14} /> : <EditIcon className="size-[14px]" />}<span className="hidden min-[380px]:inline">{label}</span><DownBoldIcon className={cn("size-3 transition-transform", open && "rotate-180")} /></button>
+    <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-haspopup="menu" aria-label={aria} data-doc-mode-trigger className={cn("flex h-8 items-center gap-1 rounded-md border px-2 text-[13px] hover:bg-hover sm:px-2.5", mode === "suggest" ? "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300" : "text-foreground")}>{mode === "suggest" ? <FileEdit size={14} /> : <EditIcon className="size-[14px]" />}<span className="hidden sm:inline">{label}</span><DownBoldIcon className={cn("size-3 transition-transform", open && "rotate-180")} /></button>
     {open && <div role="menu" className="absolute right-0 top-9 z-30 w-[216px] rounded-md border bg-surface p-1 shadow-lg">
       {([
         { value: "edit", label: "编辑", description: "直接编辑文档内容", icon: <EditIcon className="size-[15px]" /> },
@@ -2220,6 +2240,7 @@ function DocMenu({
   onComments,
   onFind,
   onAI,
+  onToggleSuggestions,
   onSaveTemplate,
 }: {
   userId: number;
@@ -2243,6 +2264,7 @@ function DocMenu({
   canLock?: boolean;
   onPrint: () => void;
   onAI?: () => void;
+  onToggleSuggestions?: () => void;
   onSaveTemplate?: () => void;
   onComments: () => void;
   onFind: () => void;
@@ -2342,6 +2364,7 @@ function DocMenu({
             <button className={row} onClick={() => { close(); onOutline(); }} data-outline><ListTree size={15} className={icon} />目录</button>
             {onShowReferences && <button className={row} onClick={() => { close(); onShowReferences(); }} data-show-references><Link2 size={15} className={icon} />显示双向链接</button>}
             {onAI && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onAI(); }}><Sparkles size={15} className={icon} />AI 助手</button>}
+            {onToggleSuggestions && <button className={cn(row, "sm:hidden")} onClick={() => { close(); onToggleSuggestions(); }}><FileEdit size={15} className={icon} />修订建议</button>}
             <button className={cn(row, "sm:hidden")} onClick={() => { close(); onComments(); }}><MessageSquare size={15} className={icon} />评论</button>
           </div>
           {meta && <div className={group}>

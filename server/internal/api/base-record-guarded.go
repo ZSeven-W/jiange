@@ -61,12 +61,16 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 		return
 	}
 	if operation == "add" {
-		if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, in.TableID, nil, []map[string]json.RawMessage{in.Cells}, nil) {
+		if !s.checkBaseRecordOpPolicy(w, r, b, u.ID, "add", in.TableID, nil, []map[string]json.RawMessage{in.Cells}, nil) {
 			return
 		}
 	} else {
 		rid := pathID(r, "rid")
-		if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, in.TableID, []int64{rid}, []map[string]json.RawMessage{in.Cells}, []map[string]json.RawMessage{in.Expected}) {
+		policyOp := "update"
+		if operation == "delete" {
+			policyOp = "delete"
+		}
+		if !s.checkBaseRecordOpPolicy(w, r, b, u.ID, policyOp, in.TableID, []int64{rid}, []map[string]json.RawMessage{in.Cells}, []map[string]json.RawMessage{in.Expected}) {
 			return
 		}
 	}
@@ -135,7 +139,7 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 // GET before returning anything to the client.
 func (s *Server) writeProjectedRecord(w http.ResponseWriter, r *http.Request, userID, baseID, recordID int64, status int) {
 	w.Header().Set("Cache-Control", "private, no-store")
-	read, err := s.readProjectionPolicy(r.Context(), userID, baseID)
+	read, err := s.readProjectionPolicyForRequest(r.Context(), r, userID, baseID)
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrForbidden) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "记录已修改，但当前无法查看；请刷新后核对")
 		return
@@ -153,7 +157,7 @@ func (s *Server) writeProjectedRecord(w http.ResponseWriter, r *http.Request, us
 		s.fail(w, r, err)
 		return
 	}
-	if read.policy.onlyOwnRecords && (row.CreatorID == nil || *row.CreatorID != userID) {
+	if !read.policy.allowsRecord(row, userID) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "记录已修改，但当前无法查看；请刷新后核对")
 		return
 	}

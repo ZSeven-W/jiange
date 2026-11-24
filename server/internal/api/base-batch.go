@@ -53,7 +53,7 @@ func (s *Server) batchDeleteBaseRecords(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	u, _ := UserFrom(r.Context())
-	if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, 0, in.IDs, nil, nil) {
+	if !s.checkBaseRecordOpPolicy(w, r, b, u.ID, "delete", 0, in.IDs, nil, nil) {
 		return
 	}
 	deleted, affected, err := s.Store.BatchDeleteRecordsGuarded(r.Context(), guard, b.ID, in.IDs)
@@ -86,7 +86,7 @@ func (s *Server) batchRestoreBaseRecords(w http.ResponseWriter, r *http.Request)
 	}
 	u, _ := UserFrom(r.Context())
 	for _, rec := range in.Records {
-		if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, rec.TableID, nil, []map[string]json.RawMessage{rec.Cells}, nil) {
+		if !s.checkBaseRecordOpPolicy(w, r, b, u.ID, "add", rec.TableID, nil, []map[string]json.RawMessage{rec.Cells}, nil) {
 			return
 		}
 	}
@@ -132,7 +132,7 @@ func (s *Server) batchUpdateBaseRecords(w http.ResponseWriter, r *http.Request) 
 		cellMaps[i] = upd.Cells
 		expectedMaps[i] = upd.Expected
 	}
-	if !s.checkBaseRecordWritePolicy(w, r, b, u.ID, 0, ids, cellMaps, expectedMaps) {
+	if !s.checkBaseRecordOpPolicy(w, r, b, u.ID, "update", 0, ids, cellMaps, expectedMaps) {
 		return
 	}
 	updated, affected, err := s.Store.BatchUpdateCellsGuarded(r.Context(), guard, b.ID, in.Updates, func(fields []store.Field, cells map[string]json.RawMessage) error {

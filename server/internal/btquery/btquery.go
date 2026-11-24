@@ -11,14 +11,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // FieldSpec is the compiler's view of a field (decoupled from the store so
 // both can depend on this package).
 type FieldSpec struct {
-	ID      int64
-	Type    string
-	Options []string
+	ID        int64
+	Type      string
+	Options   []string
+	IsPrimary bool
 }
 
 // Rule is one filter condition. Ops: contains, not_contains, is, is_not,
@@ -39,10 +41,28 @@ type Sort struct {
 	Asc bool  `json:"asc"`
 }
 
-// ViewPermissions defines fine-grained row and field permissions persisted on a shared view.
+// PermissionRole defines a Feishu-style custom permission role scoped to
+// matched users, departments, and/or user groups on a shared view.
+type PermissionRole struct {
+	ID              string            `json:"id"`
+	Name            string            `json:"name"`
+	UserIDs         []int64           `json:"userIds,omitempty"`
+	DeptIDs         []int64           `json:"deptIds,omitempty"`
+	GroupIDs        []int64           `json:"groupIds,omitempty"`
+	CanAddRecord    *bool             `json:"canAddRecord,omitempty"`    // nil = true
+	CanDeleteRecord *bool             `json:"canDeleteRecord,omitempty"` // nil = true
+	RowScope        string            `json:"rowScope,omitempty"`        // "" | "all" | "own" | "filter"
+	RowFilters      *Filters          `json:"rowFilters,omitempty"`      // required/validated when rowScope == "filter"
+	FieldModes      map[string]string `json:"fieldModes,omitempty"`      // fieldId -> edit|readonly|hidden
+	ViewHidden      bool              `json:"viewHidden,omitempty"`      // hides this view from matched role
+}
+
+// ViewPermissions defines fine-grained row, field, and multi-role RBAC
+// permissions persisted on a shared view.
 type ViewPermissions struct {
 	OnlyOwnRecords bool              `json:"onlyOwnRecords,omitempty"`
 	FieldModes     map[string]string `json:"fieldModes,omitempty"`
+	Roles          []PermissionRole  `json:"roles,omitempty"`
 }
 
 // GanttDependency represents a directed finish-to-start task edge persisted on a Gantt view.
@@ -78,6 +98,145 @@ var ops = map[string]bool{
 	"checked": true, "unchecked": true,
 }
 
+// ValidateFilters checks a filter conjunction and its rules against fields.
+func ValidateFilters(fields []FieldSpec, filters Filters) error {
+	byID := make(map[int64]FieldSpec, len(fields))
+	for _, f := range fields {
+		byID[f.ID] = f
+	}
+	return validateFiltersMap(byID, filters)
+}
+
+func validateFiltersMap(byID map[int64]FieldSpec, filters Filters) error {
+	if len(filters.Rules) == 0 {
+		if filters.Conj != "" && filters.Conj != "and" && filters.Conj != "or" {
+			return fmt.Errorf("conj must be and/or")
+		}
+		return nil
+	}
+	if filters.Conj != "and" && filters.Conj != "or" {
+		return fmt.Errorf("conj must be and/or")
+	}
+	for _, r := range filters.Rules {
+		if !ops[r.Op] {
+			return fmt.Errorf("unknown op %q", r.Op)
+		}
+		f, ok := byID[r.F]
+		if !ok {
+			return fmt.Errorf("unknown field %d", r.F)
+		}
+		if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
+			switch r.Op {
+			case "is", "is_not", "gt", "gte", "lt", "lte":
+				value, ok := toFloat(r.V)
+				if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
+					return fmt.Errorf("field %d requires a finite number", r.F)
+				}
+			}
+		}
+		if f.Type == "person" && (r.Op == "contains" || r.Op == "not_contains") {
+			if _, ok := personIDs(r.V); !ok {
+				return fmt.Errorf("field %d requires member id(s)", r.F)
+			}
+		}
+	}
+	return nil
+}
+
+func validateFieldModes(byID map[int64]FieldSpec, modes map[string]string) error {
+	for fidStr, mode := range modes {
+		fid, err := strconv.ParseInt(fidStr, 10, 64)
+		if err != nil || fid <= 0 || strconv.FormatInt(fid, 10) != fidStr {
+			return fmt.Errorf("unknown field %s", fidStr)
+		}
+		spec, ok := byID[fid]
+		if !ok {
+			return fmt.Errorf("unknown field %d", fid)
+		}
+		switch mode {
+		case "edit", "readonly":
+		case "hidden":
+			if spec.IsPrimary {
+				return fmt.Errorf("primary field %d cannot be hidden", fid)
+			}
+		default:
+			return fmt.Errorf("invalid field permission mode %q", mode)
+		}
+	}
+	return nil
+}
+
+func validateRoleSubjectIDs(kind string, ids []int64) error {
+	if len(ids) > 200 {
+		return fmt.Errorf("too many %s in role (max 200)", kind)
+	}
+	seen := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return fmt.Errorf("%s id must be positive", kind)
+		}
+		if seen[id] {
+			return fmt.Errorf("duplicate %s id %d", kind, id)
+		}
+		seen[id] = true
+	}
+	return nil
+}
+
+func validateViewPermissions(fields []FieldSpec, byID map[int64]FieldSpec, perms *ViewPermissions) error {
+	if perms == nil {
+		return nil
+	}
+	if err := validateFieldModes(byID, perms.FieldModes); err != nil {
+		return err
+	}
+	if len(perms.Roles) > 32 {
+		return fmt.Errorf("too many permission roles (max 32)")
+	}
+	seenIDs := make(map[string]bool, len(perms.Roles))
+	for _, r := range perms.Roles {
+		if r.ID == "" || strings.TrimSpace(r.ID) == "" || len(r.ID) > 64 || !utf8.ValidString(r.ID) || strings.ContainsRune(r.ID, 0) {
+			return fmt.Errorf("invalid permission role id")
+		}
+		if seenIDs[r.ID] {
+			return fmt.Errorf("duplicate permission role id %q", r.ID)
+		}
+		seenIDs[r.ID] = true
+
+		name := strings.TrimSpace(r.Name)
+		if name == "" || !utf8.ValidString(r.Name) || strings.ContainsRune(r.Name, 0) || utf8.RuneCountInString(name) > 64 {
+			return fmt.Errorf("invalid permission role name")
+		}
+		if err := validateRoleSubjectIDs("userIds", r.UserIDs); err != nil {
+			return err
+		}
+		if err := validateRoleSubjectIDs("deptIds", r.DeptIDs); err != nil {
+			return err
+		}
+		if err := validateRoleSubjectIDs("groupIds", r.GroupIDs); err != nil {
+			return err
+		}
+		switch r.RowScope {
+		case "", "all", "own", "filter":
+		default:
+			return fmt.Errorf("invalid row scope %q", r.RowScope)
+		}
+		if r.RowScope == "filter" && r.RowFilters != nil {
+			if err := ValidateFilters(fields, *r.RowFilters); err != nil {
+				return fmt.Errorf("role %q rowFilters: %w", r.ID, err)
+			}
+		} else if r.RowFilters != nil && len(r.RowFilters.Rules) > 0 {
+			if err := ValidateFilters(fields, *r.RowFilters); err != nil {
+				return fmt.Errorf("role %q rowFilters: %w", r.ID, err)
+			}
+		}
+		if err := validateFieldModes(byID, r.FieldModes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Validate checks a config against the base's fields.
 func Validate(fields []FieldSpec, cfg Config) error {
 	byID := map[int64]FieldSpec{}
@@ -85,31 +244,8 @@ func Validate(fields []FieldSpec, cfg Config) error {
 		byID[f.ID] = f
 	}
 	if cfg.Filters != nil && len(cfg.Filters.Rules) > 0 {
-		if cfg.Filters.Conj != "and" && cfg.Filters.Conj != "or" {
-			return fmt.Errorf("conj must be and/or")
-		}
-		for _, r := range cfg.Filters.Rules {
-			if !ops[r.Op] {
-				return fmt.Errorf("unknown op %q", r.Op)
-			}
-			if _, ok := byID[r.F]; !ok {
-				return fmt.Errorf("unknown field %d", r.F)
-			}
-			f := byID[r.F]
-			if f.Type == "number" || f.Type == "rating" || f.Type == "person" {
-				switch r.Op {
-				case "is", "is_not", "gt", "gte", "lt", "lte":
-					value, ok := toFloat(r.V)
-					if !ok || math.IsNaN(value) || math.IsInf(value, 0) {
-						return fmt.Errorf("field %d requires a finite number", r.F)
-					}
-				}
-			}
-			if f.Type == "person" && (r.Op == "contains" || r.Op == "not_contains") {
-				if _, ok := personIDs(r.V); !ok {
-					return fmt.Errorf("field %d requires member id(s)", r.F)
-				}
-			}
+		if err := validateFiltersMap(byID, *cfg.Filters); err != nil {
+			return err
 		}
 	}
 	for _, s := range cfg.Sorts {
@@ -132,21 +268,8 @@ func Validate(fields []FieldSpec, cfg Config) error {
 			return fmt.Errorf("unknown field %d", *cfg.EndField)
 		}
 	}
-	if cfg.Permissions != nil {
-		for fidStr, mode := range cfg.Permissions.FieldModes {
-			fid, err := strconv.ParseInt(fidStr, 10, 64)
-			if err != nil || fid <= 0 || strconv.FormatInt(fid, 10) != fidStr {
-				return fmt.Errorf("unknown field %s", fidStr)
-			}
-			if _, ok := byID[fid]; !ok {
-				return fmt.Errorf("unknown field %d", fid)
-			}
-			switch mode {
-			case "edit", "readonly", "hidden":
-			default:
-				return fmt.Errorf("invalid field permission mode %q", mode)
-			}
-		}
+	if err := validateViewPermissions(fields, byID, cfg.Permissions); err != nil {
+		return err
 	}
 	if len(cfg.GanttDeps) > 500 {
 		return fmt.Errorf("too many gantt dependencies (max 500)")

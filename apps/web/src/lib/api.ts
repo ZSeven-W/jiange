@@ -260,6 +260,27 @@ export interface RecordHistoryEntry {
   actor?: { kind: "user" | "form"; id?: number; name?: string };
   changes: { f: number; before?: Cell; after?: Cell }[];
 }
+export interface BasePermissionRole {
+  id: string;
+  name: string;
+  userIds?: number[];
+  deptIds?: number[];
+  groupIds?: number[];
+  canAddRecord?: boolean;
+  canDeleteRecord?: boolean;
+  rowScope?: "all" | "own" | "filter";
+  rowFilters?: { conj: "and" | "or"; rules: FilterRule[] };
+  fieldModes?: Record<string, "edit" | "readonly" | "hidden">;
+  viewHidden?: boolean;
+}
+export interface EffectiveBasePermissions {
+  canAddRecord: boolean;
+  canDeleteRecord: boolean;
+  onlyOwnRecords: boolean;
+  readonlyFieldIds: number[];
+  hiddenFieldIds: number[];
+  matchedRoles: string[];
+}
 export interface ViewConfig {
   /** Form-specific fields. An explicit selection is required before sharing. */
   title?: string;
@@ -286,10 +307,11 @@ export interface ViewConfig {
   card?: { fields?: number[]; cover?: number | null };
   /** Gantt task dependency edges persisted per view. */
   ganttDeps?: { id: string; fromId: number; toId: number }[];
-  /** Fine-grained field/row view permissions enforced server-side. */
+  /** Fine-grained field/row view permissions and multi-role RBAC enforced server-side. */
   permissions?: {
     onlyOwnRecords?: boolean;
     fieldModes?: Record<string, "edit" | "readonly" | "hidden">;
+    roles?: BasePermissionRole[];
   };
   /** Form conditional visibility branching rules persisted and enforced on public submit. */
   branchRules?: {
@@ -340,7 +362,7 @@ export interface BaseDashboard {
   updatedAt: string;
 }
 
-type BaseSnapshot = { base: DocMeta; tables?: BaseTable[]; activeTableId?: number; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean };
+export type BaseSnapshot = { base: DocMeta; tables?: BaseTable[]; activeTableId?: number; fields: Field[]; records: BaseRecord[]; head: number; members: User[]; views: View[]; expansions?: Record<string, unknown>; writeRestricted?: boolean; effectivePermissions?: EffectiveBasePermissions };
 export const baseApi = {
   create: (title?: string, parentId: number | null = null) => request<DocMeta>("POST", "/api/bases", { title, parentId }),
   get: (id: number, signal?: AbortSignal, tableId?: number | null) =>

@@ -111,7 +111,29 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
     setDocSidebarDocked(expanded);
     writeSidebarPreference(sidebarStorage, me.user.id, expanded);
   };
-  useEffect(() => setSidebarOpen(false), [route.page, "id" in route ? route.id : null]);
+  useEffect(() => setSidebarOpen(false), [
+    route.page,
+    "id" in route ? route.id : null,
+    "folderId" in route ? route.folderId : null,
+    "personal" in route ? route.personal : null,
+    "spaceId" in route ? route.spaceId : null,
+    "nodeId" in route ? route.nodeId : null,
+  ]);
+  const closeSidebar = useCallback(() => {
+    setSidebarOpen(false);
+    requestAnimationFrame(() => openSidebarButton.current?.focus());
+  }, []);
+  useEffect(() => {
+    if (!sidebarOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+      event.preventDefault();
+      closeSidebar();
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [sidebarOpen, closeSidebar]);
   useEffect(() => {
     if (!sidebarStorage) return;
     const onStorage = (event: StorageEvent) => {
@@ -148,34 +170,30 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
     else setSidebarOpen(true);
     requestAnimationFrame(() => sidebarContainer.current?.querySelector<HTMLButtonElement>(dock ? "[data-collapse-navigation]" : "[data-close-navigation]")?.focus());
   };
-  const closeSidebar = () => {
-    setSidebarOpen(false);
-    requestAnimationFrame(() => openSidebarButton.current?.focus());
-  };
   const collapseDocumentSidebar = () => {
     setDocumentSidebar(false);
     requestAnimationFrame(() => openSidebarButton.current?.focus());
   };
   const sidebarClass = docLayout
-    ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
-    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 ${route.page === "base" || route.page === "slides" || route.page === "sheet" || route.page === "survey" || route.page === "wiki-space" ? "md:hidden" : "md:static md:block"}`;
+    ? `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 max-w-[85vw] shadow-xl md:max-w-none md:shadow-none ${docSidebarDocked ? "md:static md:z-auto md:block" : "md:hidden"}`
+    : `${sidebarOpen ? "block" : "hidden"} fixed inset-y-0 left-0 z-50 max-w-[85vw] shadow-xl md:max-w-none md:shadow-none ${route.page === "base" || route.page === "slides" || route.page === "sheet" || route.page === "survey" || route.page === "wiki-space" ? "md:hidden" : "md:static md:block"}`;
   return (
     <QueryClientProvider client={sessionClient}>
-    <div className="flex h-full">
+    <div className="flex h-full min-w-0" data-mobile-nav-open={sidebarOpen ? "true" : "false"}>
       <AskHost />
       <AISettingsHost />
-      <button ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg text-muted-foreground hover:bg-hover ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
-      {sidebarOpen && <button className="fixed inset-0 z-40 bg-black/30 md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
+      <button type="button" ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg border border-[#dee0e3]/80 bg-surface/90 text-muted-foreground shadow-xs backdrop-blur-sm transition-colors hover:bg-hover dark:border-border/80 md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-none ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
+      {sidebarOpen && <button type="button" data-mobile-nav-backdrop className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] transition-opacity md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
       <div id="workspace-navigation" ref={sidebarContainer} className={sidebarClass}>
         <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} onSearchRegistrar={registerGlobalSearch} captureSearchGuard={captureGlobalSearchGuard} onWorkspacesChanged={() => { void authClient.invalidateQueries({ queryKey: ["me"], exact: true }); }} />
-        <button className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
+        <button type="button" className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} linkedVersion={route.versionId} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />
       ) : route.page === "unsupported" ? (
         <ResourceTypeNotice id={route.id} />
       ) : route.page === "base" ? (
-        <BasePage key={`${route.id}:${me.user.id}`} id={route.id} userId={me.user.id} />
+        <BasePage key={`${route.id}:${me.user.id}`} id={route.id} userId={me.user.id} me={me} />
       ) : route.page === "join" ? (
         <JoinLink token={route.token} userId={me.user.id} />
       ) : route.page === "drive" ? (
@@ -183,7 +201,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       ) : route.page === "file" ? (
         <DriveFilePage key={route.id} id={route.id} userId={me.user.id} />
       ) : route.page === "slides" ? (
-        <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} />
+        <SlidesDeck key={`${me.user.id}:${route.id}`} deckId={route.id} userId={me.user.id} me={me} />
       ) : route.page === "sheet" ? (
         <SheetPage key={`${me.user.id}:${route.id}`} sheetId={route.id} me={me} onGlobalSearch={openGlobalSearch} />
       ) : route.page === "survey" ? (

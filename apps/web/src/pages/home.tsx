@@ -30,7 +30,7 @@ import { batchMessage, pruneSelection, runDriveBatch, toggleId } from "./drive-b
 import { browserHomeViewStorage, homeViewKey, matchesHomeTypeFilter, readHomeView, writeHomeView, type HomeView } from "./home-view";
 
 type HomeTab = "recent" | "updated" | "mine" | "shared" | "favorites";
-const LIST_GRID = "grid grid-cols-[minmax(0,1fr)_100px] sm:grid-cols-[minmax(0,1fr)_112px_120px] lg:grid-cols-[minmax(150px,2fr)_minmax(90px,1fr)_minmax(92px,1fr)_110px_120px]";
+const LIST_GRID = "grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,1fr)_112px_120px] lg:grid-cols-[minmax(150px,2fr)_minmax(90px,1fr)_minmax(92px,1fr)_110px_120px]";
 
 export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: DriveUploadManager; recent?: boolean; favorites?: boolean }) {
   const { t, locale } = useI18n();
@@ -299,7 +299,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   };
   const pinnedDocs = !recent && !favorites ? (pins.data ?? []) : [];
   const pageTitle = favorites ? t("收藏") : recent ? t("最近访问") : t("主页");
-  const menu = newMenu && <div role="menu" aria-label={t("新建")} className={`absolute top-[calc(100%+4px)] z-30 max-h-[min(70dvh,520px)] w-full min-w-44 overflow-y-auto rounded-md border bg-surface py-1 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
+  const menu = newMenu && <div role="menu" aria-label={t("新建")} className={`absolute top-[calc(100%+4px)] z-30 max-h-[min(70dvh,520px)] w-full min-w-44 max-w-[calc(100vw-32px)] overflow-y-auto rounded-md border bg-surface py-1 shadow-[0_6px_22px_rgba(31,35,41,0.16)] ${recent || favorites ? "right-0" : "left-0"}`}>
     <button role="menuitem" disabled={create.isPending} onClick={() => { setNewMenu(false); create.mutate("doc"); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover"><FileBadge kind="doc" />{t("文档")}</button>
     <button role="menuitem" disabled={createDriveItem.isPending} onClick={() => { setNewMenu(false); createDriveItem.mutate({ kind: "sheet", title: t("未命名表格") }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-sheet><FileBadge kind="sheet" />{t("表格")}</button>
     <button role="menuitem" disabled={createDriveItem.isPending} onClick={() => { setNewMenu(false); createDriveItem.mutate({ kind: "survey", title: t("未命名问卷") }); }} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[14px] hover:bg-hover" data-new-survey><FileBadge kind="survey" />{t("问卷")}</button>
@@ -313,24 +313,24 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   </div>;
   return (
     <main className="flex min-w-0 flex-1 flex-col bg-background">
-      <header className="flex h-16 shrink-0 items-center justify-between pl-16 pr-5 md:px-7 xl:px-6">
-        <h1 className="text-[20px] font-semibold leading-7">{pageTitle}</h1>
-        {(recent || favorites) && <div ref={newMenuRef} className="relative">
+      <header className="flex h-16 shrink-0 items-center justify-between gap-2 pl-14 pr-4 sm:pl-16 sm:pr-5 md:px-7 xl:px-6">
+        <h1 className="min-w-0 truncate text-[20px] font-semibold leading-7">{pageTitle}</h1>
+        {(recent || favorites) && <div ref={newMenuRef} className="relative shrink-0">
           <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary-hover"><Plus size={15} /> {t("新建")} <ChevronDown size={13} /></button>
           {menu}
         </div>}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="w-full px-5 pb-16 pt-2 sm:px-7 xl:px-6">
-          {!recent && !favorites && <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-[repeat(3,305px)]">
-            <div ref={newMenuRef} className="relative">
-              <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary">
+        <div className="w-full px-4 pb-16 pt-2 sm:px-7 xl:px-6">
+          {!recent && !favorites && <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 xl:grid-cols-[repeat(3,305px)]">
+            <div ref={newMenuRef} className="relative min-w-0">
+              <button onClick={() => setNewMenu((v) => !v)} aria-expanded={newMenu} aria-haspopup="menu" className="flex h-16 w-full items-center gap-2.5 rounded-lg border bg-surface px-3 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary sm:gap-3 sm:px-4">
                 <span className="grid size-8 shrink-0 place-items-center"><NewDocGlyph /></span>
-                <span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{t("新建")}</span><span className="mt-0.5 hidden truncate text-[11px] text-subtle sm:block">{t("新建文档开始协作")}</span></span><ChevronDown size={15} className={`shrink-0 text-subtle ${newMenu ? "rotate-180" : ""}`} />
+                <span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium">{t("新建")}</span><span className="mt-0.5 hidden truncate text-[11px] text-subtle sm:block">{t("新建文档开始协作")}</span></span><ChevronDown size={15} className={`shrink-0 text-subtle ${newMenu ? "rotate-180" : ""}`} />
               </button>{menu}
             </div>
             <HomeUpload uploads={uploads} importing={importing || createWithContent.isPending} onImport={(file) => { void importFile(file); }} />
-            <ActionCard icon={<TemplateGlyph />} title={t("模板库")} subtitle={t("选择模板快速新建")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} />
+            <ActionCard icon={<TemplateGlyph />} title={t("模板库")} subtitle={t("选择模板快速新建")} onClick={() => setLibraryOpen(true)} disabled={createWithContent.isPending} className="col-span-2 sm:col-span-1" />
           </div>}
           {create.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建失败，请检查网络后重试。")}</p>}
           {createDriveItem.isError && <p role="alert" className="mt-3 text-[13px] text-destructive">{t("新建结果未能确认，请刷新后检查。")}</p>}
@@ -362,11 +362,11 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
             </div>}
           </section>}
           {!recent && !favorites ? <div className="mt-5 flex min-h-12 flex-wrap items-end gap-x-3 border-b">
-            <nav aria-label={t("文档分类")} className="flex min-w-0 flex-1 basis-full items-center gap-5 overflow-x-auto whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
+            <nav aria-label={t("文档分类")} className="mobile-scroll-x flex min-w-0 flex-1 basis-full items-center gap-5 whitespace-nowrap text-[14px] sm:basis-auto sm:gap-7">
               {([ ["recent", "最近访问"], ["updated", "最近更新"], ["mine", "我创建的"], ["shared", "与我共享"], ["favorites", "收藏"] ] as const).map(([id, label]) => <button key={id} onClick={() => setTab(id)} className={`relative shrink-0 pb-3 pt-2 ${selected === id ? "font-medium text-primary after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary" : "text-muted-foreground hover:text-foreground"}`}>{t(label)}</button>)}
             </nav>
-            <div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div>
-          </div> : <div className="mt-2 flex min-h-12 items-end justify-between border-b"><div className="pb-3 text-[14px] font-medium">{favorites ? t("收藏的文档") : t("最近访问")}</div><div className="flex items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div></div>}
+            <div className="ml-auto flex shrink-0 items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div>
+          </div> : <div className="mt-2 flex min-h-12 items-end justify-between gap-2 border-b"><div className="min-w-0 truncate pb-3 text-[14px] font-medium">{favorites ? t("收藏的文档") : t("最近访问")}</div><div className="flex shrink-0 items-center gap-1"><TypeFilter kind={kind} onChange={setKind} /><HomeViewToggle view={view} onChange={setView}/></div></div>}
           {chosenDocs.length > 0 && <div role="toolbar" aria-label={t("批量操作")} data-home-batch className="mt-2 flex flex-wrap items-center gap-1.5 rounded-md border border-[#3370ff]/25 bg-[#f0f4ff] px-3 py-1.5 text-[13px] text-foreground">
             <HomeSelectBox checked={chosenDocs.length === items.length ? true : "mixed"} label={chosenDocs.length === items.length ? t("取消全选") : t("全选")} onToggle={() => setSelectedIds(chosenDocs.length === items.length ? new Set() : new Set(items.map((item) => item.id)))}/>
             <span className="ml-1 mr-2 font-medium">{t("已选择 {n} 项", { n: chosenDocs.length })}</span>
@@ -378,7 +378,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           {view === "list" && chosenDocs.length === 0 && <div className="group/homelist flex h-10 items-center border-b px-2 pr-10 text-[12px] text-subtle">
             <span className="mr-2 shrink-0 opacity-0 focus-within:opacity-100 group-hover/homelist:opacity-100">{items.length > 0 && <HomeSelectBox checked={false} label={t("全选")} onToggle={() => setSelectedIds(new Set(items.map((item) => item.id)))}/>}</span>
             <div className={`${LIST_GRID} min-w-0 flex-1 items-center gap-3`}>
-              <span>{t("标题")}</span><span className="hidden truncate lg:block">{t("位置")}</span><span className="hidden truncate sm:block">{t("所有者")}</span><span className="hidden truncate lg:block">{t("创建时间")}</span><span className="truncate">{selected === "recent" ? t("最近访问") : t("最近更新")}</span>
+              <span>{t("标题")}</span><span className="hidden truncate lg:block">{t("位置")}</span><span className="hidden truncate sm:block">{t("所有者")}</span><span className="hidden truncate lg:block">{t("创建时间")}</span><span className="hidden truncate sm:block">{selected === "recent" ? t("最近访问") : t("最近更新")}</span>
             </div>
           </div>}
           {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d} selected={selectedIds.has(d.id)} selecting={chosenDocs.length > 0} onSelect={() => setSelectedIds((prev) => toggleId(prev, d.id))} actions={documentActions(d)}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} selected={selectedIds.has(d.id)} selecting={chosenDocs.length > 0} onSelect={() => setSelectedIds((prev) => toggleId(prev, d.id))} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} actions={documentActions(d)} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
@@ -432,8 +432,8 @@ function FileBadge({ kind, docType, icon, large = false }: { kind: "doc" | "base
   if (isBoardDoc({ kind, docType })) return <DocumentGlyph icon={icon} className={`${sizeClass} ${large ? "text-[48px]" : "text-[18px]"}`} fallback={<WhiteboardIcon className={`${sizeClass} shrink-0 text-[#34c759]`} />} />;
   return kind === "doc" ? <DocumentGlyph icon={icon} className={`${sizeClass} ${large ? "text-[48px]" : "text-[18px]"}`} fallback={<DocColorIcon className={`${sizeClass} shrink-0`} />} /> : <BaseColorIcon className={`${sizeClass} shrink-0`} />;
 }
-function ActionCard({ icon, title, subtitle, disabled, onClick }: { icon: React.ReactNode; title: string; subtitle?: string; disabled?: boolean; onClick: () => void }) {
-  return <button onClick={onClick} disabled={disabled} className="flex h-16 w-full items-center gap-3 rounded-lg border bg-surface px-4 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60"><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1"><span className="block text-[14px] font-medium">{title}</span>{subtitle && <span className="mt-0.5 hidden truncate text-[11px] text-subtle sm:block">{subtitle}</span>}</span></button>;
+function ActionCard({ icon, title, subtitle, disabled, onClick, className = "" }: { icon: React.ReactNode; title: string; subtitle?: string; disabled?: boolean; onClick: () => void; className?: string }) {
+  return <button onClick={onClick} disabled={disabled} className={`flex h-16 w-full items-center gap-2.5 rounded-lg border bg-surface px-3 text-left transition-colors hover:bg-hover/50 focus-visible:outline-2 focus-visible:outline-primary disabled:opacity-60 sm:gap-3 sm:px-4 ${className}`}><span className="grid size-8 shrink-0 place-items-center">{icon}</span><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium">{title}</span>{subtitle && <span className="mt-0.5 hidden truncate text-[11px] text-subtle sm:block">{subtitle}</span>}</span></button>;
 }
 function dateLabel(value: string) {
   return formatDriveTime(value) || "—";
@@ -447,11 +447,11 @@ function DocumentRow({ doc, selected, selecting, onSelect, viewedAt, workspaceNa
   return <div className={`group relative flex items-center border-b px-2 pr-10 transition-colors ${selected ? "bg-[#f0f4ff]" : "hover:bg-hover/60"}`} data-home-row={doc.id} aria-selected={selected}>
     <span className={`mr-2 shrink-0 ${!selected && !selecting ? "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100" : ""}`}><HomeSelectBox checked={selected} label={t("选择「{title}」", { title: docTitle(doc) })} onToggle={onSelect}/></span>
     <button type="button" onClick={() => go(hrefOf(doc))} className={`${LIST_GRID} h-14 min-w-0 flex-1 items-center gap-3 text-left focus-visible:bg-hover focus-visible:outline-2 focus-visible:outline-primary`}>
-      <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} /><span className="truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span></span>
+      <span className="flex min-w-0 items-center gap-3"><FileBadge kind={doc.kind ?? "doc"} docType={doc.docType} icon={doc.icon} /><span className="min-w-0 flex-1"><span className="block truncate text-[13px] group-hover:text-primary">{docTitle(doc)}</span><span className="mt-0.5 block truncate text-[11px] text-subtle sm:hidden">{dateLabel(viewedAt ?? doc.updatedAt)}</span></span></span>
       <span className="hidden min-w-0 truncate text-[12px] text-muted-foreground lg:block">{workspaceName || "—"}</span>
       <span className="hidden min-w-0 items-center gap-2 truncate text-[12px] text-muted-foreground sm:flex"><Avatar name={doc.creatorName || t("未知")} color={colorFor(doc.creatorId - 1)} size={20} /><span className="truncate">{doc.creatorName || "—"}</span></span>
       <span className="hidden truncate text-[12px] text-subtle lg:block">{dateLabel(doc.createdAt)}</span>
-      <span className="truncate text-[12px] text-subtle">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
+      <span className="hidden truncate text-[12px] text-subtle sm:block">{dateLabel(viewedAt ?? doc.updatedAt)}</span>
     </button>
     <span className="absolute right-1 top-3 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-within:opacity-100">{actions}</span>
   </div>;

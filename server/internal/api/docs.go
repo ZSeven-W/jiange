@@ -104,6 +104,7 @@ func (s *Server) createDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d = s.sanitizeWrittenDocMeta(r.Context(), u.ID, d)
+	s.recordAudit(r, d.WorkspaceID, "doc.create", d.Kind, d.ID, d.Title, map[string]any{"docType": d.DocType})
 	httpx.JSON(w, http.StatusCreated, d)
 }
 
@@ -281,6 +282,7 @@ func (s *Server) trashDoc(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	s.recordAudit(r, d.WorkspaceID, "doc.delete", d.Kind, d.ID, d.Title, nil)
 	w.WriteHeader(http.StatusNoContent)
 }
 

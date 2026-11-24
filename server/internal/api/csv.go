@@ -77,13 +77,36 @@ func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	guard := store.BaseWriteGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
+	var rbacPolicy baseReadPolicy
+	if b.Role != store.RoleManage {
+		var policyErr error
+		rbacPolicy, _, policyErr = s.basePolicyForRequest(r.Context(), r, b, u.ID, 0)
+		if policyErr != nil {
+			s.fail(w, r, policyErr)
+			return
+		}
+		if !rbacPolicy.canAddRecord {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许新增或导入记录")
+			return
+		}
+	}
 	var rowErrors []csvRowError
 	var fieldCount int
 	memberIDs := s.csvMemberIDs(r.Context(), u.ID, b.WorkspaceID)
 	count, err := s.Store.ImportBaseCSV(r.Context(), guard, b.ID, func(fields []store.Field) (store.BaseImportPlan, error) {
 		plan, errs, e := csvImportPlan(rows, in.Header, in.Types, fields, memberIDs)
+		if e != nil {
+			return plan, e
+		}
+		if b.Role != store.RoleManage {
+			for _, col := range plan.Columns {
+				if col.ExistingID > 0 && (rbacPolicy.hidden[col.ExistingID] || rbacPolicy.readonly[col.ExistingID]) {
+					return store.BaseImportPlan{}, store.ErrForbidden
+				}
+			}
+		}
 		rowErrors, fieldCount = errs, len(plan.Columns)
-		return plan, e
+		return plan, nil
 	})
 	if errors.Is(err, store.ErrUnauthenticated) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，未导入数据")
@@ -620,7 +643,23 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
-	fields := filterFieldsByTable(allFields, activeTableID)
+	allTableFields := filterFieldsByTable(allFields, activeTableID)
+	fields := allTableFields
+	var exportPolicy baseReadPolicy
+	if b.Role != store.RoleManage {
+		allViews, err := s.Store.Views(r.Context(), b.ID)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		subj := s.resolveBaseSubject(r.Context(), r, u.ID, b.WorkspaceID)
+		exportPolicy, err = parseBasePolicyForSubject(b, allTableFields, filterViewsByTable(allViews, activeTableID), subj)
+		if err != nil {
+			s.fail(w, r, err)
+			return
+		}
+		fields = visibleBaseFields(allTableFields, exportPolicy)
+	}
 	allRecs, err := s.Store.Records(r.Context(), b.ID)
 	if err != nil {
 		s.fail(w, r, err)
@@ -631,6 +670,10 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 		if activeTableID == 0 || rec.TableID == 0 || rec.TableID == activeTableID {
 			recs = append(recs, rec)
 		}
+	}
+	if b.Role != store.RoleManage {
+		recs = filterOwnRecords(recs, exportPolicy, u.ID)
+		recs = stripBaseRecords(recs, allTableFields, exportPolicy)
 	}
 	memberNames := s.csvMemberNames(r.Context(), u.ID, b.WorkspaceID)
 	var buf bytes.Buffer

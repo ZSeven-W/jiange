@@ -195,7 +195,7 @@ export function SheetTabsBar({
         )}
       </div>
 
-      <div className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto no-scrollbar">
+      <div className="mobile-scroll-x flex min-w-0 flex-1 items-end gap-0.5 whitespace-nowrap">
         {sheets.map((ws, index) => {
           const active = ws.id === activeSheetId;
           return (
@@ -352,9 +352,10 @@ const MENU_METRICS: Record<ToolbarMenuId, { width: number; estHeight: number }> 
 };
 
 function computeClampedMenuPos(rect: AnchorRect, id: ToolbarMenuId): { left: number; top: number; width: number } {
-  const { width, estHeight } = MENU_METRICS[id];
+  const { estHeight } = MENU_METRICS[id];
   const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
   const vh = typeof window !== "undefined" ? window.innerHeight : 800;
+  const width = Math.min(MENU_METRICS[id].width, Math.max(120, vw - 16));
   const left = Math.max(8, Math.min(rect.left, vw - width - 8));
   const fitsBelow = rect.bottom + 4 + estHeight <= vh - 8;
   const top = fitsBelow ? rect.bottom + 4 : Math.max(8, rect.top - estHeight - 4);
@@ -732,7 +733,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
   };
 
   return (
-    <div ref={rootRef} className="relative flex h-[54px] min-w-0 shrink-0 items-center gap-0.5 overflow-x-auto border-b border-[#e5e6eb] bg-white px-2" data-sheet-toolbar>
+    <div ref={rootRef} className="mobile-scroll-x relative flex h-[54px] min-w-0 shrink-0 items-center gap-0.5 whitespace-nowrap border-b border-[#e5e6eb] bg-white px-2" data-sheet-toolbar>
       <div className="relative shrink-0">
         {labeledBtn(t("菜单"), openMenu?.id === "file", false, (e) => toggleMenu("file", e), <Menu size={15} />)}
       </div>
@@ -901,7 +902,7 @@ export function SheetToolbar(props: SheetToolbarProps) {
           title={t("收起工具栏")}
           aria-label={t("收起工具栏")}
           onClick={onCollapseToolbar}
-          className="sticky right-0 ml-auto grid size-7 shrink-0 place-items-center rounded bg-white text-[#646a73] hover:bg-[#f2f3f5]"
+          className="sticky right-0 z-10 ml-auto grid size-7 shrink-0 place-items-center rounded border-l border-[#f0f1f5] bg-white/95 text-[#646a73] shadow-[-6px_0_10px_-4px_rgba(31,35,41,0.12)] backdrop-blur-xs hover:bg-[#f2f3f5]"
         >
           <ChevronUp size={15} />
         </button>

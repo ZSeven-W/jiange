@@ -164,3 +164,132 @@ func TestValidatePermissionsAndGanttDeps(t *testing.T) {
 		t.Fatal(">500 gantt deps accepted")
 	}
 }
+
+func TestValidatePermissionRoles(t *testing.T) {
+	primaryFields := []FieldSpec{
+		{ID: 1, Type: "text", IsPrimary: true},
+		{ID: 2, Type: "select", Options: []string{"待审", "通过", "驳回"}},
+		{ID: 3, Type: "number"},
+		{ID: 4, Type: "checkbox"},
+	}
+	boolPtr := func(v bool) *bool { return &v }
+
+	// Valid multi-role config passes.
+	valid := Config{
+		Permissions: &ViewPermissions{
+			OnlyOwnRecords: true,
+			FieldModes:     map[string]string{"1": "readonly", "2": "edit", "3": "hidden"},
+			Roles: []PermissionRole{
+				{
+					ID:              "sales",
+					Name:            "销售",
+					UserIDs:         []int64{10, 20},
+					DeptIDs:         []int64{100},
+					GroupIDs:        []int64{200},
+					CanAddRecord:    boolPtr(true),
+					CanDeleteRecord: boolPtr(false),
+					RowScope:        "own",
+					FieldModes:      map[string]string{"1": "edit", "3": "readonly"},
+				},
+				{
+					ID:              "reviewer",
+					Name:            "审核员",
+					DeptIDs:         []int64{101},
+					CanAddRecord:    boolPtr(false),
+					CanDeleteRecord: boolPtr(false),
+					RowScope:        "filter",
+					RowFilters: &Filters{
+						Conj:  "and",
+						Rules: []Rule{{F: 2, Op: "is", V: "待审"}},
+					},
+					FieldModes: map[string]string{"3": "hidden"},
+					ViewHidden: false,
+				},
+			},
+		},
+	}
+	if err := Validate(primaryFields, valid); err != nil {
+		t.Fatalf("valid RBAC config rejected: %v", err)
+	}
+
+	// Primary field cannot be hidden in default FieldModes or role FieldModes.
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{FieldModes: map[string]string{"1": "hidden"}}}); err == nil {
+		t.Fatal("primary field hidden in default fieldModes accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{
+		ID: "r1", Name: "R1", FieldModes: map[string]string{"1": "hidden"},
+	}}}}); err == nil {
+		t.Fatal("primary field hidden in role fieldModes accepted")
+	}
+
+	// >32 roles rejected.
+	manyRoles := make([]PermissionRole, 33)
+	for i := range manyRoles {
+		manyRoles[i] = PermissionRole{ID: "r-" + string(rune('a'+i%26)) + string(rune('0'+i/26)), Name: "Role"}
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: manyRoles}}); err == nil {
+		t.Fatal(">32 roles accepted")
+	}
+
+	// Duplicate / empty / >64 role ID rejected.
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "", Name: "A"}}}}); err == nil {
+		t.Fatal("empty role id accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: strings.Repeat("x", 65), Name: "A"}}}}); err == nil {
+		t.Fatal(">64 role id accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{
+		{ID: "dup", Name: "A"},
+		{ID: "dup", Name: "B"},
+	}}}); err == nil {
+		t.Fatal("duplicate role id accepted")
+	}
+
+	// Empty or >64 rune role name rejected.
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "r1", Name: "   "}}}}); err == nil {
+		t.Fatal("blank role name accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "r1", Name: strings.Repeat("角", 65)}}}}); err == nil {
+		t.Fatal(">64 rune role name accepted")
+	}
+
+	// Non-positive, duplicate, or >200 subject IDs rejected.
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "r1", Name: "A", UserIDs: []int64{0}}}}}); err == nil {
+		t.Fatal("zero userId accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "r1", Name: "A", DeptIDs: []int64{5, 5}}}}}); err == nil {
+		t.Fatal("duplicate deptId accepted")
+	}
+	tooManyGroups := make([]int64, 201)
+	for i := range tooManyGroups {
+		tooManyGroups[i] = int64(i + 1)
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "r1", Name: "A", GroupIDs: tooManyGroups}}}}); err == nil {
+		t.Fatal(">200 groupIds accepted")
+	}
+
+	// Invalid rowScope rejected.
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{ID: "r1", Name: "A", RowScope: "custom"}}}}); err == nil {
+		t.Fatal("invalid rowScope accepted")
+	}
+
+	// Invalid rowFilters (bad field, bad op, non-number for number field) rejected.
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{
+		ID: "r1", Name: "A", RowScope: "filter",
+		RowFilters: &Filters{Conj: "and", Rules: []Rule{{F: 999, Op: "is", V: "x"}}},
+	}}}}); err == nil {
+		t.Fatal("unknown field in rowFilters accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{
+		ID: "r1", Name: "A", RowScope: "filter",
+		RowFilters: &Filters{Conj: "and", Rules: []Rule{{F: 3, Op: "gt", V: "not-a-num"}}},
+	}}}}); err == nil {
+		t.Fatal("non-numeric value for number field in rowFilters accepted")
+	}
+	if err := Validate(primaryFields, Config{Permissions: &ViewPermissions{Roles: []PermissionRole{{
+		ID: "r1", Name: "A", RowScope: "filter",
+		RowFilters: &Filters{Conj: "xor", Rules: []Rule{{F: 2, Op: "is", V: "待审"}}},
+	}}}}); err == nil {
+		t.Fatal("invalid conj in rowFilters accepted")
+	}
+}

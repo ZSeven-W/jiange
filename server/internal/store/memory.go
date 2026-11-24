@@ -21,6 +21,8 @@ type Memory struct {
 	workspaceRoles   map[[2]int64]string // (workspace, user) -> owner | admin | member
 	org              memOrg
 	wiki             memWiki
+	sso              memSSO
+	enterprise       memEnterprise
 	sessions         map[string]session
 	d                memDocs
 	sh               memShare

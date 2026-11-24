@@ -146,6 +146,7 @@ func (s *Server) putShare(w http.ResponseWriter, r *http.Request) {
 		s.shareMutationError(w, r, err)
 		return
 	}
+	s.recordAudit(r, d.WorkspaceID, "share.update", d.Kind, d.ID, d.Title, map[string]any{"targetEmail": u.Email, "role": in.Role})
 	// A committed update may also have removed the caller's access, or a
 	// concurrent revocation may prevent the follow-up read. Report the write
 	// as successful even when a fresh, authorized result is unavailable.
@@ -245,6 +246,7 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 		s.shareMutationError(w, r, err)
 		return
 	}
+	s.recordAudit(r, d.WorkspaceID, "share.link_update", d.Kind, d.ID, d.Title, map[string]any{"linkRole": in.Role})
 	// The mutation is already committed. A concurrent logout or permission
 	// revocation must not turn it into a failure or expose a bearer token.
 	w.Header().Set("Cache-Control", "no-store")

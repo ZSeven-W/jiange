@@ -1,22 +1,72 @@
 import { useState, type FormEvent } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { buildSSOStartUrl, ssoApi } from "@/lib/sso-api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand";
-import { Check, FileText, Sparkles, Table2 } from "lucide-react";
+import { AlertCircle, Check, FileText, ShieldCheck, Sparkles, Table2, X } from "lucide-react";
 import { finishLogin } from "@/lib/session-cache";
-import { useI18n } from "@/lib/i18n";
+import { useI18n, type TFunc } from "@/lib/i18n";
 import { LocaleToggle } from "@/components/locale-toggle";
 
-export function LoginPage() {
+export function readSSOErrorFromLocation(search: string, hash: string): string {
+  const fromSearch = new URLSearchParams(search).get("sso_error")?.trim();
+  if (fromSearch) return fromSearch;
+  const qIdx = hash.indexOf("?");
+  if (qIdx >= 0) {
+    const fromHash = new URLSearchParams(hash.slice(qIdx + 1)).get("sso_error")?.trim();
+    if (fromHash) return fromHash;
+  }
+  return "";
+}
+
+export function formatSSOErrorMessage(code: string, t: TFunc): string {
+  switch (code) {
+    case "access_denied":
+      return t("已取消企业单点登录授权");
+    case "invalid_state":
+      return t("登录状态已过期或无效，请重新发起单点登录");
+    case "provider_disabled":
+      return t("该企业单点登录方式未启用或已被移除");
+    case "domain_not_allowed":
+      return t("当前企业邮箱域名未被授权登录此空间");
+    case "user_not_provisioned":
+      return t("当前账号尚未开通访问权限，请联系管理员");
+    case "nonce_mismatch":
+    case "invalid_id_token":
+    case "token_expired":
+    case "subject_mismatch":
+      return t("身份令牌校验失败，请重试登录");
+    case "token_exchange_failed":
+    case "userinfo_failed":
+    case "identity_missing":
+      return t("无法从企业身份提供商获取用户信息，请联系管理员检查配置");
+    default:
+      return t("企业单点登录失败（{reason}），请稍后重试", { reason: code });
+  }
+}
+
+export function LoginPage({ initialSSOError }: { initialSSOError?: string } = {}) {
   const { t } = useI18n();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [ssoError, setSSOError] = useState<string>(() => {
+    if (initialSSOError !== undefined) return initialSSOError.trim();
+    if (typeof window === "undefined") return "";
+    return readSSOErrorFromLocation(window.location.search, window.location.hash);
+  });
   const qc = useQueryClient();
+  const ssoQuery = useQuery({
+    queryKey: ["public-sso-providers"],
+    queryFn: ssoApi.listPublicProviders,
+    retry: false,
+    staleTime: 60_000,
+  });
+  const ssoProviders = ssoQuery.data ?? [];
   const m = useMutation({ mutationFn: () => mode === "login" ? api.login(email, password) : api.register(email, name, password), onSuccess: (me) => finishLogin(qc, me) });
   const submit = (e: FormEvent) => { e.preventDefault(); m.mutate(); };
   const login = mode === "login";
@@ -46,6 +96,24 @@ export function LoginPage() {
           <div className="mb-6 hidden justify-end lg:flex"><LocaleToggle /></div>
           <h2 className="text-[26px] font-semibold tracking-tight">{login ? t("欢迎回来") : t("创建你的账号")}</h2>
           <p className="mt-2 text-[14px] text-muted-foreground">{login ? t("登录 Jiange，继续你的工作") : t("加入 Jiange，开始记录和协作")}</p>
+          {ssoError && (
+            <div
+              role="alert"
+              data-sso-error-banner
+              className="mt-5 flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2.5 text-[13px] text-destructive"
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 leading-5">{formatSSOErrorMessage(ssoError, t)}</span>
+              <button
+                type="button"
+                aria-label={t("关闭")}
+                onClick={() => setSSOError("")}
+                className="shrink-0 rounded p-0.5 text-destructive/70 hover:bg-destructive/10 hover:text-destructive"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
           <div className="mt-8 space-y-5">
             <Field id="email" label={t("邮箱")}><Input id="email" type="email" autoComplete="email" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="h-11" /></Field>
             {!login && <Field id="name" label={t("名字")}><Input id="name" autoComplete="name" placeholder={t("你的名字")} value={name} onChange={(e) => setName(e.target.value)} className="h-11" /></Field>}
@@ -53,6 +121,28 @@ export function LoginPage() {
           </div>
           {m.error && <p role="alert" className="mt-3 text-[13px] text-destructive">{(m.error as Error).message}</p>}
           <Button type="submit" className="mt-7 h-11 w-full" disabled={m.isPending}>{m.isPending ? t("请稍候…") : login ? t("登录") : t("注册并进入")}</Button>
+          {ssoProviders.length > 0 && (
+            <div className="mt-6" data-sso-login-section>
+              <div className="relative flex items-center justify-center">
+                <span className="h-px flex-1 bg-border" />
+                <span className="px-3 text-[12px] text-subtle">{t("或使用企业单点登录")}</span>
+                <span className="h-px flex-1 bg-border" />
+              </div>
+              <div className="mt-4 space-y-2.5">
+                {ssoProviders.map((provider) => (
+                  <a
+                    key={provider.id}
+                    href={buildSSOStartUrl(provider.slug)}
+                    data-sso-provider={provider.slug}
+                    className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border bg-surface px-4 text-[14px] font-medium text-foreground transition-colors hover:border-primary/50 hover:bg-hover"
+                  >
+                    <ShieldCheck size={16} className="shrink-0 text-primary" />
+                    <span className="truncate">{t("使用 {name} 登录", { name: provider.name })}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
           <p className="mt-7 text-center text-[13px] text-muted-foreground">{login ? t("还没有账号？") : t("已有账号？")}<button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => { setMode(login ? "register" : "login"); m.reset(); }}>{login ? t("免费注册") : t("去登录")}</button></p>
         </form>
       </main>

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"sort"
 	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/internal/auth"
@@ -16,24 +17,253 @@ import (
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
-// A locked view currently acts as a coarse data restriction for non-managers,
-// not as a complete implementation of Feishu's advanced permissions. Multiple
-// locked views intersect, so adding another cannot relax an existing rule.
+type rbacSubject struct {
+	UserID   int64
+	DeptIDs  map[int64]bool
+	GroupIDs map[int64]bool
+}
+
+type rbacSubjectCtxKey struct{}
+
+type rbacSubjectBinding struct {
+	workspaceID int64
+	subject     rbacSubject
+}
+
+func withRBACSubject(ctx context.Context, workspaceID int64, subj rbacSubject) context.Context {
+	return context.WithValue(ctx, rbacSubjectCtxKey{}, rbacSubjectBinding{workspaceID: workspaceID, subject: subj})
+}
+
+func rbacSubjectFromContext(ctx context.Context, workspaceID, uid int64) (rbacSubject, bool) {
+	if b, ok := ctx.Value(rbacSubjectCtxKey{}).(rbacSubjectBinding); ok && b.workspaceID == workspaceID && b.subject.UserID == uid {
+		return b.subject, true
+	}
+	return rbacSubject{UserID: uid}, false
+}
+
+// resolveBaseSubject resolves a caller's workspace department IDs (including
+// ancestor departments) and user group IDs via OrgStore. External collaborators
+// or stores without org access gracefully fall back to userID-only matching.
+func (s *Server) resolveBaseSubject(ctx context.Context, r *http.Request, uid, wsID int64) rbacSubject {
+	subj := rbacSubject{UserID: uid}
+	if r == nil || uid <= 0 || wsID <= 0 || s.Store == nil {
+		return subj
+	}
+	cookie, err := r.Cookie(CookieName)
+	if err != nil || cookie.Value == "" {
+		return subj
+	}
+	guard := store.RestoreGuard{UserID: uid, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
+	snap, err := s.Store.GetWorkspaceOrg(ctx, guard, wsID)
+	if err != nil {
+		return subj
+	}
+	deptByID := make(map[int64]store.OrgDepartment, len(snap.Departments))
+	for _, d := range snap.Departments {
+		deptByID[d.ID] = d
+	}
+	var depts map[int64]bool
+	for _, d := range snap.Departments {
+		inDept := false
+		for _, m := range d.Members {
+			if m.UserID == uid {
+				inDept = true
+				break
+			}
+		}
+		if !inDept {
+			continue
+		}
+		if depts == nil {
+			depts = map[int64]bool{}
+		}
+		cur := d
+		visited := map[int64]bool{}
+		for {
+			if visited[cur.ID] {
+				break
+			}
+			visited[cur.ID] = true
+			depts[cur.ID] = true
+			if cur.ParentID == nil {
+				break
+			}
+			parent, ok := deptByID[*cur.ParentID]
+			if !ok {
+				break
+			}
+			cur = parent
+		}
+	}
+	var groups map[int64]bool
+	for _, g := range snap.Groups {
+		for _, m := range g.Members {
+			if m.UserID == uid {
+				if groups == nil {
+					groups = map[int64]bool{}
+				}
+				groups[g.ID] = true
+				break
+			}
+		}
+	}
+	subj.DeptIDs = depts
+	subj.GroupIDs = groups
+	return subj
+}
+
+type viewRowScope struct {
+	allowAll   bool
+	allowOwn   bool
+	rowFilters []btquery.Filters // OR'd together (and OR'd with allowOwn if allowOwn is true)
+}
+
+func (vs viewRowScope) matches(specs []btquery.FieldSpec, rec store.Record, uid int64) bool {
+	if vs.allowAll {
+		return true
+	}
+	if vs.allowOwn && rec.CreatorID != nil && *rec.CreatorID == uid {
+		return true
+	}
+	for i := range vs.rowFilters {
+		f := vs.rowFilters[i]
+		if btquery.Match(specs, btquery.Config{Filters: &f}, rec.Cells) {
+			return true
+		}
+	}
+	return false
+}
+
+// EffectiveBasePermissions summarizes the server-enforced RBAC outcome for the
+// caller so the frontend UI matches exact server truth.
+type EffectiveBasePermissions struct {
+	CanAddRecord     bool     `json:"canAddRecord"`
+	CanDeleteRecord  bool     `json:"canDeleteRecord"`
+	OnlyOwnRecords   bool     `json:"onlyOwnRecords"`
+	ReadonlyFieldIDs []int64  `json:"readonlyFieldIds"`
+	HiddenFieldIDs   []int64  `json:"hiddenFieldIds"`
+	MatchedRoles     []string `json:"matchedRoles"`
+}
+
+// baseReadPolicy represents the effective server-enforced data & RBAC policy
+// for a non-manager across shared views. Multiple views intersect conservatively
+// except hiddenViews which is per-view.
 type baseReadPolicy struct {
-	mandatory      []btquery.Config
-	hidden         map[int64]bool
-	readonly       map[int64]bool
-	onlyOwnRecords bool
+	mandatory        []btquery.Config
+	hidden           map[int64]bool
+	readonly         map[int64]bool
+	onlyOwnRecords   bool
+	canAddRecord     bool
+	canDeleteRecord  bool
+	hiddenViews      map[int64]bool
+	roleRowFilters   []btquery.Filters
+	viewRowScopes    []viewRowScope
+	matchedRoleNames []string
+	specs            []btquery.FieldSpec
+}
+
+func (p baseReadPolicy) allowsRecord(rec store.Record, uid int64) bool {
+	if p.onlyOwnRecords && (rec.CreatorID == nil || *rec.CreatorID != uid) {
+		return false
+	}
+	for _, scope := range p.viewRowScopes {
+		if !scope.matches(p.specs, rec, uid) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p baseReadPolicy) effective() EffectiveBasePermissions {
+	ro := make([]int64, 0, len(p.readonly))
+	for fid := range p.readonly {
+		if !p.hidden[fid] {
+			ro = append(ro, fid)
+		}
+	}
+	sort.Slice(ro, func(i, j int) bool { return ro[i] < ro[j] })
+	hid := make([]int64, 0, len(p.hidden))
+	for fid := range p.hidden {
+		hid = append(hid, fid)
+	}
+	sort.Slice(hid, func(i, j int) bool { return hid[i] < hid[j] })
+	roles := make([]string, len(p.matchedRoleNames))
+	copy(roles, p.matchedRoleNames)
+	return EffectiveBasePermissions{
+		CanAddRecord:     p.canAddRecord,
+		CanDeleteRecord:  p.canDeleteRecord,
+		OnlyOwnRecords:   p.onlyOwnRecords,
+		ReadonlyFieldIDs: ro,
+		HiddenFieldIDs:   hid,
+		MatchedRoles:     roles,
+	}
+}
+
+func fieldSpecsWithPrimary(fields []store.Field) []btquery.FieldSpec {
+	out := make([]btquery.FieldSpec, len(fields))
+	for i, f := range fields {
+		out[i] = btquery.FieldSpec{ID: f.ID, Type: f.Type, Options: f.Options, IsPrimary: f.IsPrimary}
+	}
+	return out
+}
+
+func roleMatchesSubject(role btquery.PermissionRole, subj rbacSubject) bool {
+	if subj.UserID > 0 {
+		for _, id := range role.UserIDs {
+			if id == subj.UserID {
+				return true
+			}
+		}
+	}
+	if len(subj.DeptIDs) > 0 {
+		for _, id := range role.DeptIDs {
+			if subj.DeptIDs[id] {
+				return true
+			}
+		}
+	}
+	if len(subj.GroupIDs) > 0 {
+		for _, id := range role.GroupIDs {
+			if subj.GroupIDs[id] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fieldModeRank(mode string) int {
+	switch mode {
+	case "hidden":
+		return 0
+	case "readonly":
+		return 1
+	default: // "" or "edit"
+		return 2
+	}
 }
 
 func parseBasePolicy(b store.DocMeta, fields []store.Field, views []store.View) (baseReadPolicy, error) {
+	return parseBasePolicyForSubject(b, fields, views, rbacSubject{})
+}
+
+func parseBasePolicyForSubject(b store.DocMeta, fields []store.Field, views []store.View, subj rbacSubject) (baseReadPolicy, error) {
 	p := baseReadPolicy{
-		hidden:   map[int64]bool{},
-		readonly: map[int64]bool{},
+		hidden:          map[int64]bool{},
+		readonly:        map[int64]bool{},
+		canAddRecord:    true,
+		canDeleteRecord: true,
+		hiddenViews:     map[int64]bool{},
+		specs:           fieldSpecsWithPrimary(fields),
 	}
 	if b.Role == store.RoleManage {
 		return p, nil
 	}
+	fieldExists := make(map[int64]bool, len(fields))
+	for _, f := range fields {
+		fieldExists[f.ID] = true
+	}
+	seenRoleName := map[string]bool{}
 	for _, v := range views {
 		if v.OwnerID != nil {
 			continue
@@ -45,19 +275,96 @@ func parseBasePolicy(b store.DocMeta, fields []store.Field, views []store.View) 
 			}
 		}
 		if cfg.Permissions != nil {
-			if cfg.Permissions.OnlyOwnRecords {
-				p.onlyOwnRecords = true
-			}
-			for fidStr, mode := range cfg.Permissions.FieldModes {
-				fid, err := strconv.ParseInt(fidStr, 10, 64)
-				if err != nil || fid <= 0 {
-					continue
+			var matched []btquery.PermissionRole
+			for _, role := range cfg.Permissions.Roles {
+				if roleMatchesSubject(role, subj) {
+					matched = append(matched, role)
+					if !seenRoleName[role.Name] {
+						seenRoleName[role.Name] = true
+						p.matchedRoleNames = append(p.matchedRoleNames, role.Name)
+					}
 				}
-				switch mode {
-				case "hidden":
-					p.hidden[fid] = true
-				case "readonly":
-					p.readonly[fid] = true
+			}
+			if len(matched) > 0 {
+				// Case A: union permissions across matched custom roles on this view
+				// (most permissive among the caller's matched roles on that view).
+				viewCanAdd := false
+				viewCanDelete := false
+				viewHidden := true
+				scope := viewRowScope{}
+				for _, role := range matched {
+					if role.CanAddRecord == nil || *role.CanAddRecord {
+						viewCanAdd = true
+					}
+					if role.CanDeleteRecord == nil || *role.CanDeleteRecord {
+						viewCanDelete = true
+					}
+					if !role.ViewHidden {
+						viewHidden = false
+					}
+					switch role.RowScope {
+					case "", "all":
+						scope.allowAll = true
+					case "own":
+						scope.allowOwn = true
+					case "filter":
+						if role.RowFilters != nil && len(role.RowFilters.Rules) > 0 {
+							scope.rowFilters = append(scope.rowFilters, *role.RowFilters)
+						} else {
+							scope.allowAll = true
+						}
+					}
+				}
+				if !viewCanAdd {
+					p.canAddRecord = false
+				}
+				if !viewCanDelete {
+					p.canDeleteRecord = false
+				}
+				if viewHidden {
+					p.hiddenViews[v.ID] = true
+				}
+				if !scope.allowAll {
+					p.viewRowScopes = append(p.viewRowScopes, scope)
+					if len(scope.rowFilters) > 0 {
+						p.roleRowFilters = append(p.roleRowFilters, scope.rowFilters...)
+					}
+					if scope.allowOwn && len(scope.rowFilters) == 0 {
+						p.onlyOwnRecords = true
+					}
+				}
+				for _, f := range fields {
+					fKey := strconv.FormatInt(f.ID, 10)
+					bestRank := 0 // hidden
+					for _, role := range matched {
+						if r := fieldModeRank(role.FieldModes[fKey]); r > bestRank {
+							bestRank = r
+						}
+					}
+					switch bestRank {
+					case 0:
+						p.hidden[f.ID] = true
+					case 1:
+						p.readonly[f.ID] = true
+					}
+				}
+			} else {
+				// Case B: caller matches 0 custom roles -> apply view's default rule.
+				if cfg.Permissions.OnlyOwnRecords {
+					p.onlyOwnRecords = true
+					p.viewRowScopes = append(p.viewRowScopes, viewRowScope{allowOwn: true})
+				}
+				for fidStr, mode := range cfg.Permissions.FieldModes {
+					fid, err := strconv.ParseInt(fidStr, 10, 64)
+					if err != nil || fid <= 0 || !fieldExists[fid] {
+						continue
+					}
+					switch mode {
+					case "hidden":
+						p.hidden[fid] = true
+					case "readonly":
+						p.readonly[fid] = true
+					}
 				}
 			}
 		}
@@ -161,15 +468,17 @@ func stripBaseRecords(recs []store.Record, fields []store.Field, p baseReadPolic
 }
 
 type baseReadable struct {
-	meta              store.DocMeta
-	tables            []store.BaseTable
-	tableID           int64
-	allFields, fields []store.Field
-	views             []store.View
-	policy            baseReadPolicy
-	records           []store.Record
-	memberIDs         []int64
-	memberNames       map[int64]string
+	meta               store.DocMeta
+	tables             []store.BaseTable
+	tableID            int64
+	allFields, fields  []store.Field
+	views              []store.View
+	policy             baseReadPolicy
+	records            []store.Record
+	memberIDs          []int64
+	memberNames        map[int64]string
+	subject            rbacSubject
+	hasResolvedSubject bool
 }
 
 func (s *Server) readBaseAllowed(ctx context.Context, uid, id int64) (baseReadable, error) {
@@ -181,12 +490,12 @@ func readBaseAllowedWith(ctx context.Context, reader store.BaseSnapshotReader, u
 }
 
 func filterOwnRecords(recs []store.Record, p baseReadPolicy, uid int64) []store.Record {
-	if !p.onlyOwnRecords {
+	if !p.onlyOwnRecords && len(p.viewRowScopes) == 0 {
 		return recs
 	}
 	out := make([]store.Record, 0, len(recs))
 	for _, rec := range recs {
-		if rec.CreatorID != nil && *rec.CreatorID == uid {
+		if p.allowsRecord(rec, uid) {
 			out = append(out, rec)
 		}
 	}
@@ -206,13 +515,109 @@ func cellsTouchFieldSet(cells map[string]json.RawMessage, blocked map[int64]bool
 	return false
 }
 
-// checkBaseRecordWritePolicy enforces fine-grained view permissions
-// (onlyOwnRecords, readonly, and hidden fields) for non-manage users.
+// basePolicyForRequest evaluates the caller's RBAC policy for a given table
+// (default table when tableID <= 0) using the caller's resolved org subjects.
+func (s *Server) basePolicyForRequest(ctx context.Context, r *http.Request, b store.DocMeta, uid, tableID int64) (baseReadPolicy, []store.Field, error) {
+	allFields, err := s.Store.Fields(ctx, b.ID)
+	if err != nil {
+		return baseReadPolicy{}, nil, err
+	}
+	allViews, err := s.Store.Views(ctx, b.ID)
+	if err != nil {
+		return baseReadPolicy{}, nil, err
+	}
+	effID := tableID
+	if effID <= 0 {
+		tables, err := s.Store.BaseTables(ctx, b.ID)
+		if err != nil {
+			return baseReadPolicy{}, nil, err
+		}
+		for _, tbl := range tables {
+			if tbl.IsDefault {
+				effID = tbl.ID
+				break
+			}
+		}
+		if effID == 0 && len(tables) > 0 {
+			effID = tables[0].ID
+		}
+	}
+	fields := filterFieldsByTable(allFields, effID)
+	views := filterViewsByTable(allViews, effID)
+	subj := rbacSubject{UserID: uid}
+	if b.Role != store.RoleManage {
+		subj = s.resolveBaseSubject(ctx, r, uid, b.WorkspaceID)
+	}
+	p, err := parseBasePolicyForSubject(b, fields, views, subj)
+	return p, fields, err
+}
+
+// readProjectionPolicyForRequest obtains metadata + RBAC policy (including
+// department/group subjects) to project a single written record.
+func (s *Server) readProjectionPolicyForRequest(ctx context.Context, r *http.Request, userID, baseID int64) (baseReadable, error) {
+	meta, err := s.Store.GetDoc(ctx, userID, baseID)
+	if err != nil {
+		return baseReadable{}, err
+	}
+	if meta.Kind != "base" || store.RoleRank(meta.Role) < store.RoleRank(store.RoleView) {
+		return baseReadable{}, store.ErrNotFound
+	}
+	fields, err := s.Store.Fields(ctx, baseID)
+	if err != nil {
+		return baseReadable{}, err
+	}
+	views, err := s.Store.Views(ctx, baseID)
+	if err != nil {
+		return baseReadable{}, err
+	}
+	subj := rbacSubject{UserID: userID}
+	hasSubj := false
+	if meta.Role != store.RoleManage {
+		subj = s.resolveBaseSubject(ctx, r, userID, meta.WorkspaceID)
+		hasSubj = true
+	}
+	policy, err := parseBasePolicyForSubject(meta, fields, views, subj)
+	if err != nil {
+		return baseReadable{}, err
+	}
+	return baseReadable{
+		meta:               meta,
+		allFields:          fields,
+		fields:             visibleBaseFields(fields, policy),
+		views:              views,
+		policy:             policy,
+		subject:            subj,
+		hasResolvedSubject: hasSubj,
+	}, nil
+}
+
+// checkBaseRecordWritePolicy enforces fine-grained view permissions and RBAC
+// for non-manage users (backward-compatible entry point for update/add callers).
 func (s *Server) checkBaseRecordWritePolicy(
 	w http.ResponseWriter,
 	r *http.Request,
 	b store.DocMeta,
 	uid int64,
+	defaultTableID int64,
+	recordIDs []int64,
+	cellMaps []map[string]json.RawMessage,
+	expectedMaps []map[string]json.RawMessage,
+) bool {
+	op := "update"
+	if len(recordIDs) == 0 {
+		op = "add"
+	}
+	return s.checkBaseRecordOpPolicy(w, r, b, uid, op, defaultTableID, recordIDs, cellMaps, expectedMaps)
+}
+
+// checkBaseRecordOpPolicy enforces fine-grained view permissions and multi-role
+// RBAC (canAddRecord, canDeleteRecord, rowScope/rowFilters, readonly/hidden fields).
+func (s *Server) checkBaseRecordOpPolicy(
+	w http.ResponseWriter,
+	r *http.Request,
+	b store.DocMeta,
+	uid int64,
+	op string,
 	defaultTableID int64,
 	recordIDs []int64,
 	cellMaps []map[string]json.RawMessage,
@@ -237,7 +642,7 @@ func (s *Server) checkBaseRecordWritePolicy(
 			s.fail(w, r, fmt.Errorf("invalid stored view %d: %w", v.ID, err))
 			return false
 		}
-		if cfg.Permissions != nil && (cfg.Permissions.OnlyOwnRecords || len(cfg.Permissions.FieldModes) > 0) {
+		if cfg.Permissions != nil && (cfg.Permissions.OnlyOwnRecords || len(cfg.Permissions.FieldModes) > 0 || len(cfg.Permissions.Roles) > 0) {
 			hasPermissions = true
 			break
 		}
@@ -250,6 +655,7 @@ func (s *Server) checkBaseRecordWritePolicy(
 		s.fail(w, r, err)
 		return false
 	}
+	subj := s.resolveBaseSubject(ctx, r, uid, b.WorkspaceID)
 	resolvedDefault := defaultTableID
 	defaultResolved := resolvedDefault > 0
 	resolveTable := func(tid int64) (int64, error) {
@@ -283,12 +689,23 @@ func (s *Server) checkBaseRecordWritePolicy(
 		if p, ok := policies[effID]; ok {
 			return p, nil
 		}
-		p, err := parseBasePolicy(b, filterFieldsByTable(allFields, effID), filterViewsByTable(allViews, effID))
+		p, err := parseBasePolicyForSubject(b, filterFieldsByTable(allFields, effID), filterViewsByTable(allViews, effID), subj)
 		if err != nil {
 			return baseReadPolicy{}, err
 		}
 		policies[effID] = p
 		return p, nil
+	}
+	checkOpCapability := func(p baseReadPolicy) bool {
+		if op == "add" && !p.canAddRecord {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许新增记录")
+			return false
+		}
+		if op == "delete" && !p.canDeleteRecord {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许删除记录")
+			return false
+		}
+		return true
 	}
 	checkCellsAndExpected := func(p baseReadPolicy, cells, expected map[string]json.RawMessage) bool {
 		if cellsTouchFieldSet(cells, p.hidden) || cellsTouchFieldSet(cells, p.readonly) {
@@ -325,8 +742,11 @@ func (s *Server) checkBaseRecordWritePolicy(
 					s.fail(w, r, err)
 					return false
 				}
-				if p.onlyOwnRecords && (rec.CreatorID == nil || *rec.CreatorID != uid) {
-					httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限仅允许修改或删除自己创建的记录")
+				if !checkOpCapability(p) {
+					return false
+				}
+				if !p.allowsRecord(rec, uid) {
+					httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限仅允许修改或删除范围内的记录")
 					return false
 				}
 				if !checkCellsAndExpected(p, cells, expected) {
@@ -336,6 +756,9 @@ func (s *Server) checkBaseRecordWritePolicy(
 				p, err := policyFor(0)
 				if err != nil {
 					s.fail(w, r, err)
+					return false
+				}
+				if !checkOpCapability(p) {
 					return false
 				}
 				if !checkCellsAndExpected(p, cells, expected) {
@@ -348,6 +771,9 @@ func (s *Server) checkBaseRecordWritePolicy(
 	p, err := policyFor(0)
 	if err != nil {
 		s.fail(w, r, err)
+		return false
+	}
+	if !checkOpCapability(p) {
 		return false
 	}
 	for i := 0; i < len(cellMaps) || i < len(expectedMaps); i++ {
@@ -432,11 +858,22 @@ func readBaseTablePolicyWith(ctx context.Context, reader store.BaseSnapshotReade
 	}
 	fields := filterFieldsByTable(allFields, activeTableID)
 	views := filterViewsByTable(allViews, activeTableID)
-	policy, err := parseBasePolicy(meta, fields, views)
+	subj, hasSubj := rbacSubjectFromContext(ctx, meta.WorkspaceID, uid)
+	policy, err := parseBasePolicyForSubject(meta, fields, views, subj)
 	if err != nil {
 		return out, err
 	}
-	return baseReadable{meta: meta, tables: tables, tableID: activeTableID, allFields: fields, fields: visibleBaseFields(fields, policy), views: views, policy: policy}, nil
+	return baseReadable{
+		meta:               meta,
+		tables:             tables,
+		tableID:            activeTableID,
+		allFields:          fields,
+		fields:             visibleBaseFields(fields, policy),
+		views:              views,
+		policy:             policy,
+		subject:            subj,
+		hasResolvedSubject: hasSubj,
+	}, nil
 }
 
 // Recheck the original session and the relevant permission configuration after
@@ -460,6 +897,12 @@ func (s *Server) recheckBaseRead(ctx context.Context, r *http.Request, snapshot 
 	}
 	if meta.Kind != "base" || meta.Role != snapshot.meta.Role || meta.WorkspaceID != snapshot.meta.WorkspaceID || meta.CopyProtected != snapshot.meta.CopyProtected || !reflect.DeepEqual(meta.ParentID, snapshot.meta.ParentID) {
 		return store.ErrConflict
+	}
+	if snapshot.hasResolvedSubject && meta.Role != store.RoleManage {
+		currentSubj := s.resolveBaseSubject(ctx, r, u.ID, meta.WorkspaceID)
+		if !reflect.DeepEqual(currentSubj, snapshot.subject) {
+			return store.ErrConflict
+		}
 	}
 	allFields, err := s.Store.Fields(ctx, meta.ID)
 	if err != nil {
@@ -689,6 +1132,9 @@ func visibleBaseViews(views []store.View, p baseReadPolicy, callerUserID int64) 
 		if v.OwnerID != nil && *v.OwnerID != callerUserID {
 			continue
 		}
+		if v.OwnerID == nil && p.hiddenViews[v.ID] {
+			continue
+		}
 		filtered = append(filtered, v)
 	}
 	if len(p.hidden) == 0 {
@@ -745,7 +1191,35 @@ func visibleBaseViews(views []store.View, p baseReadPolicy, callerUserID int64) 
 					}
 					perms.FieldModes = cleanModes
 				}
-				if !perms.OnlyOwnRecords && len(perms.FieldModes) == 0 {
+				if len(perms.Roles) > 0 {
+					cleanRoles := make([]btquery.PermissionRole, len(perms.Roles))
+					for i, role := range perms.Roles {
+						if len(role.FieldModes) > 0 {
+							rm := make(map[string]string, len(role.FieldModes))
+							for fidStr, mode := range role.FieldModes {
+								fid, err := strconv.ParseInt(fidStr, 10, 64)
+								if err == nil && !p.hidden[fid] {
+									rm[fidStr] = mode
+								}
+							}
+							role.FieldModes = rm
+						}
+						if role.RowFilters != nil && len(role.RowFilters.Rules) > 0 {
+							rules := make([]btquery.Rule, 0, len(role.RowFilters.Rules))
+							for _, rule := range role.RowFilters.Rules {
+								if !p.hidden[rule.F] {
+									rules = append(rules, rule)
+								}
+							}
+							rf := *role.RowFilters
+							rf.Rules = rules
+							role.RowFilters = &rf
+						}
+						cleanRoles[i] = role
+					}
+					perms.Roles = cleanRoles
+				}
+				if !perms.OnlyOwnRecords && len(perms.FieldModes) == 0 && len(perms.Roles) == 0 {
 					delete(obj, "permissions")
 				} else {
 					obj["permissions"], _ = json.Marshal(perms)

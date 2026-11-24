@@ -309,3 +309,70 @@
 .dark [data-editor]::selection {
   background: rgba(76, 136, 255, 0.36);
 }
+
+/* 移动端响应式基础：平滑横向滚动、安全视口与弹窗防溢出 */
+.mobile-scroll-x {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.mobile-scroll-x::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.safe-area-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+@media (max-width: 768px) {
+  html,
+  body,
+  #root {
+    height: 100%;
+    height: 100dvh;
+  }
+  html,
+  body {
+    overflow-x: clip;
+    overscroll-behavior-x: none;
+  }
+  body {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  button,
+  a,
+  [role="button"] {
+    touch-action: manipulation;
+  }
+  [role="dialog"]:not([data-version-panel]):not(.inset-0),
+  [role="alertdialog"]:not(.inset-0),
+  [role="dialog"]:not([data-version-panel]).inset-0 > :first-child,
+  [role="menu"] {
+    max-width: calc(100vw - 16px);
+  }
+  [data-format-toolbar] {
+    max-width: calc(100vw - 16px);
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  [data-format-toolbar]::-webkit-scrollbar {
+    display: none;
+  }
+  [data-outline-panel],
+  [data-comments-panel],
+  [data-doc-ai-panel],
+  [data-suggestion-panel] {
+    z-index: 40;
+    width: min(100vw, 360px);
+  }
+  [data-wiki-space-page] [data-wiki-main-pane] > * > header,
+  [data-wiki-space-page] [data-wiki-main-pane] > div > div > header {
+    padding-left: 12px;
+  }
+}

@@ -1,8 +1,10 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -26,8 +28,16 @@ func (s *Server) moveKanbanCard(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")
 		return
 	}
+	rid := pathID(r, "rid")
+	var cellMaps []map[string]json.RawMessage
+	if move.FieldID > 0 {
+		cellMaps = []map[string]json.RawMessage{{strconv.FormatInt(move.FieldID, 10): json.RawMessage(`null`)}}
+	}
+	if !s.checkBaseRecordOpPolicy(w, r, b, u.ID, "update", 0, []int64{rid}, cellMaps, nil) {
+		return
+	}
 	guard := store.BaseWriteGuard{UserID: u.ID, SessionHash: auth.HashToken(cookie.Value), Now: s.now}
-	record, changed, err := s.Store.MoveKanbanCard(r.Context(), guard, b.ID, pathID(r, "rid"), move)
+	record, changed, err := s.Store.MoveKanbanCard(r.Context(), guard, b.ID, rid, move)
 	switch {
 	case errors.Is(err, store.ErrUnauthenticated):
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效，记录未修改")

@@ -1,0 +1,652 @@
+package store
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"math"
+	"sort"
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"github.com/jackc/pgx/v5"
+)
+
+const (
+	AuditLogDefaultLimit = 50
+	AuditLogMaxLimit     = 200
+	AuditLogExportLimit  = 5000
+
+	DefaultWatermarkOpacity = 0.07
+	MinWatermarkOpacity     = 0.02
+	MaxWatermarkOpacity     = 0.25
+	MaxWatermarkTextRunes   = 80
+
+	maxAuditActionRunes        = 100
+	maxAuditActorNameRunes     = 120
+	maxAuditActorEmailRunes    = 320
+	maxAuditResourceTypeRunes  = 64
+	maxAuditResourceTitleRunes = 300
+	maxAuditIPRunes            = 128
+	maxAuditUserAgentRunes     = 512
+	maxAuditDetailBytes        = 16384
+)
+
+// memEnterprise holds in-memory audit logs and workspace security policies for Memory store.
+type memEnterprise struct {
+	nextAuditID int64
+	auditLogs   []AuditLogEntry
+	policies    map[int64]WorkspaceSecurityPolicy
+}
+
+// AuditLogEntry records a security-relevant event inside a workspace.
+type AuditLogEntry struct {
+	ID            int64           `json:"id"`
+	WorkspaceID   int64           `json:"workspaceId"`
+	ActorID       int64           `json:"actorId"`
+	ActorName     string          `json:"actorName"`
+	ActorEmail    string          `json:"actorEmail"`
+	Action        string          `json:"action"`
+	ResourceType  string          `json:"resourceType"`
+	ResourceID    int64           `json:"resourceId"`
+	ResourceTitle string          `json:"resourceTitle"`
+	Detail        json.RawMessage `json:"detail"`
+	IPAddress     string          `json:"ipAddress"`
+	UserAgent     string          `json:"userAgent"`
+	CreatedAt     time.Time       `json:"createdAt"`
+}
+
+// AuditLogFilter narrows workspace audit log queries.
+type AuditLogFilter struct {
+	WorkspaceID  int64
+	Action       string
+	ResourceType string
+	ActorID      int64
+	Query        string
+	From         *time.Time
+	To           *time.Time
+	Limit        int
+	Offset       int
+	// Export lifts the page limit ceiling from AuditLogMaxLimit (200) to
+	// AuditLogExportLimit (5000) for admin CSV exports.
+	Export bool
+}
+
+// AuditLogPage is one paginated slice of workspace audit logs.
+type AuditLogPage struct {
+	Items   []AuditLogEntry `json:"items"`
+	Total   int             `json:"total"`
+	Actions []string        `json:"actions"`
+}
+
+// WorkspaceSecurityPolicy configures enterprise suite-wide document security
+// controls such as diagonal user watermarks.
+type WorkspaceSecurityPolicy struct {
+	WorkspaceID        int64     `json:"workspaceId"`
+	WatermarkEnabled   bool      `json:"watermarkEnabled"`
+	WatermarkText      string    `json:"watermarkText"`
+	WatermarkShowUser  bool      `json:"watermarkShowUser"`
+	WatermarkShowEmail bool      `json:"watermarkShowEmail"`
+	WatermarkShowDate  bool      `json:"watermarkShowDate"`
+	WatermarkOpacity   float64   `json:"watermarkOpacity"`
+	UpdatedBy          int64     `json:"updatedBy"`
+	UpdatedAt          time.Time `json:"updatedAt"`
+}
+
+// WorkspaceSecurityPolicyPatch partially updates a workspace's security policy.
+type WorkspaceSecurityPolicyPatch struct {
+	WatermarkEnabled   *bool    `json:"watermarkEnabled,omitempty"`
+	WatermarkText      *string  `json:"watermarkText,omitempty"`
+	WatermarkShowUser  *bool    `json:"watermarkShowUser,omitempty"`
+	WatermarkShowEmail *bool    `json:"watermarkShowEmail,omitempty"`
+	WatermarkShowDate  *bool    `json:"watermarkShowDate,omitempty"`
+	WatermarkOpacity   *float64 `json:"watermarkOpacity,omitempty"`
+}
+
+// AuditLogStore persists enterprise security audit logs and workspace security policies.
+type AuditLogStore interface {
+	AppendAuditLog(ctx context.Context, entry AuditLogEntry) error
+	ListAuditLogsGuarded(ctx context.Context, guard RestoreGuard, wsID int64, filter AuditLogFilter) (AuditLogPage, error)
+	GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID int64) (WorkspaceSecurityPolicy, error)
+	UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard RestoreGuard, wsID int64, patch WorkspaceSecurityPolicyPatch) (WorkspaceSecurityPolicy, error)
+}
+
+var (
+	_ AuditLogStore = (*Memory)(nil)
+	_ AuditLogStore = (*Postgres)(nil)
+)
+
+// DefaultWorkspaceSecurityPolicy returns the default policy when a workspace
+// has not yet customized its security settings.
+func DefaultWorkspaceSecurityPolicy(wsID int64) WorkspaceSecurityPolicy {
+	return WorkspaceSecurityPolicy{
+		WorkspaceID:        wsID,
+		WatermarkEnabled:   false,
+		WatermarkText:      "",
+		WatermarkShowUser:  true,
+		WatermarkShowEmail: true,
+		WatermarkShowDate:  true,
+		WatermarkOpacity:   DefaultWatermarkOpacity,
+	}
+}
+
+func clampAuditRunes(raw string, maxRunes int) string {
+	trimmed := strings.TrimSpace(raw)
+	if maxRunes <= 0 || utf8.RuneCountInString(trimmed) <= maxRunes {
+		return trimmed
+	}
+	var b strings.Builder
+	b.Grow(len(trimmed))
+	count := 0
+	for _, r := range trimmed {
+		if count >= maxRunes {
+			break
+		}
+		b.WriteRune(r)
+		count++
+	}
+	return b.String()
+}
+
+func clampWatermarkOpacity(v float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return DefaultWatermarkOpacity
+	}
+	if v < MinWatermarkOpacity {
+		return MinWatermarkOpacity
+	}
+	if v > MaxWatermarkOpacity {
+		return MaxWatermarkOpacity
+	}
+	return v
+}
+
+func normalizeAuditDetail(raw json.RawMessage) json.RawMessage {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || !json.Valid(trimmed) {
+		return json.RawMessage("{}")
+	}
+	if len(trimmed) > maxAuditDetailBytes {
+		return json.RawMessage(`{"truncated":true}`)
+	}
+	cp := make([]byte, len(trimmed))
+	copy(cp, trimmed)
+	return json.RawMessage(cp)
+}
+
+func sanitizeAuditEntry(entry AuditLogEntry) (AuditLogEntry, error) {
+	action := clampAuditRunes(entry.Action, maxAuditActionRunes)
+	if action == "" {
+		return AuditLogEntry{}, ErrConflict
+	}
+	if entry.WorkspaceID < 0 {
+		entry.WorkspaceID = 0
+	}
+	if entry.ActorID < 0 {
+		entry.ActorID = 0
+	}
+	if entry.ResourceID < 0 {
+		entry.ResourceID = 0
+	}
+	entry.Action = action
+	entry.ActorName = clampAuditRunes(entry.ActorName, maxAuditActorNameRunes)
+	entry.ActorEmail = clampAuditRunes(entry.ActorEmail, maxAuditActorEmailRunes)
+	entry.ResourceType = clampAuditRunes(entry.ResourceType, maxAuditResourceTypeRunes)
+	entry.ResourceTitle = clampAuditRunes(entry.ResourceTitle, maxAuditResourceTitleRunes)
+	entry.IPAddress = clampAuditRunes(entry.IPAddress, maxAuditIPRunes)
+	entry.UserAgent = clampAuditRunes(entry.UserAgent, maxAuditUserAgentRunes)
+	entry.Detail = normalizeAuditDetail(entry.Detail)
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = time.Now().UTC()
+	} else {
+		entry.CreatedAt = entry.CreatedAt.UTC()
+	}
+	return entry, nil
+}
+
+func normalizeAuditLimitOffset(filter AuditLogFilter) (int, int) {
+	limit := filter.Limit
+	if filter.Export {
+		if limit <= 0 {
+			limit = AuditLogExportLimit
+		} else if limit > AuditLogExportLimit {
+			limit = AuditLogExportLimit
+		}
+	} else {
+		if limit <= 0 {
+			limit = AuditLogDefaultLimit
+		} else if limit > AuditLogMaxLimit {
+			limit = AuditLogMaxLimit
+		}
+	}
+	offset := filter.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	return limit, offset
+}
+
+func applySecurityPolicyPatch(base WorkspaceSecurityPolicy, patch WorkspaceSecurityPolicyPatch, updatedBy int64, now time.Time) WorkspaceSecurityPolicy {
+	out := base
+	if patch.WatermarkEnabled != nil {
+		out.WatermarkEnabled = *patch.WatermarkEnabled
+	}
+	if patch.WatermarkText != nil {
+		out.WatermarkText = clampAuditRunes(*patch.WatermarkText, MaxWatermarkTextRunes)
+	}
+	if patch.WatermarkShowUser != nil {
+		out.WatermarkShowUser = *patch.WatermarkShowUser
+	}
+	if patch.WatermarkShowEmail != nil {
+		out.WatermarkShowEmail = *patch.WatermarkShowEmail
+	}
+	if patch.WatermarkShowDate != nil {
+		out.WatermarkShowDate = *patch.WatermarkShowDate
+	}
+	if patch.WatermarkOpacity != nil {
+		out.WatermarkOpacity = clampWatermarkOpacity(*patch.WatermarkOpacity)
+	} else {
+		out.WatermarkOpacity = clampWatermarkOpacity(out.WatermarkOpacity)
+	}
+	out.UpdatedBy = updatedBy
+	out.UpdatedAt = now.UTC()
+	return out
+}
+
+func nullablePositiveID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
+}
+
+func escapeAuditLike(q string) string {
+	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+	return "%" + r.Replace(q) + "%"
+}
+
+func cloneAuditEntry(e AuditLogEntry) AuditLogEntry {
+	if len(e.Detail) > 0 {
+		cp := make([]byte, len(e.Detail))
+		copy(cp, e.Detail)
+		e.Detail = cp
+	} else {
+		e.Detail = json.RawMessage("{}")
+	}
+	return e
+}
+
+// --- Memory implementation ---
+
+func (m *Memory) AppendAuditLog(ctx context.Context, entry AuditLogEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	clean, err := sanitizeAuditEntry(entry)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.enterprise.nextAuditID++
+	clean.ID = m.enterprise.nextAuditID
+	m.enterprise.auditLogs = append(m.enterprise.auditLogs, cloneAuditEntry(clean))
+	return nil
+}
+
+func (m *Memory) ListAuditLogsGuarded(ctx context.Context, guard RestoreGuard, wsID int64, filter AuditLogFilter) (AuditLogPage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.checkWorkspaceAdminLocked(ctx, guard, wsID)
+	if err != nil {
+		return AuditLogPage{}, err
+	}
+
+	limit, offset := normalizeAuditLimitOffset(filter)
+	actionFilter := strings.TrimSpace(filter.Action)
+	resourceTypeFilter := strings.TrimSpace(filter.ResourceType)
+	qLower := strings.ToLower(strings.TrimSpace(filter.Query))
+
+	actionSet := map[string]struct{}{}
+	matched := make([]AuditLogEntry, 0)
+	for _, e := range m.enterprise.auditLogs {
+		if e.WorkspaceID != wsID {
+			continue
+		}
+		if e.Action != "" {
+			actionSet[e.Action] = struct{}{}
+		}
+		if actionFilter != "" && e.Action != actionFilter {
+			continue
+		}
+		if resourceTypeFilter != "" && e.ResourceType != resourceTypeFilter {
+			continue
+		}
+		if filter.ActorID > 0 && e.ActorID != filter.ActorID {
+			continue
+		}
+		if filter.From != nil && e.CreatedAt.Before(*filter.From) {
+			continue
+		}
+		if filter.To != nil && e.CreatedAt.After(*filter.To) {
+			continue
+		}
+		if qLower != "" {
+			hit := strings.Contains(strings.ToLower(e.ActorName), qLower) ||
+				strings.Contains(strings.ToLower(e.ActorEmail), qLower) ||
+				strings.Contains(strings.ToLower(e.ResourceTitle), qLower) ||
+				strings.Contains(strings.ToLower(e.Action), qLower) ||
+				strings.Contains(strings.ToLower(e.IPAddress), qLower)
+			if !hit {
+				continue
+			}
+		}
+		matched = append(matched, cloneAuditEntry(e))
+	}
+
+	sort.Slice(matched, func(i, j int) bool {
+		if !matched[i].CreatedAt.Equal(matched[j].CreatedAt) {
+			return matched[i].CreatedAt.After(matched[j].CreatedAt)
+		}
+		return matched[i].ID > matched[j].ID
+	})
+
+	actions := make([]string, 0, len(actionSet))
+	for a := range actionSet {
+		actions = append(actions, a)
+	}
+	sort.Strings(actions)
+
+	total := len(matched)
+	items := make([]AuditLogEntry, 0)
+	if offset < total {
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		items = matched[offset:end]
+	}
+
+	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+		return AuditLogPage{}, err
+	}
+	return AuditLogPage{
+		Items:   items,
+		Total:   total,
+		Actions: actions,
+	}, nil
+}
+
+func (m *Memory) GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID int64) (WorkspaceSecurityPolicy, error) {
+	if err := ctx.Err(); err != nil {
+		return WorkspaceSecurityPolicy{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if wsID <= 0 || int(wsID) > len(m.workspaces) {
+		return WorkspaceSecurityPolicy{}, ErrNotFound
+	}
+	if m.workspaceRoleLocked(wsID, userID) == "" {
+		return WorkspaceSecurityPolicy{}, ErrForbidden
+	}
+	if p, ok := m.enterprise.policies[wsID]; ok {
+		return p, nil
+	}
+	return DefaultWorkspaceSecurityPolicy(wsID), nil
+}
+
+func (m *Memory) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard RestoreGuard, wsID int64, patch WorkspaceSecurityPolicyPatch) (WorkspaceSecurityPolicy, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	expires, err := m.checkWorkspaceAdminLocked(ctx, guard, wsID)
+	if err != nil {
+		return WorkspaceSecurityPolicy{}, err
+	}
+	if m.enterprise.policies == nil {
+		m.enterprise.policies = map[int64]WorkspaceSecurityPolicy{}
+	}
+	cur, ok := m.enterprise.policies[wsID]
+	if !ok {
+		cur = DefaultWorkspaceSecurityPolicy(wsID)
+	}
+	next := applySecurityPolicyPatch(cur, patch, guard.UserID, guard.currentTime())
+	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
+		return WorkspaceSecurityPolicy{}, err
+	}
+	m.enterprise.policies[wsID] = next
+	return next, nil
+}
+
+// --- Postgres implementation ---
+
+func (p *Postgres) AppendAuditLog(ctx context.Context, entry AuditLogEntry) error {
+	clean, err := sanitizeAuditEntry(entry)
+	if err != nil {
+		return err
+	}
+	_, err = p.Pool.Exec(ctx, `INSERT INTO audit_logs (
+		workspace_id, actor_id, actor_name, actor_email, action,
+		resource_type, resource_id, resource_title, detail, ip_address, user_agent, created_at
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12)`,
+		clean.WorkspaceID,
+		nullablePositiveID(clean.ActorID),
+		clean.ActorName,
+		clean.ActorEmail,
+		clean.Action,
+		clean.ResourceType,
+		clean.ResourceID,
+		clean.ResourceTitle,
+		string(clean.Detail),
+		clean.IPAddress,
+		clean.UserAgent,
+		clean.CreatedAt,
+	)
+	return err
+}
+
+func (p *Postgres) ListAuditLogsGuarded(ctx context.Context, guard RestoreGuard, wsID int64, filter AuditLogFilter) (out AuditLogPage, err error) {
+	limit, offset := normalizeAuditLimitOffset(filter)
+	actionFilter := strings.TrimSpace(filter.Action)
+	resourceTypeFilter := strings.TrimSpace(filter.ResourceType)
+	q := strings.TrimSpace(filter.Query)
+
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		expires, e := orgPGRequireAdmin(ctx, tx, guard, wsID)
+		if e != nil {
+			return e
+		}
+
+		where := []string{"workspace_id = $1"}
+		args := []any{wsID}
+		nextArg := func(v any) string {
+			args = append(args, v)
+			return fmt.Sprintf("$%d", len(args))
+		}
+
+		if actionFilter != "" {
+			where = append(where, "action = "+nextArg(actionFilter))
+		}
+		if resourceTypeFilter != "" {
+			where = append(where, "resource_type = "+nextArg(resourceTypeFilter))
+		}
+		if filter.ActorID > 0 {
+			where = append(where, "actor_id = "+nextArg(filter.ActorID))
+		}
+		if filter.From != nil {
+			where = append(where, "created_at >= "+nextArg(filter.From.UTC()))
+		}
+		if filter.To != nil {
+			where = append(where, "created_at <= "+nextArg(filter.To.UTC()))
+		}
+		if q != "" {
+			pat := nextArg(escapeAuditLike(q))
+			where = append(where, fmt.Sprintf(
+				`(actor_name ILIKE %s ESCAPE '\' OR actor_email ILIKE %s ESCAPE '\' OR resource_title ILIKE %s ESCAPE '\' OR action ILIKE %s ESCAPE '\' OR ip_address ILIKE %s ESCAPE '\')`,
+				pat, pat, pat, pat, pat,
+			))
+		}
+
+		whereSQL := strings.Join(where, " AND ")
+
+		var total int
+		if e = tx.QueryRow(ctx, `SELECT COUNT(*) FROM audit_logs WHERE `+whereSQL, args...).Scan(&total); e != nil {
+			return e
+		}
+
+		limitPlaceholder := nextArg(limit)
+		offsetPlaceholder := nextArg(offset)
+		listSQL := `SELECT id, workspace_id, COALESCE(actor_id, 0), actor_name, actor_email, action,
+			resource_type, resource_id, resource_title, detail, ip_address, user_agent, created_at
+			FROM audit_logs WHERE ` + whereSQL + ` ORDER BY created_at DESC, id DESC LIMIT ` + limitPlaceholder + ` OFFSET ` + offsetPlaceholder
+
+		rows, e := tx.Query(ctx, listSQL, args...)
+		if e != nil {
+			return e
+		}
+		items, e := pgx.CollectRows(rows, func(r pgx.CollectableRow) (item AuditLogEntry, err error) {
+			var detailBytes []byte
+			err = r.Scan(
+				&item.ID, &item.WorkspaceID, &item.ActorID, &item.ActorName, &item.ActorEmail,
+				&item.Action, &item.ResourceType, &item.ResourceID, &item.ResourceTitle,
+				&detailBytes, &item.IPAddress, &item.UserAgent, &item.CreatedAt,
+			)
+			item.Detail = normalizeAuditDetail(detailBytes)
+			return
+		})
+		if e != nil {
+			return e
+		}
+		if items == nil {
+			items = []AuditLogEntry{}
+		}
+
+		actRows, e := tx.Query(ctx, `SELECT DISTINCT action FROM audit_logs WHERE workspace_id = $1 ORDER BY action`, wsID)
+		if e != nil {
+			return e
+		}
+		actions, e := pgx.CollectRows(actRows, func(r pgx.CollectableRow) (a string, err error) {
+			err = r.Scan(&a)
+			return
+		})
+		if e != nil {
+			return e
+		}
+		if actions == nil {
+			actions = []string{}
+		}
+
+		out = AuditLogPage{
+			Items:   items,
+			Total:   total,
+			Actions: actions,
+		}
+		return drivePGEnd(ctx, guard, expires)
+	})
+	return out, orgPGError(err)
+}
+
+func (p *Postgres) GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID int64) (out WorkspaceSecurityPolicy, err error) {
+	if wsID <= 0 {
+		return out, ErrNotFound
+	}
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var exists int
+		if e := tx.QueryRow(ctx, `SELECT 1 FROM workspaces WHERE id=$1`, wsID).Scan(&exists); e != nil {
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return e
+		}
+		var role string
+		if e := tx.QueryRow(ctx, `SELECT role FROM workspace_members WHERE workspace_id=$1 AND user_id=$2`, wsID, userID).Scan(&role); e != nil {
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrForbidden
+			}
+			return e
+		}
+		var pol WorkspaceSecurityPolicy
+		e := tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
+			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
+			COALESCE(updated_by, 0), updated_at
+			FROM workspace_security_policies WHERE workspace_id=$1`, wsID).Scan(
+			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
+			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
+			&pol.WatermarkOpacity, &pol.UpdatedBy, &pol.UpdatedAt,
+		)
+		if errors.Is(e, pgx.ErrNoRows) {
+			out = DefaultWorkspaceSecurityPolicy(wsID)
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		out = pol
+		return nil
+	})
+	return out, err
+}
+
+func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard RestoreGuard, wsID int64, patch WorkspaceSecurityPolicyPatch) (out WorkspaceSecurityPolicy, err error) {
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		expires, e := orgPGRequireAdmin(ctx, tx, guard, wsID)
+		if e != nil {
+			return e
+		}
+		if _, e = tx.Exec(ctx, `SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, wsID); e != nil {
+			return e
+		}
+		cur := DefaultWorkspaceSecurityPolicy(wsID)
+		e = tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
+			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
+			COALESCE(updated_by, 0), updated_at
+			FROM workspace_security_policies WHERE workspace_id=$1 FOR UPDATE`, wsID).Scan(
+			&cur.WorkspaceID, &cur.WatermarkEnabled, &cur.WatermarkText,
+			&cur.WatermarkShowUser, &cur.WatermarkShowEmail, &cur.WatermarkShowDate,
+			&cur.WatermarkOpacity, &cur.UpdatedBy, &cur.UpdatedAt,
+		)
+		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
+			return e
+		}
+
+		next := applySecurityPolicyPatch(cur, patch, guard.UserID, guard.currentTime())
+		e = tx.QueryRow(ctx, `INSERT INTO workspace_security_policies (
+			workspace_id, watermark_enabled, watermark_text,
+			watermark_show_user, watermark_show_email, watermark_show_date,
+			watermark_opacity, updated_by, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		ON CONFLICT (workspace_id) DO UPDATE SET
+			watermark_enabled    = EXCLUDED.watermark_enabled,
+			watermark_text       = EXCLUDED.watermark_text,
+			watermark_show_user  = EXCLUDED.watermark_show_user,
+			watermark_show_email = EXCLUDED.watermark_show_email,
+			watermark_show_date  = EXCLUDED.watermark_show_date,
+			watermark_opacity    = EXCLUDED.watermark_opacity,
+			updated_by           = EXCLUDED.updated_by,
+			updated_at           = EXCLUDED.updated_at
+		RETURNING workspace_id, watermark_enabled, watermark_text,
+			watermark_show_user, watermark_show_email, watermark_show_date,
+			watermark_opacity, COALESCE(updated_by, 0), updated_at`,
+			next.WorkspaceID,
+			next.WatermarkEnabled,
+			next.WatermarkText,
+			next.WatermarkShowUser,
+			next.WatermarkShowEmail,
+			next.WatermarkShowDate,
+			next.WatermarkOpacity,
+			nullablePositiveID(next.UpdatedBy),
+			next.UpdatedAt,
+		).Scan(
+			&out.WorkspaceID, &out.WatermarkEnabled, &out.WatermarkText,
+			&out.WatermarkShowUser, &out.WatermarkShowEmail, &out.WatermarkShowDate,
+			&out.WatermarkOpacity, &out.UpdatedBy, &out.UpdatedAt,
+		)
+		if e != nil {
+			return e
+		}
+		return drivePGEnd(ctx, guard, expires)
+	})
+	return out, orgPGError(err)
+}

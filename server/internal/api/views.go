@@ -13,6 +13,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -39,7 +40,7 @@ func viewPermissionsActive(p *btquery.ViewPermissions) bool {
 	if p == nil {
 		return false
 	}
-	if p.OnlyOwnRecords {
+	if p.OnlyOwnRecords || len(p.Roles) > 0 {
 		return true
 	}
 	for _, mode := range p.FieldModes {
@@ -57,7 +58,7 @@ func sameViewPermissions(a, b *btquery.ViewPermissions) bool {
 	if a == nil || b == nil {
 		return !viewPermissionsActive(a) && !viewPermissionsActive(b)
 	}
-	if a.OnlyOwnRecords != b.OnlyOwnRecords || len(a.FieldModes) != len(b.FieldModes) {
+	if a.OnlyOwnRecords != b.OnlyOwnRecords || len(a.FieldModes) != len(b.FieldModes) || len(a.Roles) != len(b.Roles) {
 		return false
 	}
 	for k, v := range a.FieldModes {
@@ -65,7 +66,21 @@ func sameViewPermissions(a, b *btquery.ViewPermissions) bool {
 			return false
 		}
 	}
+	if len(a.Roles) > 0 && !reflect.DeepEqual(a.Roles, b.Roles) {
+		return false
+	}
 	return true
+}
+
+func (s *Server) isViewHiddenForCaller(ctx context.Context, r *http.Request, b store.DocMeta, uid, viewID, tableID int64) (bool, error) {
+	if b.Role == store.RoleManage {
+		return false, nil
+	}
+	p, _, err := s.basePolicyForRequest(ctx, r, b, uid, tableID)
+	if err != nil {
+		return false, err
+	}
+	return p.hiddenViews[viewID], nil
 }
 
 func (in viewInput) apply(w http.ResponseWriter, v *store.View) bool {
@@ -226,6 +241,17 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.Role != store.RoleManage {
+		if cur.OwnerID == nil {
+			hidden, err := s.isViewHiddenForCaller(r.Context(), r, b, u.ID, cur.ID, cur.TableID)
+			if err != nil {
+				s.fail(w, r, err)
+				return
+			}
+			if hidden {
+				httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许访问该视图")
+				return
+			}
+		}
 		if cfg.Locked {
 			httpx.Error(w, http.StatusForbidden, "forbidden", "只有管理员可以设置权限视图")
 			return
@@ -249,6 +275,17 @@ func (s *Server) patchView(w http.ResponseWriter, r *http.Request) {
 	if v, err = s.Store.UpdateViewGuarded(r.Context(), guard, *cur, v); err != nil {
 		s.viewMutationError(w, r, err)
 		return
+	}
+	if !sameViewPermissions(curCfg.Permissions, cfg.Permissions) {
+		roleCount := 0
+		if cfg.Permissions != nil {
+			roleCount = len(cfg.Permissions.Roles)
+		}
+		s.recordAudit(r, b.WorkspaceID, "base.permissions_update", "base", b.ID, b.Title, map[string]any{
+			"viewId":    v.ID,
+			"viewName":  v.Name,
+			"roleCount": roleCount,
+		})
 	}
 	if s.BtHub != nil {
 		s.BtHub.Notify(b.ID)
@@ -446,7 +483,7 @@ func (s *Server) checkViewConfig(w http.ResponseWriter, r *http.Request, baseID 
 		return false
 	}
 	fields := filterFieldsByTable(allFields, v.TableID)
-	if err := btquery.Validate(store.Specs(fields), cfg); err != nil {
+	if err := btquery.Validate(fieldSpecsWithPrimary(fields), cfg); err != nil {
 		httpx.Error(w, http.StatusBadRequest, "invalid_config", err.Error())
 		return false
 	}
@@ -482,7 +519,12 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	u, _ := UserFrom(r.Context())
-	read, err := readBaseTableAllowedWith(r.Context(), s.Store, u.ID, b.ID, in.TableID)
+	queryCtx := r.Context()
+	if b.Role != store.RoleManage {
+		subj := s.resolveBaseSubject(queryCtx, r, u.ID, b.WorkspaceID)
+		queryCtx = withRBACSubject(queryCtx, b.WorkspaceID, subj)
+	}
+	read, err := readBaseTableAllowedWith(queryCtx, s.Store, u.ID, b.ID, in.TableID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			httpx.Error(w, http.StatusNotFound, "not_found", "table not found")
@@ -492,6 +534,10 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if in.ViewID != nil {
+		if read.policy.hiddenViews[*in.ViewID] {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许访问该视图")
+			return
+		}
 		found := false
 		for _, view := range read.views {
 			if view.ID == *in.ViewID {
@@ -541,7 +587,7 @@ func (s *Server) queryBase(w http.ResponseWriter, r *http.Request) {
 	}
 	recs = filterOwnRecords(recs, read.policy, u.ID)
 	read.records = stripBaseRecords(recs, read.allFields, read.policy)
-	_, targets, err := s.expandBase(r.Context(), u.ID, &read, false)
+	_, targets, err := s.expandBase(queryCtx, u.ID, &read, false)
 	if err != nil {
 		s.fail(w, r, err)
 		return

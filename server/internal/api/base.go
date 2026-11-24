@@ -95,6 +95,10 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 	var head int64
 	snapshotCtx, cancelSnapshot := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancelSnapshot()
+	if b.Role != store.RoleManage {
+		subj := s.resolveBaseSubject(snapshotCtx, r, u.ID, b.WorkspaceID)
+		snapshotCtx = withRBACSubject(snapshotCtx, b.WorkspaceID, subj)
+	}
 	err := s.Store.WithBaseReadSnapshot(snapshotCtx, u.ID, b.ID, func(reader store.BaseSnapshotReader) error {
 		var err error
 		read, err = readBaseTableAllowedWith(snapshotCtx, reader, u.ID, b.ID, requestedTableID)
@@ -218,7 +222,8 @@ func (s *Server) getBase(w http.ResponseWriter, r *http.Request) {
 		"base": meta, "tables": read.tables, "activeTableId": read.tableID,
 		"fields": read.fields, "records": read.records, "head": head,
 		"members": members, "views": visibleBaseViews(read.views, read.policy, u.ID), "expansions": expansions,
-		"writeRestricted": len(read.policy.mandatory) > 0,
+		"writeRestricted":      len(read.policy.mandatory) > 0,
+		"effectivePermissions": read.policy.effective(),
 	})
 }
 
@@ -362,7 +367,9 @@ func (s *Server) fieldRestrictedForNonManager(w http.ResponseWriter, r *http.Req
 		s.fail(w, r, err)
 		return true
 	}
-	p, err := parseBasePolicy(b, fields, filterViewsByTable(allViews, tableID))
+	u, _ := UserFrom(r.Context())
+	subj := s.resolveBaseSubject(r.Context(), r, u.ID, b.WorkspaceID)
+	p, err := parseBasePolicyForSubject(b, fields, filterViewsByTable(allViews, tableID), subj)
 	if err != nil {
 		s.fail(w, r, err)
 		return true

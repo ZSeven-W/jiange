@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import type { BaseRecord, Field } from "@/lib/api";
+import type { BaseRecord, Field, OrgDepartment, OrgGroup, User } from "@/lib/api";
 import {
   applyViewPermissions,
   countActiveViewPermissions,
@@ -105,6 +105,142 @@ describe("view permissions panel & projection", () => {
     expect(html).toContain('data-view-perm-field="1"');
     expect(html).toContain('data-view-perm-field="2"');
     expect(html).toContain('data-view-perm-field="3"');
+    expect(html).toContain('title="主字段不能隐藏"');
+    expect(html).toContain("默认规则");
+    expect(html).toContain("自定义角色");
+    expect(html).not.toContain("<select");
+  });
+
+  it("round-trips multi-role RBAC permissions and counts roles cleanly", () => {
+    const cfg: ViewPermissionsConfig = {
+      fields: { 3: "hidden" },
+      onlyOwnRows: false,
+      roles: [
+        {
+          id: "sales",
+          name: "销售",
+          userIds: [1, 2, 1],
+          deptIds: [10],
+          groupIds: [20],
+          canAddRecord: true,
+          canDeleteRecord: false,
+          rowScope: "own",
+          fieldModes: { "1": "edit", "2": "readonly", "3": "hidden" },
+        },
+        {
+          id: "reviewer",
+          name: "审核",
+          deptIds: [11],
+          canAddRecord: false,
+          canDeleteRecord: false,
+          rowScope: "filter",
+          rowFilters: { conj: "and", rules: [{ f: 2, op: "gte", v: 500 }] },
+          fieldModes: { "2": "readonly" },
+          viewHidden: true,
+        },
+      ],
+    };
+
+    const serialized = viewPermissionsToConfig(cfg);
+    expect(serialized).toEqual({
+      fieldModes: { "3": "hidden" },
+      roles: [
+        {
+          id: "sales",
+          name: "销售",
+          userIds: [1, 2],
+          deptIds: [10],
+          groupIds: [20],
+          canAddRecord: true,
+          canDeleteRecord: false,
+          rowScope: "own",
+          fieldModes: { "2": "readonly", "3": "hidden" },
+        },
+        {
+          id: "reviewer",
+          name: "审核",
+          deptIds: [11],
+          canAddRecord: false,
+          canDeleteRecord: false,
+          rowScope: "filter",
+          rowFilters: { conj: "and", rules: [{ f: 2, op: "gte", v: 500 }] },
+          fieldModes: { "2": "readonly" },
+          viewHidden: true,
+        },
+      ],
+    });
+
+    expect(viewPermissionsFromConfig(serialized)).toEqual({
+      fields: { 3: "hidden" },
+      onlyOwnRows: false,
+      roles: serialized!.roles,
+    });
+    // 1 default field rule + 2 custom roles = 3 active permissions.
+    expect(countActiveViewPermissions(viewPermissionsFromConfig(serialized), fields)).toBe(3);
+  });
+
+  it("renders multi-role RBAC builder with member/dept/group pills, FeishuSelect row scope & filters, and zero native select", () => {
+    const members: User[] = [
+      { id: 1, name: "张三", email: "zhangsan@example.test", createdAt: "" },
+      { id: 2, name: "李四", email: "lisi@example.test", createdAt: "" },
+    ];
+    const departments: OrgDepartment[] = [
+      { id: 10, workspaceId: 1, parentId: null, name: "销售中心", sortOrder: 1, members: [], createdAt: "", updatedAt: "" },
+    ];
+    const groups: OrgGroup[] = [
+      { id: 20, workspaceId: 1, name: "财务审核组", description: "", members: [], createdAt: "", updatedAt: "" },
+    ];
+    const perms: ViewPermissionsConfig = {
+      fields: {},
+      onlyOwnRows: false,
+      roles: [
+        {
+          id: "role-audit",
+          name: "审核员",
+          userIds: [1],
+          deptIds: [10],
+          groupIds: [20],
+          canAddRecord: false,
+          canDeleteRecord: false,
+          rowScope: "filter",
+          rowFilters: { conj: "and", rules: [{ f: 2, op: "gte", v: 100 }] },
+          fieldModes: { "2": "readonly", "3": "hidden" },
+          viewHidden: true,
+        },
+      ],
+    };
+
+    const html = renderToStaticMarkup(
+      <ViewPermissionsPanel
+        fields={fields}
+        value={perms}
+        members={members}
+        departments={departments}
+        groups={groups}
+        onChange={() => {}}
+        defaultOpen
+        defaultTab="roles"
+      />,
+    );
+
+    expect(html).toContain('data-perms-tab="roles"');
+    expect(html).toContain("自定义角色");
+    expect(html).toContain("data-rbac-roles-pane");
+    expect(html).toContain('data-role-item="role-audit"');
+    expect(html).toContain('data-role-subject-count="role-audit">3<');
+    expect(html).toContain("新建角色");
+    expect(html).toContain("张三");
+    expect(html).toContain("销售中心");
+    expect(html).toContain("财务审核组");
+    expect(html).toContain("允许新增记录");
+    expect(html).toContain("允许删除记录");
+    expect(html).toContain("隐藏此视图");
+    expect(html).toContain("data-role-row-scope");
+    expect(html).toContain("按条件筛选");
+    expect(html).toContain('data-role-filter-rule="0"');
+    expect(html).toContain('data-role-field-perm="1"');
+    expect(html).toContain('data-role-field-perm="2"');
+    expect(html).toContain('data-role-field-perm="3"');
     expect(html).toContain('title="主字段不能隐藏"');
     expect(html).not.toContain("<select");
   });

@@ -89,6 +89,7 @@ func (s *Server) upsertWorkspaceMember(w http.ResponseWriter, r *http.Request) {
 		s.orgError(w, r, err)
 		return
 	}
+	s.recordAudit(r, wsID, "org.member_update", "workspace", wsID, email, map[string]any{"role": in.Role})
 	httpx.JSON(w, http.StatusOK, change)
 }
 

@@ -71,6 +71,23 @@ func (s *Server) importBaseRecords(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusBadRequest, "invalid_import", "最多导入 50 条记录和 50 个字段")
 		return
 	}
+	if b.Role != store.RoleManage {
+		p, _, policyErr := s.basePolicyForRequest(r.Context(), r, b, u.ID, 0)
+		if policyErr != nil {
+			s.fail(w, r, policyErr)
+			return
+		}
+		if !p.canAddRecord {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限不允许新增或导入记录")
+			return
+		}
+		for _, expected := range in.Fields {
+			if p.hidden[expected.ID] || p.readonly[expected.ID] {
+				httpx.Error(w, http.StatusForbidden, "forbidden", "该字段为只读或隐藏状态，无法导入")
+				return
+			}
+		}
+	}
 	cookie, err := r.Cookie(CookieName)
 	if err != nil || cookie.Value == "" {
 		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "登录状态已失效")

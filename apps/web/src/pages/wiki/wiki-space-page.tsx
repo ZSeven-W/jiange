@@ -137,6 +137,18 @@ export function WikiSpacePage({
   }, [spaceId, nodeId]);
 
   useEffect(() => {
+    if (!mobileDrawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented && !document.querySelector('[role="dialog"][aria-modal="true"]')) {
+        e.preventDefault();
+        setMobileDrawerOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileDrawerOpen]);
+
+  useEffect(() => {
     if (!createMenuOpen && rowMenuId === null) return;
     const onDown = (e: MouseEvent) => {
       if (createMenuOpen && !createMenuRef.current?.contains(e.target as Node)) setCreateMenuOpen(false);
@@ -612,7 +624,7 @@ export function WikiSpacePage({
   }
 
   const sidebarContent = (
-    <aside className="flex h-full w-[264px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar" data-wiki-sidebar>
+    <aside className="flex h-full w-[264px] max-w-[85vw] shrink-0 flex-col border-r bg-sidebar shadow-xl md:shadow-none" data-wiki-sidebar>
       <div className="flex h-12 items-center justify-between border-b px-3">
         <button
           type="button"
@@ -757,7 +769,7 @@ export function WikiSpacePage({
       const topLevel = childrenMap.get(null) ?? [];
       const topShortcuts = shortcutsMap.get(null) ?? [];
       return (
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-8 md:px-10" data-wiki-overview>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-10 md:py-8" data-wiki-overview>
           <div className="mx-auto max-w-3xl">
             <div className="flex flex-wrap items-start justify-between gap-4 border-b pb-6">
               <div className="flex min-w-0 items-center gap-3.5">
@@ -876,7 +888,7 @@ export function WikiSpacePage({
       const kidShortcuts = shortcutsMap.get(activeNode.id) ?? [];
       const canEditFolder = activeNode.role === "edit" || activeNode.role === "manage";
       return (
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-8 md:px-10" data-wiki-folder-view>
+        <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-10 md:py-8" data-wiki-folder-view>
           <div className="mx-auto max-w-3xl">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
               <div className="flex min-w-0 items-center gap-2.5">
@@ -1000,22 +1012,22 @@ export function WikiSpacePage({
   };
 
   return (
-    <div className="flex min-w-0 flex-1 overflow-hidden bg-background" data-wiki-space-page>
+    <div className="flex min-w-0 flex-1 overflow-hidden bg-background" data-wiki-space-page data-wiki-tree-open={mobileDrawerOpen ? "true" : "false"}>
       {!sidebarCollapsed && <div className="hidden md:flex">{sidebarContent}</div>}
       {mobileDrawerOpen && (
-        <div className="fixed inset-0 z-50 flex md:hidden">
+        <div className="fixed inset-0 z-50 flex md:hidden" data-wiki-tree-drawer>
           <div className="relative z-10 flex">{sidebarContent}</div>
           <button
             type="button"
             aria-label={t("关闭目录")}
-            className="flex-1 bg-black/35"
+            className="flex-1 bg-black/35 backdrop-blur-[1px]"
             onClick={() => setMobileDrawerOpen(false)}
           />
         </div>
       )}
 
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className={cn("flex h-11 shrink-0 items-center gap-2 border-b bg-surface px-3 pl-14 md:pl-3", !sidebarCollapsed && "md:hidden")}>
+        <div className={cn("flex h-14 shrink-0 items-center gap-2 border-b bg-surface px-3 pl-14 md:h-11 md:pl-3", !sidebarCollapsed && "md:hidden")}>
           <button
             type="button"
             onClick={() => {
@@ -1023,17 +1035,18 @@ export function WikiSpacePage({
               else setMobileDrawerOpen(true);
             }}
             aria-label={t("打开知识库目录")}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-[12px] text-foreground hover:bg-hover"
+            aria-expanded={mobileDrawerOpen}
+            className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[12px] text-foreground hover:bg-hover"
             data-wiki-open-tree
           >
             <span className="md:hidden"><Menu size={14} /></span>
             <span className="hidden md:inline"><PanelLeftOpen size={14} /></span>
             {t("目录")}
           </button>
-          <span className="truncate text-[13px] font-medium text-foreground">{space.name}</span>
-          {activeNode && <span className="truncate text-[12px] text-subtle">/ {activeNode.title}</span>}
+          <span className="min-w-0 truncate text-[13px] font-medium text-foreground">{space.name}</span>
+          {activeNode && <span className="min-w-0 truncate text-[12px] text-subtle">/ {activeNode.title}</span>}
         </div>
-        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">{renderMainPane()}</div>
+        <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden" data-wiki-main-pane>{renderMainPane()}</div>
       </div>
 
       {settingsOpen && canManageSpace && (

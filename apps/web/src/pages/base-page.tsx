@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, baseApi, docsApi, type FillRule, type FilterRule, type RowHeight, type ViewConfig } from "@/lib/api";
+import { ApiError, baseApi, docsApi, orgApi, type FillRule, type FilterRule, type Me, type RowHeight, type User, type ViewConfig } from "@/lib/api";
+import { DocumentWatermark } from "@/components/document-watermark";
 import { createVisitRecorder } from "@/lib/recent-visit";
 import { ROW_HEIGHT_LABEL } from "./base/fill";
 import { Dashboard } from "./base/dashboard";
@@ -52,7 +53,7 @@ import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, viewToUndoSnapshot, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDownUp, Check, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDownUp, Check, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, ShieldCheck, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
 import { canDuplicateHomeDocument } from "./home-file-actions";
 
 export { view } from "./base/view";
@@ -75,7 +76,7 @@ const OP_LABEL: Record<string, string> = {
 const EMPTY_CONFIG: ViewConfig = {};
 
 /** Bitable page: views, filters/sorts (temporary until saved), grid. */
-export function BasePage({ id, userId }: { id: number; userId: number }) {
+export function BasePage({ id, userId, me }: { id: number; userId: number; me?: Me }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   const [selectedTableId, setSelectedTableId] = useState<number | null>(null);
@@ -198,6 +199,28 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
     setCfg(nextCfg);
   };
 
+  const orgQuery = useQuery({
+    queryKey: ["workspace-org", q.data?.base.workspaceId, userId],
+    queryFn: () => orgApi.get(q.data!.base.workspaceId, userId),
+    enabled: accessReady && !!q.data?.base.workspaceId && q.data.base.role === "manage",
+    retry: false,
+    staleTime: 60_000,
+  });
+  const permissionMembers = useMemo<User[]>(() => {
+    const baseMembers = q.data?.members ?? [];
+    const orgMembers = orgQuery.data?.members ?? [];
+    if (orgMembers.length === 0) return baseMembers;
+    const seen = new Set(baseMembers.map((m) => m.id));
+    const merged = [...baseMembers];
+    for (const m of orgMembers) {
+      if (!seen.has(m.userId)) {
+        seen.add(m.userId);
+        merged.push({ id: m.userId, name: m.name, email: m.email, createdAt: m.createdAt });
+      }
+    }
+    return merged;
+  }, [q.data?.members, orgQuery.data?.members]);
+
   const filtersActive = (cfg.filters?.rules?.length ?? 0) > 0;
   const sortsActive = (cfg.sorts?.length ?? 0) > 0;
   const queryActive = filtersActive || sortsActive;
@@ -254,13 +277,29 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   const preventCopy = blocksBaseCopy(base, q.isFetching);
   // link/lookup 展开值写进展示缓存（cells），真值在 bt_links
   const canEdit = (base.role === "edit" || base.role === "manage") && !q.data.writeRestricted;
+  const isManager = base.role === "manage";
+  const serverPerms = q.data.effectivePermissions;
+  const canAddRecord = canEdit && (isManager || !serverPerms || serverPerms.canAddRecord);
+  const canDeleteRecord = canEdit && (isManager || !serverPerms || serverPerms.canDeleteRecord);
+  const matchedRoles = !isManager ? (serverPerms?.matchedRoles ?? []) : [];
   const hidden = new Set(cfg.hidden ?? []);
   const baseVisibleFields = fields.filter((f) => !hidden.has(f.id));
   const queryRecords = queryActive ? recordsForAuthorizedQuery(q.data.records, serverQuery.data?.records, q.isFetching, serverQuery.isSuccess) : [];
   const source = foldExpansions(q.data.fields, queryActive ? queryRecords : q.data.records, q.data.expansions ?? {});
-  const permProjection = current?.type !== "form"
-    ? applyViewPermissions(baseVisibleFields, source, effectivePerms, userId)
-    : { visibleFields: baseVisibleFields, readonlyFieldIds: new Set<number>(), hiddenFieldIds: new Set<number>(), records: source };
+  const permProjection = current?.type === "form"
+    ? { visibleFields: baseVisibleFields, readonlyFieldIds: new Set<number>(), hiddenFieldIds: new Set<number>(), records: source }
+    : !isManager && serverPerms
+      ? (() => {
+          const hiddenSet = new Set<number>(serverPerms.hiddenFieldIds ?? []);
+          const readonlySet = new Set<number>(serverPerms.readonlyFieldIds ?? []);
+          return {
+            visibleFields: baseVisibleFields.filter((f) => !hiddenSet.has(f.id)),
+            readonlyFieldIds: readonlySet,
+            hiddenFieldIds: hiddenSet,
+            records: serverPerms.onlyOwnRecords ? source.filter((r) => r.creatorId === userId) : source,
+          };
+        })()
+      : applyViewPermissions(baseVisibleFields, source, effectivePerms, userId);
   const visibleFields = permProjection.visibleFields;
   const readonlyFieldIds = permProjection.readonlyFieldIds;
   const allVisibleReadonly = visibleFields.length > 0 && visibleFields.every((f) => readonlyFieldIds.has(f.id));
@@ -431,7 +470,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
   };
   runUndoRef.current = runUndo;
   const addRecord = async () => {
-    if (ledger.blocked("batch")) return;
+    if (!canAddRecord || ledger.blocked("batch")) return;
     const op = ledger.begin(t("新增记录"), "", "record:create");
     if (op === null) return;
     setUndoNotice(null);
@@ -506,7 +545,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
           {canEdit && <button disabled={ledger.blocked("view:write")} onClick={() => { setPane("table"); setViewMenuOpen(true); }} className="mt-auto flex h-8 items-center justify-center gap-1 rounded-md border text-[13px] text-muted-foreground hover:bg-hover disabled:opacity-50"><Plus size={15}/>{t("新建视图")}</button>}
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <nav aria-label={t("多维表格导航")} className="flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-surface px-3 py-1 md:hidden" data-base-mobile-nav>
+          <nav aria-label={t("多维表格导航")} className="mobile-scroll-x flex shrink-0 items-center gap-1 border-b bg-surface px-3 py-1 md:hidden" data-base-mobile-nav>
             {tables.length > 0 ? tables.map((tbl) => (
               <button key={tbl.id} type="button" onClick={() => { setPane("table"); if (tbl.id !== activeTableId) { setViewId(null); setSelectedTableId(tbl.id); } }} aria-current={pane === "table" && tbl.id === activeTableId ? "page" : undefined} className={cn("flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-[13px]", pane === "table" && tbl.id === activeTableId ? "bg-[#edf2ff] font-medium text-primary" : "text-muted-foreground hover:bg-hover")}><Table2 size={15} strokeWidth={1.7} />{tbl.name}</button>
             )) : (
@@ -527,10 +566,23 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         {viewError && <span role="alert" title={viewError} className="min-w-0 max-w-28 truncate text-xs text-destructive">{viewError}</span>}
         {saveError && <span role="alert" title={t("无法确认视图是否已保存，请检查后重试")} className="min-w-0 max-w-28 truncate text-xs text-destructive">{t("无法确认视图是否已保存，请检查后重试")}</span>}
         <span className="ml-auto" aria-hidden />
+        {matchedRoles.length > 0 && (
+          <span
+            data-rbac-role-badge
+            title={t("当前生效权限角色：{roles}", { roles: matchedRoles.join("、") })}
+            className="mr-1 inline-flex h-6 max-w-52 shrink-0 items-center gap-1 rounded-full border border-[#d6e4ff] bg-[#f0f5ff] px-2 text-[11px] font-medium text-[#3370ff] dark:border-primary/40 dark:bg-accent"
+          >
+            <ShieldCheck size={12} strokeWidth={1.8} className="shrink-0" aria-hidden />
+            <span className="truncate">{t("角色：{roles}", { roles: matchedRoles.join("、") })}</span>
+          </span>
+        )}
         {current && current.type !== "form" && current.ownerId == null && (
           <ViewPermissionsPanel
             fields={fields}
             value={viewPerms}
+            members={permissionMembers}
+            departments={orgQuery.data?.departments}
+            groups={orgQuery.data?.groups}
             disabled={base.role !== "manage" || !canEdit}
             onChange={updateViewPerms}
           />
@@ -539,7 +591,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       </div>
       {/* 第二行：工具栏 */}
       <div className={cn("flex h-10 shrink-0 items-center gap-0.5 overflow-x-auto whitespace-nowrap px-3 text-[13px]", current?.type !== "grid" && current?.type !== "kanban" && "border-b")} data-base-toolbar>
-        {canEdit && current?.type !== "form" && <AddRecordMenu disabled={ledger.blocked("record:create") || ledger.blocked("batch")} aiAllowed={!preventCopy && !q.isFetching} onAdd={() => void addRecord()} onAi={() => setAiPasteOpen(true)} />}
+        {canAddRecord && current?.type !== "form" && <AddRecordMenu disabled={ledger.blocked("record:create") || ledger.blocked("batch")} aiAllowed={!preventCopy && !q.isFetching} onAdd={() => void addRecord()} onAi={() => setAiPasteOpen(true)} />}
         {undoNotice && <span role="status" className="mx-1 max-w-72 truncate text-xs text-subtle" title={undoNotice}>{undoNotice}</span>}
         {queryActive && serverQuery.isError && <span role="alert" className="text-xs text-destructive">{t("筛选结果不可用，请重试")}</span>}
         {queryActive && (q.isFetching || serverQuery.isLoading) && <span role="status" className="text-xs text-subtle">{t("正在加载筛选结果…")}</span>}
@@ -624,7 +676,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
             {t("自动化")}
           </button>
         )}
-        {canEdit && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
+        {canAddRecord && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
         {!canExportBase(base, q.data.writeRestricted) ? (
           <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
         ) : (
@@ -685,10 +737,21 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
       {!q.isFetching && detailRecord !== null && (() => {
         const rec = q.data.records.find((r) => r.id === detailRecord);
         const at = records.findIndex((r) => r.id === detailRecord);
-        const detailFields = current?.type !== "form"
-          ? applyViewPermissions(fields, [], effectivePerms, userId).visibleFields
-          : fields;
+        const detailFields = current?.type === "form"
+          ? fields
+          : !isManager && serverPerms
+            ? fields.filter((f) => !permProjection.hiddenFieldIds.has(f.id))
+            : applyViewPermissions(fields, [], effectivePerms, userId).visibleFields;
         return rec ? (
+          <div
+            className={cn(!canDeleteRecord && "[&_footer_button.text-destructive]:hidden")}
+            onClickCapture={(e) => {
+              if (!canDeleteRecord && e.target instanceof Element && e.target.closest("footer button.text-destructive")) {
+                e.preventDefault();
+                e.stopPropagation();
+              }
+            }}
+          >
           <RecordDetail
             baseId={id}
             userId={userId}
@@ -703,6 +766,7 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
             onPrev={at > 0 ? () => setDetailRecord(records[at - 1].id) : undefined}
             onNext={at >= 0 && at < records.length - 1 ? () => setDetailRecord(records[at + 1].id) : undefined}
           />
+          </div>
         ) : null;
       })()}
       {current?.type === "form" && <FormSetup baseId={id} viewId={current.id} config={cfg} fields={fields} canEdit={base.role === "manage" && canEdit} saving={savingView} dirty={dirty} error={formSaveError?.viewId === current.id ? formSaveError.message : null} onChange={setCfg} onSave={() => void save()} onReset={() => { setCfg(current.config ?? EMPTY_CONFIG); setFormSaveError(null); }} />}
@@ -720,8 +784,14 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         />
       ) : current?.type === "grid" ? (
         <div
-          className="flex min-h-0 min-w-0 flex-1 flex-col"
+          className={cn(
+            "flex min-h-0 min-w-0 flex-1 flex-col",
+            !canAddRecord && "[&_button[aria-label='新增一行']]:hidden [&_button[aria-label='Add row']]:hidden",
+            !canDeleteRecord && "[&_[data-batch-delete]]:hidden [&_footer_button.text-destructive]:hidden",
+          )}
           data-readonly-fields={readonlyFieldIds.size > 0 ? [...readonlyFieldIds].join(",") : undefined}
+          data-can-add={canAddRecord ? "true" : "false"}
+          data-can-delete={canDeleteRecord ? "true" : "false"}
           onDoubleClickCapture={(e) => {
             if (isReadonlyCellTarget(e.target)) {
               e.preventDefault();
@@ -729,6 +799,23 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
             }
           }}
           onClickCapture={(e) => {
+            if (e.target instanceof Element) {
+              if (!canAddRecord && e.target.closest(`button[aria-label="${t("新增一行")}"]`)) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+              }
+              if (
+                !canDeleteRecord &&
+                (e.target.closest("[data-batch-delete]") ||
+                  e.target.closest("footer button.text-destructive") ||
+                  (e.target.closest('button[role="menuitem"]')?.textContent?.trim() === t("删除记录")))
+              ) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+              }
+            }
             if (
               isReadonlyCellTarget(e.target) &&
               e.target instanceof Element &&
@@ -775,8 +862,14 @@ export function BasePage({ id, userId }: { id: number; userId: number }) {
         </div>
       </div>
       {autoOpen && <AutomationsPanel baseId={id} fields={fields} members={members} onClose={() => setAutoOpen(false)} />}
-      {aiPasteOpen && <AiPasteDialog key={`${id}:${userId}`} baseId={id} userId={userId} fields={fields} allowed={canEdit && !preventCopy && !q.isFetching} onClose={() => setAiPasteOpen(false)} onRefresh={refresh} />}
+      {aiPasteOpen && <AiPasteDialog key={`${id}:${userId}`} baseId={id} userId={userId} fields={fields} allowed={canAddRecord && !preventCopy && !q.isFetching} onClose={() => setAiPasteOpen(false)} onRefresh={refresh} />}
       {sharing && <ShareDialog meta={base} userId={userId} anchorRef={shareAnchor} onClose={() => setSharing(false)} />}
+      <DocumentWatermark
+        workspaceId={base.workspaceId}
+        userName={me?.user.name}
+        userEmail={me?.user.email}
+        copyProtected={!!base.copyProtected}
+      />
     </div>
   );
 }

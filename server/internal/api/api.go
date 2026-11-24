@@ -46,6 +46,9 @@ type Server struct {
 	// AITransport / AIAllowHTTP let tests reach a local fake provider.
 	AITransport http.RoundTripper
 	AIAllowHTTP bool
+	// SSOTransport / SSOAllowHTTP let tests reach a local fake OIDC/OAuth2 provider.
+	SSOTransport http.RoundTripper
+	SSOAllowHTTP bool
 }
 
 func (s *Server) now() time.Time {
@@ -65,6 +68,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/register", s.register)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
+	mux.HandleFunc("GET /api/auth/sso/providers", s.listPublicSSOProviders)
+	mux.HandleFunc("GET /api/auth/sso/{slug}/start", s.startSSO)
+	mux.HandleFunc("GET /api/auth/sso/{slug}/callback", s.callbackSSO)
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
@@ -303,6 +309,17 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/workspaces/{wsId}/org/sync-sources/{sourceId}":   s.deleteOrgSyncSource,
 		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run": s.runOrgDirectorySync,
 
+		// 企业单点登录（SSO）、安全审计日志与全套件水印策略
+		"GET /api/workspaces/{wsId}/sso/providers":        s.listWorkspaceSSOProviders,
+		"POST /api/workspaces/{wsId}/sso/providers":       s.createWorkspaceSSOProvider,
+		"PATCH /api/workspaces/{wsId}/sso/providers/{pid}": s.updateWorkspaceSSOProvider,
+		"DELETE /api/workspaces/{wsId}/sso/providers/{pid}": s.deleteWorkspaceSSOProvider,
+		"POST /api/workspaces/{wsId}/sso/discover":        s.discoverSSOProvider,
+		"GET /api/workspaces/{wsId}/audit-logs":           s.listWorkspaceAuditLogs,
+		"GET /api/workspaces/{wsId}/audit-logs/export":    s.exportWorkspaceAuditLogs,
+		"GET /api/workspaces/{wsId}/security-policy":      s.getWorkspaceSecurityPolicy,
+		"PUT /api/workspaces/{wsId}/security-policy":      s.putWorkspaceSecurityPolicy,
+
 		// 独立知识库空间（Wiki）
 		"GET /api/workspaces/{wsId}/wiki-spaces":             s.listWikiSpaces,
 		"POST /api/workspaces/{wsId}/wiki-spaces":            s.postWikiSpace,
@@ -518,12 +535,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	var auditWS int64
+	if len(ws) > 0 {
+		auditWS = ws[0].ID
+	}
+	s.recordAuthAudit(r, auditWS, u.ID, u.Name, u.Email, "auth.login", map[string]any{"method": "password"})
 	httpx.JSON(w, http.StatusOK, meResponse{u, ws})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(CookieName); err == nil && c.Value != "" {
-		_ = s.Store.DeleteSession(r.Context(), auth.HashToken(c.Value))
+		hash := auth.HashToken(c.Value)
+		if u, uErr := s.Store.SessionUser(r.Context(), hash, s.now()); uErr == nil {
+			var auditWS int64
+			if ws, wErr := s.Store.Workspaces(r.Context(), u.ID); wErr == nil && len(ws) > 0 {
+				auditWS = ws[0].ID
+			}
+			s.recordAuthAudit(r, auditWS, u.ID, u.Name, u.Email, "auth.logout", nil)
+		}
+		_ = s.Store.DeleteSession(r.Context(), hash)
 	}
 	http.SetCookie(w, s.cookie("", -1))
 	w.WriteHeader(http.StatusNoContent)

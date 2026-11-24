@@ -9,8 +9,10 @@ import { FeishuSelect } from "@/components/feishu-select";
 import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { OrgSyncPanel } from "./org-sync-panel";
+import { OrgSSOPanel } from "./org-sso-panel";
+import { OrgAuditPanel } from "./org-audit-panel";
 
-type OrgTab = "departments" | "groups" | "members" | "sync";
+type OrgTab = "departments" | "groups" | "members" | "sync" | "sso" | "security";
 
 const WS_ROLE_LABELS: Record<string, string> = {
   owner: "空间所有者",
@@ -260,12 +262,14 @@ export function OrgPage({ me }: { me: Me }) {
           </div>
         </header>
 
-        <div className="flex items-center gap-1 overflow-x-auto border-b bg-surface px-4 md:px-7">
+        <div className="mobile-scroll-x flex items-center gap-1 border-b bg-surface px-4 md:px-7">
           {([
             ["departments", t("部门架构")],
             ["groups", t("用户组")],
             ["members", t("空间成员")],
             ["sync", t("目录同步")],
+            ["sso", t("单点登录 SSO")],
+            ["security", t("安全审计与水印")],
           ] as const).map(([key, label]) => (
             <button
               key={key}
@@ -645,6 +649,20 @@ export function OrgPage({ me }: { me: Me }) {
 
           {data && tab === "sync" && (
             <OrgSyncPanel workspaceId={effectiveWsId} userId={me.user.id} canAdmin={canAdmin} />
+          )}
+
+          {data && tab === "sso" && (
+            <OrgSSOPanel workspaceId={effectiveWsId} userId={me.user.id} canAdmin={canAdmin} />
+          )}
+
+          {data && tab === "security" && (
+            <OrgAuditPanel
+              workspaceId={effectiveWsId}
+              userId={me.user.id}
+              userName={me.user.name}
+              userEmail={me.user.email}
+              canAdmin={canAdmin}
+            />
           )}
         </div>
       </div>

@@ -72,14 +72,14 @@ export function WikiSpacesPage({ me }: { me: Me }) {
 
   return (
     <main className="flex min-w-0 flex-1 flex-col overflow-hidden bg-background" data-wiki-spaces-page>
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-surface px-4 py-4 pl-14 md:px-8 md:pl-8">
-        <div className="flex min-w-0 items-center gap-3">
+      <header className="flex flex-wrap items-center justify-between gap-2 border-b bg-surface px-4 py-3 pl-14 sm:gap-3 sm:py-4 md:px-8 md:pl-8">
+        <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
           <div className="grid size-9 shrink-0 place-items-center rounded-lg bg-[#edf4ff] text-[#3370ff]">
             <BookOpen size={20} />
           </div>
           <div className="min-w-0">
             <h1 className="truncate text-[18px] font-semibold text-foreground">{t("知识库")}</h1>
-            <p className="truncate text-[12px] text-subtle">{t("独立知识空间与结构化目录树")}</p>
+            <p className="hidden truncate text-[12px] text-subtle sm:block">{t("独立知识空间与结构化目录树")}</p>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -96,7 +96,7 @@ export function WikiSpacesPage({ me }: { me: Me }) {
           <button
             type="button"
             onClick={() => { setError(""); setCreating(true); }}
-            className="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-3.5 text-[13px] font-medium text-white hover:bg-primary/90"
+            className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-white hover:bg-primary/90 sm:px-3.5"
             data-new-wiki-space
           >
             <Plus size={15} />
@@ -105,10 +105,10 @@ export function WikiSpacesPage({ me }: { me: Me }) {
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 md:px-8">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 md:px-8 md:py-6">
         <div className="mx-auto max-w-5xl">
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-            <label className="relative flex w-full max-w-xs items-center">
+            <label className="relative flex w-full items-center sm:max-w-xs">
               <Search size={15} className="pointer-events-none absolute left-3 text-subtle" />
               <input
                 type="search"
@@ -210,7 +210,7 @@ export function WikiSpacesPage({ me }: { me: Me }) {
 
       {creating && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/35 p-4" role="dialog" aria-modal="true" aria-label={t("新建知识库")}>
-          <div className="w-full max-w-md rounded-xl border bg-surface p-5 shadow-xl" data-create-wiki-dialog>
+          <div className="max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-xl border bg-surface p-5 shadow-xl" data-create-wiki-dialog>
             <div className="flex items-center justify-between">
               <h2 className="text-[16px] font-semibold">{t("新建知识库")}</h2>
               <button type="button" onClick={() => setCreating(false)} aria-label={t("关闭")} className="rounded p-1 text-subtle hover:bg-hover">
@@ -266,7 +266,7 @@ export function WikiSpacesPage({ me }: { me: Me }) {
               </div>
               <div>
                 <span className="mb-1.5 block text-[13px] font-medium">{t("访问范围")}</span>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <button
                     type="button"
                     onClick={() => setVisibility("workspace")}
