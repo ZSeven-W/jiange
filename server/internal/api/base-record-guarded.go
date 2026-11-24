@@ -122,6 +122,24 @@ func (s *Server) mutateRecordGuarded(w http.ResponseWriter, r *http.Request, ope
 			s.BtHub.Notify(id)
 		}
 	}
+	whAction := "update"
+	switch operation {
+	case "add":
+		whAction = "create"
+	case "delete":
+		whAction = "delete"
+	}
+	tableID := record.TableID
+	if tableID == 0 {
+		tableID = in.TableID
+	}
+	s.dispatchWorkspaceEvent(b.WorkspaceID, store.WebhookEventBaseRecordMutated, map[string]any{
+		"baseId":  b.ID,
+		"tableId": tableID,
+		"action":  whAction,
+		"count":   1,
+		"actorId": u.ID,
+	})
 	if operation == "delete" {
 		w.WriteHeader(http.StatusNoContent)
 		return

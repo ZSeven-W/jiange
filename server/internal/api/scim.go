@@ -8,8 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -22,6 +25,8 @@ const (
 
 	scimSchemaUser                  = "urn:ietf:params:scim:schemas:core:2.0:User"
 	scimSchemaGroup                 = "urn:ietf:params:scim:schemas:core:2.0:Group"
+	scimSchemaSchema                = "urn:ietf:params:scim:schemas:core:2.0:Schema"
+	scimSchemaResourceType          = "urn:ietf:params:scim:schemas:core:2.0:ResourceType"
 	scimSchemaListResponse          = "urn:ietf:params:scim:api:messages:2.0:ListResponse"
 	scimSchemaPatchOp               = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 	scimSchemaError                 = "urn:ietf:params:scim:api:messages:2.0:Error"
@@ -115,6 +120,7 @@ type scimPatchOpRequest struct {
 
 type scimCreateUserRequest struct {
 	Schemas     []string        `json:"schemas"`
+	ID          string          `json:"id,omitempty"`
 	ExternalID  string          `json:"externalId"`
 	UserName    string          `json:"userName"`
 	DisplayName string          `json:"displayName"`
@@ -127,9 +133,104 @@ type scimCreateUserRequest struct {
 
 type scimCreateGroupRequest struct {
 	Schemas     []string      `json:"schemas"`
+	ID          string        `json:"id,omitempty"`
 	ExternalID  string        `json:"externalId"`
 	DisplayName string        `json:"displayName"`
 	Members     []scimRefItem `json:"members"`
+}
+
+type scimSchemaAttribute struct {
+	Name           string                `json:"name"`
+	Type           string                `json:"type"`
+	SubAttributes  []scimSchemaAttribute `json:"subAttributes,omitempty"`
+	MultiValued    bool                  `json:"multiValued"`
+	Description    string                `json:"description,omitempty"`
+	Required       bool                  `json:"required"`
+	CaseExact      bool                  `json:"caseExact"`
+	Mutability     string                `json:"mutability"`
+	Returned       string                `json:"returned"`
+	Uniqueness     string                `json:"uniqueness"`
+	ReferenceTypes []string              `json:"referenceTypes,omitempty"`
+}
+
+type scimSchemaResource struct {
+	Schemas     []string              `json:"schemas"`
+	ID          string                `json:"id"`
+	Name        string                `json:"name"`
+	Description string                `json:"description"`
+	Attributes  []scimSchemaAttribute `json:"attributes"`
+	Meta        scimMeta              `json:"meta"`
+}
+
+type scimResourceTypeResource struct {
+	Schemas     []string `json:"schemas"`
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Endpoint    string   `json:"endpoint"`
+	Description string   `json:"description"`
+	Schema      string   `json:"schema"`
+	Meta        scimMeta `json:"meta"`
+}
+
+type scimUserNameUpdater interface {
+	UpdateUserName(ctx context.Context, userID int64, name string) (store.User, error)
+}
+
+var (
+	scimDisplayNameOverridesMu sync.RWMutex
+	scimDisplayNameOverrides   = map[any]map[[2]int64]string{}
+)
+
+func (s *Server) scimOverrideBucketKey() any {
+	if s.Store != nil {
+		if t := reflect.TypeOf(s.Store); t != nil && t.Comparable() {
+			return s.Store
+		}
+	}
+	return s
+}
+
+func (s *Server) setSCIMDisplayName(ctx context.Context, wsID, userID int64, displayName string) error {
+	trimmed := strings.TrimSpace(displayName)
+	if trimmed == "" {
+		return nil
+	}
+	if updater, ok := s.Store.(scimUserNameUpdater); ok {
+		if _, err := updater.UpdateUserName(ctx, userID, trimmed); err != nil {
+			return err
+		}
+	}
+	bucketKey := s.scimOverrideBucketKey()
+	scimDisplayNameOverridesMu.Lock()
+	defer scimDisplayNameOverridesMu.Unlock()
+	bucket := scimDisplayNameOverrides[bucketKey]
+	if bucket == nil {
+		bucket = map[[2]int64]string{}
+		scimDisplayNameOverrides[bucketKey] = bucket
+	}
+	bucket[[2]int64{wsID, userID}] = trimmed
+	return nil
+}
+
+func (s *Server) clearSCIMDisplayName(wsID, userID int64) {
+	bucketKey := s.scimOverrideBucketKey()
+	scimDisplayNameOverridesMu.Lock()
+	defer scimDisplayNameOverridesMu.Unlock()
+	if bucket := scimDisplayNameOverrides[bucketKey]; bucket != nil {
+		delete(bucket, [2]int64{wsID, userID})
+	}
+}
+
+func (s *Server) applySCIMDisplayName(wsID int64, m store.WorkspaceMemberInfo) store.WorkspaceMemberInfo {
+	bucketKey := s.scimOverrideBucketKey()
+	scimDisplayNameOverridesMu.RLock()
+	if bucket := scimDisplayNameOverrides[bucketKey]; bucket != nil {
+		if override, ok := bucket[[2]int64{wsID, m.UserID}]; ok && override != "" {
+			m.Name = override
+		}
+	}
+	scimDisplayNameOverridesMu.RUnlock()
+	return m
 }
 
 // --- SCIM response & decode helpers ---
@@ -655,6 +756,402 @@ func (s *Server) scimServiceProviderConfig(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+func scimSchemaDefinitions() []scimSchemaResource {
+	return []scimSchemaResource{
+		{
+			Schemas:     []string{scimSchemaSchema},
+			ID:          scimSchemaUser,
+			Name:        "User",
+			Description: "User Account",
+			Attributes: []scimSchemaAttribute{
+				{
+					Name:        "userName",
+					Type:        "string",
+					MultiValued: false,
+					Description: "Unique identifier for the User, formatted as an email address.",
+					Required:    true,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "server",
+				},
+				{
+					Name:        "name",
+					Type:        "complex",
+					MultiValued: false,
+					Description: "The components of the user's real name.",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+					SubAttributes: []scimSchemaAttribute{
+						{
+							Name:        "formatted",
+							Type:        "string",
+							MultiValued: false,
+							Description: "The full name formatted for display.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:        "givenName",
+							Type:        "string",
+							MultiValued: false,
+							Description: "The given name of the User.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:        "familyName",
+							Type:        "string",
+							MultiValued: false,
+							Description: "The family name of the User.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+					},
+				},
+				{
+					Name:        "displayName",
+					Type:        "string",
+					MultiValued: false,
+					Description: "The name of the User suitable for display to end-users.",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+				},
+				{
+					Name:        "active",
+					Type:        "boolean",
+					MultiValued: false,
+					Description: "A Boolean value indicating the User's administrative status in the workspace.",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+				},
+				{
+					Name:        "emails",
+					Type:        "complex",
+					MultiValued: true,
+					Description: "Email addresses for the User.",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+					SubAttributes: []scimSchemaAttribute{
+						{
+							Name:        "value",
+							Type:        "string",
+							MultiValued: false,
+							Description: "Email address value.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:        "type",
+							Type:        "string",
+							MultiValued: false,
+							Description: "A label indicating the email type (e.g., work).",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:        "primary",
+							Type:        "boolean",
+							MultiValued: false,
+							Description: "Indicates the primary email address.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+					},
+				},
+				{
+					Name:        "roles",
+					Type:        "complex",
+					MultiValued: true,
+					Description: "Workspace roles assigned to the User (owner, admin, member).",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+					SubAttributes: []scimSchemaAttribute{
+						{
+							Name:        "value",
+							Type:        "string",
+							MultiValued: false,
+							Description: "Role identifier (owner, admin, or member).",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:        "display",
+							Type:        "string",
+							MultiValued: false,
+							Description: "Human-readable role label.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:        "primary",
+							Type:        "boolean",
+							MultiValued: false,
+							Description: "Indicates the primary workspace role.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readWrite",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+					},
+				},
+				{
+					Name:        "groups",
+					Type:        "complex",
+					MultiValued: true,
+					Description: "A list of groups to which the user belongs.",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readOnly",
+					Returned:    "default",
+					Uniqueness:  "none",
+					SubAttributes: []scimSchemaAttribute{
+						{
+							Name:        "value",
+							Type:        "string",
+							MultiValued: false,
+							Description: "The identifier of the User's group.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readOnly",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:           "$ref",
+							Type:           "reference",
+							ReferenceTypes: []string{"Group"},
+							MultiValued:    false,
+							Description:    "The URI of the corresponding Group resource.",
+							Required:       false,
+							CaseExact:      false,
+							Mutability:     "readOnly",
+							Returned:       "default",
+							Uniqueness:     "none",
+						},
+						{
+							Name:        "display",
+							Type:        "string",
+							MultiValued: false,
+							Description: "A human-readable name for the Group.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readOnly",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+					},
+				},
+			},
+			Meta: scimMeta{
+				ResourceType: "Schema",
+				Location:     "/scim/v2/Schemas/" + scimSchemaUser,
+			},
+		},
+		{
+			Schemas:     []string{scimSchemaSchema},
+			ID:          scimSchemaGroup,
+			Name:        "Group",
+			Description: "Group",
+			Attributes: []scimSchemaAttribute{
+				{
+					Name:        "displayName",
+					Type:        "string",
+					MultiValued: false,
+					Description: "A human-readable name for the Group.",
+					Required:    true,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+				},
+				{
+					Name:        "members",
+					Type:        "complex",
+					MultiValued: true,
+					Description: "A list of members of the Group.",
+					Required:    false,
+					CaseExact:   false,
+					Mutability:  "readWrite",
+					Returned:    "default",
+					Uniqueness:  "none",
+					SubAttributes: []scimSchemaAttribute{
+						{
+							Name:        "value",
+							Type:        "string",
+							MultiValued: false,
+							Description: "Identifier of the member of this Group.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "immutable",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+						{
+							Name:           "$ref",
+							Type:           "reference",
+							ReferenceTypes: []string{"User"},
+							MultiValued:    false,
+							Description:    "The URI corresponding to a SCIM User resource that is a member of this Group.",
+							Required:       false,
+							CaseExact:      false,
+							Mutability:     "immutable",
+							Returned:       "default",
+							Uniqueness:     "none",
+						},
+						{
+							Name:        "display",
+							Type:        "string",
+							MultiValued: false,
+							Description: "A human-readable display name for the Group member.",
+							Required:    false,
+							CaseExact:   false,
+							Mutability:  "readOnly",
+							Returned:    "default",
+							Uniqueness:  "none",
+						},
+					},
+				},
+			},
+			Meta: scimMeta{
+				ResourceType: "Schema",
+				Location:     "/scim/v2/Schemas/" + scimSchemaGroup,
+			},
+		},
+	}
+}
+
+func scimResourceTypeDefinitions() []scimResourceTypeResource {
+	return []scimResourceTypeResource{
+		{
+			Schemas:     []string{scimSchemaResourceType},
+			ID:          "User",
+			Name:        "User",
+			Endpoint:    "/scim/v2/Users",
+			Description: "User Account",
+			Schema:      scimSchemaUser,
+			Meta: scimMeta{
+				ResourceType: "ResourceType",
+				Location:     "/scim/v2/ResourceTypes/User",
+			},
+		},
+		{
+			Schemas:     []string{scimSchemaResourceType},
+			ID:          "Group",
+			Name:        "Group",
+			Endpoint:    "/scim/v2/Groups",
+			Description: "Group",
+			Schema:      scimSchemaGroup,
+			Meta: scimMeta{
+				ResourceType: "ResourceType",
+				Location:     "/scim/v2/ResourceTypes/Group",
+			},
+		},
+	}
+}
+
+// scimListSchemas handles GET /scim/v2/Schemas.
+func (s *Server) scimListSchemas(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	startIndex, count, ok := parseSCIMPagination(w, r)
+	if !ok {
+		return
+	}
+	defs := scimSchemaDefinitions()
+	items := make([]any, 0, len(defs))
+	for _, d := range defs {
+		items = append(items, d)
+	}
+	writeSCIMJSON(w, http.StatusOK, paginateSCIMItems(items, startIndex, count))
+}
+
+// scimGetSchema handles GET /scim/v2/Schemas/{schemaId}.
+func (s *Server) scimGetSchema(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	rawID := strings.TrimSpace(r.PathValue("schemaId"))
+	if unescaped, err := url.PathUnescape(rawID); err == nil {
+		rawID = strings.TrimSpace(unescaped)
+	}
+	for _, d := range scimSchemaDefinitions() {
+		if strings.EqualFold(d.ID, rawID) {
+			writeSCIMJSON(w, http.StatusOK, d)
+			return
+		}
+	}
+	writeSCIMError(w, http.StatusNotFound, "", "schema not found")
+}
+
+// scimListResourceTypes handles GET /scim/v2/ResourceTypes.
+func (s *Server) scimListResourceTypes(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	startIndex, count, ok := parseSCIMPagination(w, r)
+	if !ok {
+		return
+	}
+	defs := scimResourceTypeDefinitions()
+	items := make([]any, 0, len(defs))
+	for _, d := range defs {
+		items = append(items, d)
+	}
+	writeSCIMJSON(w, http.StatusOK, paginateSCIMItems(items, startIndex, count))
+}
+
+// scimGetResourceType handles GET /scim/v2/ResourceTypes/{typeId}.
+func (s *Server) scimGetResourceType(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	rawID := strings.TrimSpace(r.PathValue("typeId"))
+	if unescaped, err := url.PathUnescape(rawID); err == nil {
+		rawID = strings.TrimSpace(unescaped)
+	}
+	for _, d := range scimResourceTypeDefinitions() {
+		if strings.EqualFold(d.ID, rawID) || strings.EqualFold(d.Name, rawID) {
+			writeSCIMJSON(w, http.StatusOK, d)
+			return
+		}
+	}
+	writeSCIMError(w, http.StatusNotFound, "", "resource type not found")
+}
+
 // --- SCIM Users endpoints ---
 
 // scimListUsers handles GET /scim/v2/Users.
@@ -677,6 +1174,7 @@ func (s *Server) scimListUsers(w http.ResponseWriter, r *http.Request) {
 
 	matched := make([]any, 0, len(authCtx.Org.Members))
 	for _, m := range authCtx.Org.Members {
+		m = s.applySCIMDisplayName(authCtx.WorkspaceID, m)
 		if matchSCIMUser(m, filter) {
 			matched = append(matched, buildSCIMUserResource(m, authCtx.Org.Groups, true))
 		}
@@ -857,6 +1355,250 @@ func (s *Server) scimGetUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMError(w, http.StatusNotFound, "", "user not found in workspace")
 		return
 	}
+	member = s.applySCIMDisplayName(authCtx.WorkspaceID, member)
+	writeSCIMJSON(w, http.StatusOK, buildSCIMUserResource(member, authCtx.Org.Groups, true))
+}
+
+func extractExplicitSCIMDisplayName(in scimCreateUserRequest) (string, bool, bool) {
+	raw := strings.TrimSpace(in.DisplayName)
+	if raw == "" && in.Name != nil {
+		if f := strings.TrimSpace(in.Name.Formatted); f != "" {
+			raw = f
+		} else {
+			raw = strings.TrimSpace(strings.TrimSpace(in.Name.GivenName) + " " + strings.TrimSpace(in.Name.FamilyName))
+		}
+	}
+	if raw == "" {
+		return "", false, true
+	}
+	if utf8.RuneCountInString(raw) > 64 {
+		return "", true, false
+	}
+	return raw, true, true
+}
+
+func parseExplicitSCIMPutRole(roles []scimUserRole, fallback string) (role string, specified bool, valid bool) {
+	if len(roles) > 0 {
+		for _, r := range roles {
+			v := strings.ToLower(strings.TrimSpace(r.Value))
+			if v == "" {
+				continue
+			}
+			switch v {
+			case store.WorkspaceRoleOwner, store.WorkspaceRoleAdmin, store.WorkspaceRoleMember:
+				return v, true, true
+			default:
+				return "", true, false
+			}
+		}
+		return "", true, false
+	}
+	if fb := strings.ToLower(strings.TrimSpace(fallback)); fb != "" {
+		switch fb {
+		case store.WorkspaceRoleOwner, store.WorkspaceRoleAdmin, store.WorkspaceRoleMember:
+			return fb, true, true
+		default:
+			return "", true, false
+		}
+	}
+	return "", false, true
+}
+
+// scimPutUser handles PUT /scim/v2/Users/{uid} (RFC 7644 §3.5.1 full replacement).
+func (s *Server) scimPutUser(w http.ResponseWriter, r *http.Request) {
+	authCtx, ok := s.authenticateSCIM(w, r)
+	if !ok {
+		return
+	}
+	defer authCtx.Cleanup()
+
+	uid, err := strconv.ParseInt(r.PathValue("uid"), 10, 64)
+	if err != nil || uid <= 0 {
+		writeSCIMError(w, http.StatusNotFound, "", "user not found")
+		return
+	}
+
+	var in scimCreateUserRequest
+	if !decodeSCIMJSON(w, r, &in) {
+		return
+	}
+
+	var providedEmail string
+	if strings.TrimSpace(in.UserName) != "" || len(in.Emails) > 0 {
+		email, validEmail := extractSCIMUserEmail(in)
+		if !validEmail {
+			writeSCIMError(w, http.StatusBadRequest, "invalidValue", "userName or emails must contain a valid email address")
+			return
+		}
+		providedEmail = email
+	}
+
+	newDisplayName, hasDisplayName, displayValid := extractExplicitSCIMDisplayName(in)
+	if !displayValid {
+		writeSCIMError(w, http.StatusBadRequest, "invalidValue", "displayName must be 1-64 characters")
+		return
+	}
+
+	requestedRole, roleSpecified, roleValid := parseExplicitSCIMPutRole(in.Roles, in.Role)
+	if !roleValid {
+		writeSCIMError(w, http.StatusBadRequest, "invalidValue", "roles must contain valid workspace roles (member or admin)")
+		return
+	}
+
+	desiredActive := true
+	if in.Active != nil {
+		desiredActive = *in.Active
+	}
+
+	member, found := findWorkspaceMemberByID(authCtx.Org.Members, uid)
+	if !found {
+		// Support reactivating a previously deprovisioned account when active=true
+		// and userName matches the existing account for uid.
+		if !desiredActive || providedEmail == "" {
+			writeSCIMError(w, http.StatusNotFound, "", "user not found in workspace")
+			return
+		}
+		u, err := s.Store.UserByEmail(r.Context(), providedEmail)
+		if err != nil || u.ID != uid {
+			writeSCIMError(w, http.StatusNotFound, "", "user not found in workspace")
+			return
+		}
+		targetRole := store.WorkspaceRoleMember
+		if roleSpecified {
+			if requestedRole == store.WorkspaceRoleOwner {
+				writeSCIMError(w, http.StatusForbidden, "mutability", "cannot assign workspace owner role via SCIM")
+				return
+			}
+			targetRole = requestedRole
+		}
+		if err := s.Store.AddWorkspaceMember(r.Context(), authCtx.WorkspaceID, u.ID); err != nil {
+			writeSCIMError(w, http.StatusInternalServerError, "", "failed to reactivate user in workspace")
+			return
+		}
+		if targetRole == store.WorkspaceRoleAdmin {
+			if _, err := s.Store.UpsertWorkspaceMemberGuarded(r.Context(), authCtx.Guard, authCtx.WorkspaceID, u.Email, store.WorkspaceRoleAdmin); err != nil {
+				writeSCIMError(w, http.StatusInternalServerError, "", "failed to assign workspace admin role")
+				return
+			}
+		}
+		if hasDisplayName {
+			if err := s.setSCIMDisplayName(r.Context(), authCtx.WorkspaceID, u.ID, newDisplayName); err != nil {
+				writeSCIMError(w, http.StatusInternalServerError, "", "failed to update displayName")
+				return
+			}
+		}
+		refreshed, err := s.Store.GetWorkspaceOrg(r.Context(), authCtx.Guard, authCtx.WorkspaceID)
+		if err != nil {
+			writeSCIMError(w, http.StatusInternalServerError, "", "failed to reload reactivated user")
+			return
+		}
+		reMember, ok := findWorkspaceMemberByID(refreshed.Members, u.ID)
+		if !ok {
+			reMember = store.WorkspaceMemberInfo{
+				UserID:    u.ID,
+				Email:     u.Email,
+				Name:      u.Name,
+				Role:      targetRole,
+				CreatedAt: u.CreatedAt,
+			}
+		}
+		reMember = s.applySCIMDisplayName(authCtx.WorkspaceID, reMember)
+		s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.user_provision", "user", reMember.UserID, reMember.Email, map[string]any{
+			"email":       reMember.Email,
+			"displayName": reMember.Name,
+			"role":        reMember.Role,
+			"via":         "put_reactivate",
+		})
+		writeSCIMJSON(w, http.StatusOK, buildSCIMUserResource(reMember, refreshed.Groups, true))
+		return
+	}
+
+	if providedEmail != "" && !strings.EqualFold(providedEmail, member.Email) {
+		writeSCIMError(w, http.StatusBadRequest, "mutability", "userName cannot be changed via SCIM PUT")
+		return
+	}
+
+	if !desiredActive {
+		if member.Role == store.WorkspaceRoleOwner {
+			writeSCIMError(w, http.StatusForbidden, "mutability", "cannot deprovision workspace owner")
+			return
+		}
+		if _, err := s.Store.UpsertWorkspaceMemberGuarded(r.Context(), authCtx.Guard, authCtx.WorkspaceID, member.Email, "remove"); err != nil {
+			if errors.Is(err, store.ErrForbidden) {
+				writeSCIMError(w, http.StatusForbidden, "mutability", "cannot deprovision workspace owner")
+				return
+			}
+			writeSCIMError(w, http.StatusInternalServerError, "", "failed to deprovision user")
+			return
+		}
+		if hasDisplayName {
+			member.Name = newDisplayName
+		} else {
+			member = s.applySCIMDisplayName(authCtx.WorkspaceID, member)
+		}
+		s.clearSCIMDisplayName(authCtx.WorkspaceID, member.UserID)
+		s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.user_deprovision", "user", member.UserID, member.Email, map[string]any{
+			"email": member.Email,
+			"via":   "put_active_false",
+		})
+		writeSCIMJSON(w, http.StatusOK, buildSCIMUserResource(member, nil, false))
+		return
+	}
+
+	// Determine replaced role (RFC 7644 PUT resets omitted optional roles to member for non-owners).
+	targetRole := member.Role
+	if member.Role == store.WorkspaceRoleOwner {
+		if roleSpecified && requestedRole != store.WorkspaceRoleOwner {
+			writeSCIMError(w, http.StatusForbidden, "mutability", "cannot modify workspace owner role")
+			return
+		}
+		targetRole = store.WorkspaceRoleOwner
+	} else {
+		if roleSpecified {
+			if requestedRole == store.WorkspaceRoleOwner {
+				writeSCIMError(w, http.StatusForbidden, "mutability", "cannot assign workspace owner role via SCIM")
+				return
+			}
+			targetRole = requestedRole
+		} else {
+			targetRole = store.WorkspaceRoleMember
+		}
+	}
+
+	if targetRole != member.Role {
+		if _, err := s.Store.UpsertWorkspaceMemberGuarded(r.Context(), authCtx.Guard, authCtx.WorkspaceID, member.Email, targetRole); err != nil {
+			if errors.Is(err, store.ErrForbidden) {
+				writeSCIMError(w, http.StatusForbidden, "mutability", "cannot modify workspace owner role")
+				return
+			}
+			writeSCIMError(w, http.StatusInternalServerError, "", "failed to update user role")
+			return
+		}
+		member.Role = targetRole
+	}
+
+	if hasDisplayName {
+		if err := s.setSCIMDisplayName(r.Context(), authCtx.WorkspaceID, member.UserID, newDisplayName); err != nil {
+			writeSCIMError(w, http.StatusInternalServerError, "", "failed to update displayName")
+			return
+		}
+	}
+
+	refreshed, err := s.Store.GetWorkspaceOrg(r.Context(), authCtx.Guard, authCtx.WorkspaceID)
+	if err == nil {
+		if updated, ok := findWorkspaceMemberByID(refreshed.Members, member.UserID); ok {
+			member = updated
+		}
+		authCtx.Org = refreshed
+	}
+	member = s.applySCIMDisplayName(authCtx.WorkspaceID, member)
+
+	s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.user_update", "user", member.UserID, member.Email, map[string]any{
+		"email":       member.Email,
+		"displayName": member.Name,
+		"role":        member.Role,
+		"via":         "put",
+	})
 	writeSCIMJSON(w, http.StatusOK, buildSCIMUserResource(member, authCtx.Org.Groups, true))
 }
 
@@ -1000,6 +1742,8 @@ func (s *Server) scimPatchUser(w http.ResponseWriter, r *http.Request) {
 			writeSCIMError(w, http.StatusInternalServerError, "", "failed to deprovision user")
 			return
 		}
+		member = s.applySCIMDisplayName(authCtx.WorkspaceID, member)
+		s.clearSCIMDisplayName(authCtx.WorkspaceID, member.UserID)
 		s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.user_deprovision", "user", member.UserID, member.Email, map[string]any{
 			"email": member.Email,
 			"via":   "patch_active_false",
@@ -1031,6 +1775,7 @@ func (s *Server) scimPatchUser(w http.ResponseWriter, r *http.Request) {
 		}
 		authCtx.Org = refreshed
 	}
+	member = s.applySCIMDisplayName(authCtx.WorkspaceID, member)
 
 	s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.user_update", "user", member.UserID, member.Email, map[string]any{
 		"email": member.Email,
@@ -1070,6 +1815,7 @@ func (s *Server) scimDeleteUser(w http.ResponseWriter, r *http.Request) {
 		writeSCIMError(w, http.StatusInternalServerError, "", "failed to deprovision user")
 		return
 	}
+	s.clearSCIMDisplayName(authCtx.WorkspaceID, member.UserID)
 
 	s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.user_deprovision", "user", member.UserID, member.Email, map[string]any{
 		"email": member.Email,
@@ -1253,6 +1999,103 @@ func (s *Server) scimCreateGroup(w http.ResponseWriter, r *http.Request) {
 	res := buildSCIMGroupResource(grp)
 	w.Header().Set("Location", res.Meta.Location)
 	writeSCIMJSON(w, http.StatusCreated, res)
+}
+
+// scimPutGroup handles PUT /scim/v2/Groups/{gid} (RFC 7644 §3.5.1 full replacement).
+func (s *Server) scimPutGroup(w http.ResponseWriter, r *http.Request) {
+	authCtx, ok := s.authenticateSCIM(w, r)
+	if !ok {
+		return
+	}
+	defer authCtx.Cleanup()
+
+	gid, err := strconv.ParseInt(r.PathValue("gid"), 10, 64)
+	if err != nil || gid <= 0 {
+		writeSCIMError(w, http.StatusNotFound, "", "group not found")
+		return
+	}
+	grp, found := findWorkspaceGroupByID(authCtx.Org.Groups, gid)
+	if !found {
+		writeSCIMError(w, http.StatusNotFound, "", "group not found in workspace")
+		return
+	}
+
+	var in scimCreateGroupRequest
+	if !decodeSCIMJSON(w, r, &in) {
+		return
+	}
+	displayName := strings.TrimSpace(in.DisplayName)
+	if displayName == "" {
+		writeSCIMError(w, http.StatusBadRequest, "invalidValue", "displayName is required")
+		return
+	}
+
+	// Resolve and validate all target members before mutating state.
+	desired := map[int64]bool{}
+	desiredOrder := make([]int64, 0, len(in.Members))
+	for _, ref := range in.Members {
+		uid, ok := resolveSCIMMemberID(ref.Value, authCtx.Org.Members)
+		if !ok {
+			writeSCIMError(w, http.StatusBadRequest, "invalidValue", fmt.Sprintf("group member %q is not in this workspace", ref.Value))
+			return
+		}
+		if !desired[uid] {
+			desired[uid] = true
+			desiredOrder = append(desiredOrder, uid)
+		}
+	}
+
+	updated, err := s.Store.UpdateUserGroupGuarded(r.Context(), authCtx.Guard, authCtx.WorkspaceID, gid, &displayName, nil)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeSCIMError(w, http.StatusNotFound, "", "group not found in workspace")
+			return
+		}
+		if errors.Is(err, store.ErrConflict) {
+			writeSCIMError(w, http.StatusBadRequest, "invalidValue", "invalid displayName")
+			return
+		}
+		writeSCIMError(w, http.StatusInternalServerError, "", "failed to update group")
+		return
+	}
+	grp.Name = updated.Name
+
+	current := map[int64]bool{}
+	for _, m := range grp.Members {
+		current[m.UserID] = true
+	}
+
+	// Reconcile exact member set: add missing desired members, remove absent existing members.
+	for _, uid := range desiredOrder {
+		if !current[uid] {
+			if err := s.Store.SetUserGroupMemberGuarded(r.Context(), authCtx.Guard, authCtx.WorkspaceID, gid, uid, true); err != nil {
+				writeSCIMError(w, http.StatusInternalServerError, "", "failed to add group member")
+				return
+			}
+		}
+	}
+	for _, m := range grp.Members {
+		if !desired[m.UserID] {
+			if err := s.Store.SetUserGroupMemberGuarded(r.Context(), authCtx.Guard, authCtx.WorkspaceID, gid, m.UserID, false); err != nil {
+				writeSCIMError(w, http.StatusInternalServerError, "", "failed to remove group member")
+				return
+			}
+		}
+	}
+
+	refreshed, err := s.Store.GetWorkspaceOrg(r.Context(), authCtx.Guard, authCtx.WorkspaceID)
+	if err == nil {
+		if latest, ok := findWorkspaceGroupByID(refreshed.Groups, gid); ok {
+			grp = latest
+		}
+	}
+
+	s.recordAudit(authCtx.Req, authCtx.WorkspaceID, "scim.group_update", "group", grp.ID, grp.Name, map[string]any{
+		"displayName": grp.Name,
+		"memberCount": len(grp.Members),
+		"via":         "put",
+	})
+	writeSCIMJSON(w, http.StatusOK, buildSCIMGroupResource(grp))
 }
 
 // scimPatchGroup handles PATCH /scim/v2/Groups/{gid}.

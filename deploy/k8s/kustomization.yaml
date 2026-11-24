@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: jiange
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/part-of: jiange
+      app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - namespace.yaml
+  - deployment.yaml
+  - service.yaml
+  - ingress.yaml
+  - hpa.yaml
+
+configMapGenerator:
+  - name: jiange-config
+    literals:
+      - JIANGE_ADDR=:8080
+      - JIANGE_SESSION_TTL=720h
+      - JIANGE_SECURE_COOKIES=true
+      - JIANGE_AUTO_VERSION_EVERY=30m
+      - JIANGE_ALLOWED_ORIGINS=jiange.example.com
+      - JIANGE_S3_ENDPOINT=http://minio:9000
+      - JIANGE_S3_BUCKET=jiange

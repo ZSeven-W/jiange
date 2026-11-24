@@ -84,6 +84,14 @@ export interface DlpCheckResult {
   matches: DlpMatch[];
 }
 
+export interface RetentionPurgeStats {
+  workspaceId: number;
+  retentionDays: number;
+  purgedAuditLogs: number;
+  purgedTrashNodes: number;
+  ranAt: string;
+}
+
 async function enterpriseRequest<T>(
   method: string,
   path: string,
@@ -181,6 +189,15 @@ export const enterpriseApi = {
       "POST",
       `/api/workspaces/${wsId}/dlp/check`,
       payload,
+      undefined,
+      userHeaders(userId),
+    ),
+
+  runRetentionPurge: (wsId: number, userId?: number) =>
+    enterpriseRequest<RetentionPurgeStats>(
+      "POST",
+      `/api/workspaces/${wsId}/retention/run`,
+      {},
       undefined,
       userHeaders(userId),
     ),

@@ -176,6 +176,7 @@ describe("OrgAuditPanel", () => {
     expect(html).toContain('data-dlp-policy-card=""');
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-dlp-save=""/);
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-dlp-test-btn=""/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-retention-run-btn=""/);
     expect(html).toContain("仅空间所有者或管理员可修改企业 DLP 与保留策略。");
     expect(html).toContain('data-audit-forbidden=""');
     expect(html).not.toContain('data-audit-table=""');
@@ -242,12 +243,44 @@ describe("OrgAuditPanel", () => {
     expect(html).toContain("永久保留");
     expect(html).toContain("180 天");
     expect(html).toContain("365 天");
+    expect(html).toContain("立即执行清理");
+    const runRetentionBtn = html.match(/<button[^>]*data-retention-run-btn=""[^>]*>/)?.[0] ?? "";
+    expect(runRetentionBtn).toContain('data-retention-run-btn=""');
+    expect(runRetentionBtn).not.toContain(' disabled=""');
 
     // Live test sandbox
     expect(html).toContain("规则实测");
     expect(html).toContain('data-dlp-test-input=""');
     expect(html).toContain('data-dlp-test-btn=""');
     expect(html).toContain("立即检测");
+  });
+
+  it("disables manual retention cleanup button when retentionDays is 0 (forever)", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(workspaceSecurityPolicyQueryKey(10), {
+      ...samplePolicy,
+      retentionDays: 0,
+    });
+    qc.setQueryData(
+      auditLogsQueryKey(10, 1, { action: "", resourceType: "", q: "", offset: 0 }),
+      sampleAuditPage,
+    );
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <OrgAuditPanel
+          workspaceId={10}
+          userId={1}
+          userName="林晓"
+          userEmail="linxiao@corp.com"
+          canAdmin={true}
+        />
+      </QueryClientProvider>,
+    );
+
+    expect(html).not.toMatch(/<select[\s>]/i);
+    expect(html).toContain("立即执行清理");
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-retention-run-btn=""/);
   });
 
   it("localizes known audit action and resource labels and preserves unknown ones", () => {
@@ -258,6 +291,9 @@ describe("OrgAuditPanel", () => {
     expect(formatAuditActionLabel("share.update")).toBe("变更共享权限");
     expect(formatAuditActionLabel("dlp.share_blocked")).toBe("DLP 拦截公开分享");
     expect(formatAuditActionLabel("dlp.share_warned")).toBe("DLP 敏感词告警");
+    expect(formatAuditActionLabel("dlp.export_blocked")).toBe("DLP 拦截导出/下载");
+    expect(formatAuditActionLabel("dlp.export_warned")).toBe("DLP 导出敏感告警");
+    expect(formatAuditActionLabel("retention.purged")).toBe("执行数据保留清理");
     expect(formatAuditActionLabel("org.member_update")).toBe("变更成员角色");
     expect(formatAuditActionLabel("org.watermark_update")).toBe("变更水印策略");
     expect(formatAuditActionLabel("org.sso_update")).toBe("变更 SSO 配置");
@@ -291,6 +327,21 @@ describe("OrgAuditPanel", () => {
             "Content-Disposition": 'attachment; filename="audit-logs-ws-10.csv"',
           },
         });
+      }
+      if (url.includes("/retention/run") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            workspaceId: 10,
+            retentionDays: 180,
+            purgedAuditLogs: 12,
+            purgedTrashNodes: 3,
+            ranAt: "2026-11-24T09:00:00Z",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
       }
       if (url.includes("/dlp/check") && init?.method === "POST") {
         return new Response(
@@ -374,6 +425,15 @@ describe("OrgAuditPanel", () => {
     const exported = await enterpriseApi.exportAuditLogsCsv(10, { action: "auth.login" }, 1);
     expect(exported.filename).toBe("audit-logs-ws-10.csv");
     expect(calls[3].url).toBe("/api/workspaces/10/audit-logs/export?action=auth.login");
+
+    const retentionStats = await enterpriseApi.runRetentionPurge(10, 1);
+    expect(retentionStats.workspaceId).toBe(10);
+    expect(retentionStats.retentionDays).toBe(180);
+    expect(retentionStats.purgedAuditLogs).toBe(12);
+    expect(retentionStats.purgedTrashNodes).toBe(3);
+    expect(calls[4].url).toBe("/api/workspaces/10/retention/run");
+    expect(calls[4].method).toBe("POST");
+    expect(calls[4].headers?.["X-Jiange-User-Id"]).toBe("1");
 
     await expect(enterpriseApi.getSecurityPolicy(99, 1)).rejects.toBeInstanceOf(ApiError);
   });

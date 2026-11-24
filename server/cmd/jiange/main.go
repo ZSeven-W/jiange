@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/ZSeven-W/jiange/server/internal/api"
+	"github.com/ZSeven-W/jiange/server/internal/backup"
 	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/btsync"
 	"github.com/ZSeven-W/jiange/server/internal/config"
@@ -73,8 +74,46 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	log.Info("migrations", "applied", applied)
-	if len(os.Args) > 1 && os.Args[1] == "migrate" {
-		return nil
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "migrate":
+			return nil
+		case "backup":
+			if len(os.Args) < 3 {
+				return errors.New("usage: jiange backup <output.tar.gz>")
+			}
+			manifest, err := backup.ExportPostgresDir(ctx, pg, cfg.BlobDir, os.Args[2])
+			if err != nil {
+				return err
+			}
+			log.Info("backup exported", "path", os.Args[2], "tables", len(manifest.Tables), "blobs", manifest.BlobCount)
+			return nil
+		case "restore":
+			if len(os.Args) < 3 {
+				return errors.New("usage: jiange restore <input.tar.gz>")
+			}
+			var restoreBlobs blob.Store
+			switch {
+			case cfg.BlobDir != "":
+				dir, err := blob.NewDir(cfg.BlobDir)
+				if err != nil {
+					return err
+				}
+				restoreBlobs = dir
+			case cfg.S3Endpoint != "":
+				s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}
+				if err := s3.EnsureBucket(ctx); err != nil {
+					return err
+				}
+				restoreBlobs = s3
+			}
+			manifest, err := backup.RestorePostgresDir(ctx, pg, restoreBlobs, os.Args[2])
+			if err != nil {
+				return err
+			}
+			log.Info("backup restored", "path", os.Args[2], "tables", len(manifest.Tables), "blobs", manifest.BlobCount)
+			return nil
+		}
 	}
 
 	hub := &syncsrv.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
@@ -83,12 +122,53 @@ func run(log *slog.Logger) error {
 			log.Error("listen/notify", "err", err)
 		}
 	}()
-	btHub := &btsync.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
-	sheetHub := &sheetsync.Hub{Store: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
-	slidesHub := &slidessync.Hub{Log: log, OriginPatterns: cfg.AllowedOrigins}
+	btHub := &btsync.Hub{Store: pg, Bus: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
+	go func() {
+		if err := btHub.Run(ctx); err != nil {
+			log.Error("btsync listen/notify", "err", err)
+		}
+	}()
+	sheetHub := &sheetsync.Hub{Store: pg, Bus: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
+	go func() {
+		if err := sheetHub.Run(ctx); err != nil {
+			log.Error("sheetsync listen/notify", "err", err)
+		}
+	}()
+	slidesHub := &slidessync.Hub{Bus: pg, Log: log, OriginPatterns: cfg.AllowedOrigins}
+	go func() {
+		if err := slidesHub.Run(ctx); err != nil {
+			log.Error("slidessync listen/notify", "err", err)
+		}
+	}()
 	if cfg.AutoVersionEvery > 0 {
 		go autoVersions(ctx, log, pg, cfg.AutoVersionEvery)
 	}
+	// 企业数据保留策略定时清扫：启动延迟 1 分钟后每小时执行一次
+	go func() {
+		sweep := func() {
+			if _, err := api.SweepRetentionPolicies(ctx, pg, log); err != nil && ctx.Err() == nil {
+				log.Error("retention sweep", "err", err)
+			}
+		}
+		timer := time.NewTimer(time.Minute)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			sweep()
+		}
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweep()
+			}
+		}
+	}()
 	// 自动化定时触发：每分钟扫一次到期任务
 	go func() {
 		apiSrv := &api.Server{Store: pg, Log: log}

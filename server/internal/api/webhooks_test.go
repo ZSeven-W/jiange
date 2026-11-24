@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -556,5 +558,394 @@ func TestWebhookSSRFProtectionBlocksLoopback(t *testing.T) {
 	}
 	if atomic.LoadInt32(&hits) != 0 {
 		t.Fatalf("local loopback receiver was reached despite SSRF guard!")
+	}
+}
+
+func TestWebhookSuiteEventEmissions(t *testing.T) {
+	const signingSecret = "suite-events-hmac-secret-2026"
+	type capturedDelivery struct {
+		Event     string
+		Signature string
+		Body      []byte
+		Envelope  struct {
+			ID          string         `json:"id"`
+			Event       string         `json:"event"`
+			WorkspaceID int64          `json:"workspaceId"`
+			Data        map[string]any `json:"data"`
+		}
+	}
+	var (
+		mu       sync.Mutex
+		received []capturedDelivery
+	)
+	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		rec := capturedDelivery{
+			Event:     r.Header.Get("X-Jiange-Event"),
+			Signature: r.Header.Get("X-Jiange-Signature"),
+			Body:      body,
+		}
+		_ = json.Unmarshal(body, &rec.Envelope)
+		mu.Lock()
+		received = append(received, rec)
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(receiver.Close)
+
+	mem := store.NewMemory()
+	srv := &Server{
+		Store:            mem,
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		SessionTTL:       time.Hour,
+		Iterations:       1000,
+		WebhookAllowHTTP: true,
+		WebhookTransport: receiver.Client().Transport,
+		AISecret:         AISecretFromEnv("suite-events-master-key"),
+	}
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	ownerClient := newSSOCookieClient(false)
+	regRes := post(t, ownerClient, ts.URL+"/api/auth/register", map[string]string{
+		"email": "suite-wh@corp.example.com", "name": "Suite Owner", "password": "password123",
+	})
+	var ownerMe meResponse
+	if err := json.NewDecoder(regRes.Body).Decode(&ownerMe); err != nil {
+		t.Fatal(err)
+	}
+	regRes.Body.Close()
+	wsID := ownerMe.Workspaces[0].ID
+	ownerID := ownerMe.User.ID
+
+	doAuthJSON := func(method, url string, payload any, extraHeaders map[string]string) *http.Response {
+		t.Helper()
+		var bodyReader io.Reader
+		if payload != nil {
+			b, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			bodyReader = bytes.NewReader(b)
+		}
+		req, err := http.NewRequest(method, url, bodyReader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if payload != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("X-Jiange-User-Id", strconv.FormatInt(ownerID, 10))
+		for k, v := range extraHeaders {
+			req.Header.Set(k, v)
+		}
+		res, err := ownerClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+
+	// Subscribe one enabled webhook to all 3 events.
+	whRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/workspaces/%d/webhooks", ts.URL, wsID), map[string]any{
+		"name":   "Suite Events Hook",
+		"url":    receiver.URL + "/events",
+		"secret": signingSecret,
+		"events": []string{
+			store.WebhookEventBaseRecordMutated,
+			store.WebhookEventSheetCellsUpdated,
+			store.WebhookEventSlidesVersionCreated,
+		},
+		"enabled": true,
+	}, nil)
+	whBody, _ := io.ReadAll(whRes.Body)
+	whRes.Body.Close()
+	if whRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create webhook status=%d body=%s", whRes.StatusCode, whBody)
+	}
+
+	// --- 1. Base record mutations (create, update, batch_update, batch_delete, batch_restore, delete, import) ---
+	baseRes := doAuthJSON(http.MethodPost, ts.URL+"/api/bases", map[string]any{
+		"title":       "CRM Base",
+		"workspaceId": wsID,
+	}, nil)
+	var baseDoc store.DocMeta
+	if err := json.NewDecoder(baseRes.Body).Decode(&baseDoc); err != nil {
+		t.Fatal(err)
+	}
+	baseRes.Body.Close()
+	if baseRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create base status=%d", baseRes.StatusCode)
+	}
+	fields, err := mem.Fields(t.Context(), baseDoc.ID)
+	if err != nil || len(fields) == 0 {
+		t.Fatalf("fields = %+v err=%v", fields, err)
+	}
+	primaryField := fields[0]
+	fieldKey := strconv.FormatInt(primaryField.ID, 10)
+
+	// 1a. Create record
+	recCreateRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/bases/%d/records", ts.URL, baseDoc.ID), map[string]any{
+		"cells": map[string]any{fieldKey: "Acme Corp"},
+	}, nil)
+	var createdRec store.Record
+	if err := json.NewDecoder(recCreateRes.Body).Decode(&createdRec); err != nil {
+		t.Fatal(err)
+	}
+	recCreateRes.Body.Close()
+	if recCreateRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create record status=%d", recCreateRes.StatusCode)
+	}
+
+	// 1b. Update record
+	recPatchRes := doAuthJSON(http.MethodPatch, fmt.Sprintf("%s/api/bases/%d/records/%d", ts.URL, baseDoc.ID, createdRec.ID), map[string]any{
+		"cells": map[string]any{fieldKey: "Acme Updated"},
+	}, nil)
+	recPatchRes.Body.Close()
+	if recPatchRes.StatusCode != http.StatusOK {
+		t.Fatalf("patch record status=%d", recPatchRes.StatusCode)
+	}
+
+	// 1c. Batch update record
+	batchUpdRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/bases/%d/records/batch-update", ts.URL, baseDoc.ID), map[string]any{
+		"updates": []map[string]any{
+			{"id": createdRec.ID, "cells": map[string]any{fieldKey: "Acme Batch"}},
+		},
+	}, nil)
+	batchUpdRes.Body.Close()
+	if batchUpdRes.StatusCode != http.StatusOK {
+		t.Fatalf("batch-update status=%d", batchUpdRes.StatusCode)
+	}
+
+	// 1d. Batch delete record
+	batchDelRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/bases/%d/records/batch-delete", ts.URL, baseDoc.ID), map[string]any{
+		"ids": []int64{createdRec.ID},
+	}, nil)
+	batchDelRes.Body.Close()
+	if batchDelRes.StatusCode != http.StatusOK {
+		t.Fatalf("batch-delete status=%d", batchDelRes.StatusCode)
+	}
+
+	// 1e. Batch restore record
+	batchRestRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/bases/%d/records/batch-restore", ts.URL, baseDoc.ID), map[string]any{
+		"records": []map[string]any{
+			{"tableId": createdRec.TableID, "position": createdRec.Position, "cells": map[string]any{fieldKey: "Acme Restored"}},
+		},
+	}, nil)
+	var restoredBody struct {
+		Records []store.Record `json:"records"`
+	}
+	if err := json.NewDecoder(batchRestRes.Body).Decode(&restoredBody); err != nil {
+		t.Fatal(err)
+	}
+	batchRestRes.Body.Close()
+	if batchRestRes.StatusCode != http.StatusCreated || len(restoredBody.Records) != 1 {
+		t.Fatalf("batch-restore status=%d body=%+v", batchRestRes.StatusCode, restoredBody)
+	}
+
+	// 1f. Delete record
+	delRecRes := doAuthJSON(http.MethodDelete, fmt.Sprintf("%s/api/bases/%d/records/%d", ts.URL, baseDoc.ID, restoredBody.Records[0].ID), nil, nil)
+	delRecRes.Body.Close()
+	if delRecRes.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete record status=%d", delRecRes.StatusCode)
+	}
+
+	// 1g. Import records
+	impRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/bases/%d/import-records", ts.URL, baseDoc.ID), map[string]any{
+		"fields": []map[string]any{
+			{"id": primaryField.ID, "name": primaryField.Name, "type": primaryField.Type, "options": primaryField.Options},
+		},
+		"rows": []map[string]any{
+			{fieldKey: "Imported Row 1"},
+			{fieldKey: "Imported Row 2"},
+		},
+	}, nil)
+	impRaw, _ := io.ReadAll(impRes.Body)
+	impRes.Body.Close()
+	if impRes.StatusCode != http.StatusOK {
+		t.Fatalf("import-records status=%d body=%s", impRes.StatusCode, impRaw)
+	}
+
+	// --- 2. Sheet cells updated (writeSheetCells + importSheetXlsx) ---
+	sheetNodeRes := doAuthJSON(http.MethodPost, ts.URL+"/api/drive/nodes", map[string]any{
+		"workspaceId": wsID,
+		"kind":        "sheet",
+		"title":       "Metrics Sheet",
+	}, nil)
+	var sheetEntry store.DriveEntry
+	if err := json.NewDecoder(sheetNodeRes.Body).Decode(&sheetEntry); err != nil {
+		t.Fatal(err)
+	}
+	sheetNodeRes.Body.Close()
+	if sheetNodeRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create sheet status=%d", sheetNodeRes.StatusCode)
+	}
+	sheetHeaders := map[string]string{"X-Jiange-Sheet-Version": sheetProtocolVersion}
+	sheetGetRes := doAuthJSON(http.MethodGet, fmt.Sprintf("%s/api/sheets/%d", ts.URL, sheetEntry.ID), nil, sheetHeaders)
+	var sheetSnap store.SheetSnapshot
+	if err := json.NewDecoder(sheetGetRes.Body).Decode(&sheetSnap); err != nil {
+		t.Fatal(err)
+	}
+	sheetGetRes.Body.Close()
+
+	rawCell := "Q4 Revenue"
+	writeCellsRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/sheets/%d/cells", ts.URL, sheetEntry.ID), store.SheetCellBatch{
+		MutationID:  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		WorksheetID: sheetSnap.Sheets[0].ID,
+		Cells: []store.SheetCellWrite{
+			{
+				RowID:            sheetSnap.Sheets[0].Rows[0].ID,
+				ColumnID:         sheetSnap.Sheets[0].Columns[0].ID,
+				ExpectedRevision: 0,
+				Raw:              &rawCell,
+			},
+		},
+	}, sheetHeaders)
+	var cellResult store.SheetBatchResult
+	if err := json.NewDecoder(writeCellsRes.Body).Decode(&cellResult); err != nil {
+		t.Fatal(err)
+	}
+	writeCellsRes.Body.Close()
+	if writeCellsRes.StatusCode != http.StatusOK {
+		t.Fatalf("writeSheetCells status=%d", writeCellsRes.StatusCode)
+	}
+
+	importXlsxRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/sheets/%d/import-xlsx", ts.URL, sheetEntry.ID), map[string]any{
+		"expectedWorkbookRevision": cellResult.WorkbookRevision,
+		"mutationId":               "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"sheets": []store.ImportedWorksheet{
+			{
+				Title: "Imported",
+				Rows:  5,
+				Cols:  5,
+				Cells: []store.ImportedSheetCell{
+					{Row: 0, Col: 0, Raw: "A1"},
+					{Row: 0, Col: 1, Raw: "B1"},
+				},
+			},
+		},
+	}, sheetHeaders)
+	importXlsxRaw, _ := io.ReadAll(importXlsxRes.Body)
+	importXlsxRes.Body.Close()
+	if importXlsxRes.StatusCode != http.StatusOK {
+		t.Fatalf("importSheetXlsx status=%d body=%s", importXlsxRes.StatusCode, importXlsxRaw)
+	}
+
+	// --- 3. Slides version created ---
+	slidesNodeRes := doAuthJSON(http.MethodPost, ts.URL+"/api/drive/nodes", map[string]any{
+		"workspaceId": wsID,
+		"kind":        "slides",
+		"title":       "Launch Deck",
+	}, nil)
+	var slidesEntry store.DriveEntry
+	if err := json.NewDecoder(slidesNodeRes.Body).Decode(&slidesEntry); err != nil {
+		t.Fatal(err)
+	}
+	slidesNodeRes.Body.Close()
+	if slidesNodeRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create slides status=%d", slidesNodeRes.StatusCode)
+	}
+	verRes := doAuthJSON(http.MethodPost, fmt.Sprintf("%s/api/slides/%d/versions", ts.URL, slidesEntry.ID), map[string]any{
+		"label": "Release v1.0",
+	}, nil)
+	var verResp struct {
+		Version store.SlidesVersionMeta `json:"version"`
+	}
+	if err := json.NewDecoder(verRes.Body).Decode(&verResp); err != nil {
+		t.Fatal(err)
+	}
+	verRes.Body.Close()
+	if verRes.StatusCode != http.StatusCreated {
+		t.Fatalf("create slides version status=%d", verRes.StatusCode)
+	}
+
+	// Wait for all 10 async webhook deliveries (7 base + 2 sheet + 1 slides).
+	const wantTotal = 10
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		n := len(received)
+		mu.Unlock()
+		if n >= wantTotal {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+
+	mu.Lock()
+	got := append([]capturedDelivery(nil), received...)
+	mu.Unlock()
+	if len(got) != wantTotal {
+		t.Fatalf("received %d webhook deliveries, want %d", len(got), wantTotal)
+	}
+
+	baseActions := map[string]float64{}
+	sheetCellCounts := map[float64]bool{}
+	var slidesHit *capturedDelivery
+
+	for i, d := range got {
+		if !verifyHMACSHA256Header(signingSecret, d.Body, d.Signature) {
+			t.Fatalf("delivery[%d] (%s) invalid HMAC signature %q", i, d.Event, d.Signature)
+		}
+		if d.Envelope.WorkspaceID != wsID || d.Envelope.Event != d.Event {
+			t.Fatalf("delivery[%d] envelope mismatch: %+v", i, d.Envelope)
+		}
+		if gotActor, _ := d.Envelope.Data["actorId"].(float64); int64(gotActor) != ownerID {
+			t.Fatalf("delivery[%d] (%s) actorId=%v, want %d", i, d.Event, d.Envelope.Data["actorId"], ownerID)
+		}
+		switch d.Event {
+		case store.WebhookEventBaseRecordMutated:
+			if bid, _ := d.Envelope.Data["baseId"].(float64); int64(bid) != baseDoc.ID {
+				t.Fatalf("base event baseId=%v, want %d", d.Envelope.Data["baseId"], baseDoc.ID)
+			}
+			act, _ := d.Envelope.Data["action"].(string)
+			cnt, _ := d.Envelope.Data["count"].(float64)
+			baseActions[act] = cnt
+		case store.WebhookEventSheetCellsUpdated:
+			if sid, _ := d.Envelope.Data["sheetId"].(float64); int64(sid) != sheetEntry.ID {
+				t.Fatalf("sheet event sheetId=%v, want %d", d.Envelope.Data["sheetId"], sheetEntry.ID)
+			}
+			if rev, _ := d.Envelope.Data["workbookRevision"].(float64); rev < 2 {
+				t.Fatalf("sheet event workbookRevision=%v, want >= 2", rev)
+			}
+			cnt, _ := d.Envelope.Data["cellCount"].(float64)
+			sheetCellCounts[cnt] = true
+		case store.WebhookEventSlidesVersionCreated:
+			cp := d
+			slidesHit = &cp
+		default:
+			t.Fatalf("unexpected webhook event %q", d.Event)
+		}
+	}
+
+	wantBaseActions := map[string]float64{
+		"create":        1,
+		"update":        1,
+		"batch_update":  1,
+		"batch_delete":  1,
+		"batch_restore": 1,
+		"delete":        1,
+		"import":        2,
+	}
+	for act, wantCnt := range wantBaseActions {
+		if baseActions[act] != wantCnt {
+			t.Fatalf("base action %q count=%v, want %v (all=%+v)", act, baseActions[act], wantCnt, baseActions)
+		}
+	}
+	if !sheetCellCounts[1] || !sheetCellCounts[2] {
+		t.Fatalf("expected sheet.cells_updated cellCounts 1 and 2, got %+v", sheetCellCounts)
+	}
+	if slidesHit == nil {
+		t.Fatalf("missing slides.version_created webhook delivery")
+	}
+	if sid, _ := slidesHit.Envelope.Data["slidesId"].(float64); int64(sid) != slidesEntry.ID {
+		t.Fatalf("slidesId=%v, want %d", slidesHit.Envelope.Data["slidesId"], slidesEntry.ID)
+	}
+	if vid, _ := slidesHit.Envelope.Data["versionId"].(float64); int64(vid) != verResp.Version.ID {
+		t.Fatalf("versionId=%v, want %d", slidesHit.Envelope.Data["versionId"], verResp.Version.ID)
+	}
+	if name, _ := slidesHit.Envelope.Data["name"].(string); name != "Release v1.0" {
+		t.Fatalf("slides version name=%q, want Release v1.0", name)
 	}
 }

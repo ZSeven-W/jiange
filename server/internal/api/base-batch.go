@@ -65,6 +65,15 @@ func (s *Server) batchDeleteBaseRecords(w http.ResponseWriter, r *http.Request) 
 			s.BtHub.Notify(bid)
 		}
 	}
+	if len(deleted) > 0 {
+		s.dispatchWorkspaceEvent(b.WorkspaceID, store.WebhookEventBaseRecordMutated, map[string]any{
+			"baseId":  b.ID,
+			"tableId": deleted[0].TableID,
+			"action":  "batch_delete",
+			"count":   len(deleted),
+			"actorId": u.ID,
+		})
+	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"deleted": deleted})
 }
@@ -103,6 +112,15 @@ func (s *Server) batchRestoreBaseRecords(w http.ResponseWriter, r *http.Request)
 		for _, bid := range affected {
 			s.BtHub.Notify(bid)
 		}
+	}
+	if len(restored) > 0 {
+		s.dispatchWorkspaceEvent(b.WorkspaceID, store.WebhookEventBaseRecordMutated, map[string]any{
+			"baseId":  b.ID,
+			"tableId": restored[0].TableID,
+			"action":  "batch_restore",
+			"count":   len(restored),
+			"actorId": u.ID,
+		})
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	httpx.JSON(w, http.StatusCreated, map[string]any{"records": restored})
@@ -148,6 +166,15 @@ func (s *Server) batchUpdateBaseRecords(w http.ResponseWriter, r *http.Request) 
 		for _, bid := range affected {
 			s.BtHub.Notify(bid)
 		}
+	}
+	if len(updated) > 0 {
+		s.dispatchWorkspaceEvent(b.WorkspaceID, store.WebhookEventBaseRecordMutated, map[string]any{
+			"baseId":  b.ID,
+			"tableId": updated[0].TableID,
+			"action":  "batch_update",
+			"count":   len(updated),
+			"actorId": u.ID,
+		})
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
 	httpx.JSON(w, http.StatusOK, map[string]any{"records": updated})

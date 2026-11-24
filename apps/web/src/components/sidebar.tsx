@@ -4,8 +4,8 @@ import { OfflineCacheButton, PwaInstallButton } from "./offline-banner";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me, type Workspace } from "@/lib/api";
-import { useActiveWorkspace, workspacesApi } from "@/lib/workspace-switcher";
+import { ApiError, baseApi, docsApi, driveApi, extrasApi, orgApi, type DocMeta, type Me, type Workspace } from "@/lib/api";
+import { deleteWorkspace, leaveWorkspace, renameWorkspace, useActiveWorkspace, workspacesApi } from "@/lib/workspace-switcher";
 import { go, nodeHref, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { ask, askText } from "@/components/ui/ask";
@@ -151,20 +151,45 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
   }, [menu]);
   const [open, setOpen] = useState<Record<number, boolean>>({});
   const [createdWorkspaces, setCreatedWorkspaces] = useState<Workspace[]>([]);
+  const [renamedWorkspaces, setRenamedWorkspaces] = useState<Record<number, string>>({});
+  const [removedWorkspaceIds, setRemovedWorkspaceIds] = useState<number[]>([]);
   const [creatingWorkspace, setCreatingWorkspace] = useState(false);
   const [wsError, setWsError] = useState("");
+  const [wsDialog, setWsDialog] = useState<{ kind: "rename" | "delete" | "leave"; workspace: Workspace } | null>(null);
   useEffect(() => {
     setCreatedWorkspaces([]);
+    setRenamedWorkspaces({});
+    setRemovedWorkspaceIds([]);
+    setWsDialog(null);
     setWsError("");
   }, [me.user.id]);
   const workspaces = useMemo(() => {
-    const seen = new Set(me.workspaces.map((w) => w.id));
-    return [...me.workspaces, ...createdWorkspaces.filter((w) => !seen.has(w.id))];
-  }, [me.workspaces, createdWorkspaces]);
+    const removed = new Set(removedWorkspaceIds);
+    const seen = new Set<number>();
+    const merged: Workspace[] = [];
+    for (const w of [...me.workspaces, ...createdWorkspaces]) {
+      if (removed.has(w.id) || seen.has(w.id)) continue;
+      seen.add(w.id);
+      const renamed = renamedWorkspaces[w.id];
+      merged.push(renamed !== undefined ? { ...w, name: renamed } : w);
+    }
+    return merged;
+  }, [me.workspaces, createdWorkspaces, renamedWorkspaces, removedWorkspaceIds]);
   const switcherMe = useMemo(() => ({ user: me.user, workspaces }), [me.user, workspaces]);
   const { activeWorkspace, activeWorkspaceId, setActiveWorkspace } = useActiveWorkspace(switcherMe);
+  const isActiveOwner = activeWorkspace != null && activeWorkspace.ownerId === me.user.id;
+  const activeOrg = useQuery({
+    queryKey: ["org", activeWorkspace?.id, me.user.id],
+    queryFn: () => orgApi.get(activeWorkspace!.id, me.user.id),
+    enabled: menu && activeWorkspace != null && !isActiveOwner,
+    staleTime: 30_000,
+    retry: false,
+  });
+  const canRenameActive = activeWorkspace != null && (isActiveOwner || activeOrg.data?.callerRole === "admin");
+  const canDeleteActive = activeWorkspace != null && isActiveOwner && workspaces.length > 1;
+  const canLeaveActive = activeWorkspace != null && !isActiveOwner && workspaces.length > 1;
   const invalidateWorkspaceQueries = useCallback(() => {
-    for (const key of [["docs"], ["drive"], ["drive-nav"], ["pins"], ["favorites"], ["recent"], ["search"], ["shared"], ["wiki-spaces"], ["org"], ["workspaces"]]) {
+    for (const key of [["docs"], ["drive"], ["drive-nav"], ["pins"], ["favorites"], ["recent"], ["search"], ["shared"], ["trash"], ["wiki-spaces"], ["org"], ["workspaces"]]) {
       void qc.invalidateQueries({ queryKey: key });
     }
   }, [qc]);
@@ -184,6 +209,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
     setCreatingWorkspace(true);
     try {
       const created = await workspacesApi.create(name);
+      setRemovedWorkspaceIds((prev) => prev.filter((id) => id !== created.id));
       setCreatedWorkspaces((prev) => (prev.some((w) => w.id === created.id) ? prev : [...prev, created]));
       setActiveWorkspace(created.id);
       invalidateWorkspaceQueries();
@@ -193,6 +219,41 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
     } finally {
       setCreatingWorkspace(false);
     }
+  };
+  const handleRenameWorkspaceSubmit = async (ws: Workspace, nextName: string) => {
+    const updated = await renameWorkspace(ws.id, nextName);
+    setRenamedWorkspaces((prev) => ({ ...prev, [ws.id]: updated.name }));
+    setCreatedWorkspaces((prev) => prev.map((item) => (item.id === ws.id ? { ...item, name: updated.name } : item)));
+    setWsError("");
+    setWsDialog(null);
+    invalidateWorkspaceQueries();
+    onWorkspacesChanged?.();
+  };
+  const handleRemoveWorkspaceFinished = (ws: Workspace) => {
+    setRemovedWorkspaceIds((prev) => (prev.includes(ws.id) ? prev : [...prev, ws.id]));
+    setCreatedWorkspaces((prev) => prev.filter((item) => item.id !== ws.id));
+    setRenamedWorkspaces((prev) => {
+      if (!(ws.id in prev)) return prev;
+      const next = { ...prev };
+      delete next[ws.id];
+      return next;
+    });
+    const remaining = workspaces.filter((item) => item.id !== ws.id);
+    if (activeWorkspaceId === ws.id && remaining.length > 0) {
+      setActiveWorkspace(remaining[0].id);
+    }
+    setWsError("");
+    setWsDialog(null);
+    invalidateWorkspaceQueries();
+    onWorkspacesChanged?.();
+  };
+  const handleDeleteWorkspaceSubmit = async (ws: Workspace) => {
+    await deleteWorkspace(ws.id);
+    handleRemoveWorkspaceFinished(ws);
+  };
+  const handleLeaveWorkspaceSubmit = async (ws: Workspace) => {
+    await leaveWorkspace(ws.id);
+    handleRemoveWorkspaceFinished(ws);
   };
   const create = useMutation({
     mutationFn: (parent: Pick<DocMeta, "id" | "workspaceId"> | null = null) =>
@@ -431,12 +492,61 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
               );
             })}
           </div>
+          {activeWorkspace && (canRenameActive || canDeleteActive || canLeaveActive) && (
+            <div className="mt-1 space-y-0.5 border-t pt-1" data-workspace-actions>
+              {canRenameActive && (
+                <button
+                  type="button"
+                  data-rename-workspace-btn
+                  onClick={() => {
+                    setMenu(false);
+                    setWsError("");
+                    setWsDialog({ kind: "rename", workspace: activeWorkspace });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] text-foreground hover:bg-hover"
+                >
+                  <Pencil size={13} strokeWidth={1.7} className="shrink-0 text-subtle" />
+                  <span>{t("重命名")}</span>
+                </button>
+              )}
+              {canDeleteActive && (
+                <button
+                  type="button"
+                  data-delete-workspace-btn
+                  onClick={() => {
+                    setMenu(false);
+                    setWsError("");
+                    setWsDialog({ kind: "delete", workspace: activeWorkspace });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] text-destructive hover:bg-hover"
+                >
+                  <Trash2 size={13} strokeWidth={1.7} className="shrink-0" />
+                  <span>{t("删除空间")}</span>
+                </button>
+              )}
+              {canLeaveActive && (
+                <button
+                  type="button"
+                  data-leave-workspace-btn
+                  onClick={() => {
+                    setMenu(false);
+                    setWsError("");
+                    setWsDialog({ kind: "leave", workspace: activeWorkspace });
+                  }}
+                  className="flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] text-destructive hover:bg-hover"
+                >
+                  <LogOut size={13} strokeWidth={1.7} className="shrink-0" />
+                  <span>{t("退出空间")}</span>
+                </button>
+              )}
+            </div>
+          )}
           <button
             type="button"
             data-create-workspace-btn
             disabled={creatingWorkspace}
             onClick={() => void handleCreateWorkspace()}
-            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-[13px] font-medium text-primary hover:bg-hover disabled:opacity-50"
+            className="mt-1 flex w-full items-center gap-1.5 rounded-md border-t px-3 py-1.5 pt-2 text-left text-[13px] font-medium text-primary hover:bg-hover disabled:opacity-50"
           >
             <span>+ {t("新建工作空间")}</span>
           </button>
@@ -462,8 +572,189 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         </div>
       </div>
       {searchOpen && <GlobalSearch userId={me.user.id} onClose={closeSearch} />}
+      {wsDialog && typeof document !== "undefined" && createPortal(
+        <WorkspaceLifecycleModal
+          kind={wsDialog.kind}
+          workspace={wsDialog.workspace}
+          onClose={() => setWsDialog(null)}
+          onRename={handleRenameWorkspaceSubmit}
+          onDelete={handleDeleteWorkspaceSubmit}
+          onLeave={handleLeaveWorkspaceSubmit}
+        />,
+        document.body,
+      )}
       {searchFocusNotice && createPortal(<div role="status" className="fixed bottom-4 left-1/2 z-[90] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-md border bg-surface px-4 py-2 text-[13px] text-foreground shadow-lg"><span>{t("文档内容或编辑位置已变化，请重新选择后继续输入。")}</span><button type="button" className="shrink-0 text-primary hover:underline" onClick={() => setSearchFocusNotice(false)}>{t("关闭")}</button></div>, document.body)}
     </aside>
+  );
+}
+
+function WorkspaceLifecycleModal({
+  kind,
+  workspace,
+  onClose,
+  onRename,
+  onDelete,
+  onLeave,
+}: {
+  kind: "rename" | "delete" | "leave";
+  workspace: Workspace;
+  onClose: () => void;
+  onRename: (ws: Workspace, name: string) => Promise<void>;
+  onDelete: (ws: Workspace) => Promise<void>;
+  onLeave: (ws: Workspace) => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [nameInput, setNameInput] = useState(workspace.name);
+  const [confirmInput, setConfirmInput] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !submitting) {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [onClose, submitting]);
+
+  const trimmedName = nameInput.trim();
+  const canSubmit =
+    !submitting &&
+    (kind === "rename"
+      ? trimmedName.length > 0 && trimmedName.length <= 80 && trimmedName !== workspace.name
+      : kind === "delete"
+        ? confirmInput.trim() === workspace.name
+        : true);
+
+  const handleSubmit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      if (kind === "rename") {
+        await onRename(workspace, trimmedName);
+      } else if (kind === "delete") {
+        await onDelete(workspace);
+      } else {
+        await onLeave(workspace);
+      }
+    } catch (err) {
+      const fallback =
+        kind === "rename"
+          ? t("重命名工作空间失败，请稍后重试")
+          : kind === "delete"
+            ? t("删除工作空间失败，请稍后重试")
+            : t("退出工作空间失败，请稍后重试");
+      setError(err instanceof ApiError && err.message ? err.message : fallback);
+      setSubmitting(false);
+    }
+  };
+
+  const title =
+    kind === "rename"
+      ? t("重命名工作空间")
+      : kind === "delete"
+        ? t("删除空间")
+        : t("退出空间");
+
+  return (
+    <div
+      className="fixed inset-0 z-[80] grid place-items-center bg-black/35 px-4"
+      onMouseDown={() => {
+        if (!submitting) onClose();
+      }}
+      data-workspace-modal={kind}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(e) => e.stopPropagation()}
+        onSubmit={(e) => void handleSubmit(e)}
+        className="w-[min(400px,calc(100vw-32px))] rounded-xl border bg-surface p-5 shadow-2xl"
+      >
+        <h3 className="text-[16px] font-semibold text-foreground">{title}</h3>
+        {kind === "rename" && (
+          <div className="mt-3">
+            <label className="block text-[12px] text-muted-foreground">
+              {t("空间名称")}
+              <input
+                autoFocus
+                type="text"
+                maxLength={80}
+                value={nameInput}
+                disabled={submitting}
+                onChange={(e) => setNameInput(e.target.value)}
+                placeholder={t("空间名称")}
+                className="mt-1.5 h-9 w-full rounded-md border bg-background px-2.5 text-[14px] text-foreground outline-none focus:border-primary"
+                data-workspace-rename-input
+              />
+            </label>
+          </div>
+        )}
+        {kind === "delete" && (
+          <div className="mt-2.5 space-y-3">
+            <p className="text-[13px] leading-5 text-muted-foreground">
+              {t("此操作将永久删除工作空间「{name}」及其中的所有文档和数据，且无法恢复。", { name: workspace.name })}
+            </p>
+            <label className="block text-[12px] text-muted-foreground">
+              {t("请输入空间名称「{name}」以确认删除", { name: workspace.name })}
+              <input
+                autoFocus
+                type="text"
+                value={confirmInput}
+                disabled={submitting}
+                onChange={(e) => setConfirmInput(e.target.value)}
+                placeholder={workspace.name}
+                className="mt-1.5 h-9 w-full rounded-md border bg-background px-2.5 text-[14px] text-foreground outline-none focus:border-destructive"
+                data-workspace-delete-confirm-input
+              />
+            </label>
+          </div>
+        )}
+        {kind === "leave" && (
+          <p className="mt-2.5 text-[13px] leading-5 text-muted-foreground">
+            {t("确定要退出工作空间「{name}」吗？退出后需重新受邀才能访问该空间。", { name: workspace.name })}
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="mt-2.5 text-[12px] text-destructive">
+            {error}
+          </p>
+        )}
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={onClose}
+            className="h-8 rounded-md border px-3 text-[13px] text-foreground hover:bg-hover disabled:opacity-50"
+          >
+            {t("取消")}
+          </button>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            data-workspace-modal-submit
+            className={cn(
+              "h-8 rounded-md px-3 text-[13px] font-medium text-white hover:opacity-90 disabled:opacity-50",
+              kind === "rename" ? "bg-primary" : "bg-destructive",
+            )}
+          >
+            {submitting
+              ? t("处理中…")
+              : kind === "rename"
+                ? t("确定")
+                : kind === "delete"
+                  ? t("确认删除")
+                  : t("确认退出")}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }
 
@@ -733,4 +1024,4 @@ export function DarkToggle() {
   );
 }
 
-import { ArrowLeft, BookOpen, Building2, ChevronDown, ChevronRight, ClipboardList, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Plus, ShieldCheck, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BookOpen, Building2, ChevronDown, ChevronRight, ClipboardList, Clock3, FilePlus, FileText, FolderIcon, LogOut, Moon, Pencil, Plus, ShieldCheck, Sparkles, Star, Sun, Table2, Trash2, Users } from "lucide-react";

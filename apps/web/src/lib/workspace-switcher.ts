@@ -159,13 +159,16 @@ export function useActiveWorkspace(me: Pick<Me, "user" | "workspaces"> | null | 
   return { activeWorkspace, activeWorkspaceId, setActiveWorkspace };
 }
 
-async function workspaceRequest<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+async function workspaceRequest<T>(method: "GET" | "POST" | "PATCH" | "DELETE", path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method,
     credentials: "same-origin",
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 204) {
+    return undefined as T;
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new ApiError(
@@ -178,6 +181,23 @@ async function workspaceRequest<T>(method: "GET" | "POST", path: string, body?: 
   return data as T;
 }
 
+export async function renameWorkspace(wsId: number, name: string): Promise<Workspace> {
+  const data = await workspaceRequest<{ workspace: Workspace }>("PATCH", `/api/workspaces/${wsId}`, { name });
+  return data.workspace;
+}
+
+export async function deleteWorkspace(wsId: number): Promise<void> {
+  await workspaceRequest<void>("DELETE", `/api/workspaces/${wsId}`);
+}
+
+export async function transferWorkspaceOwner(wsId: number, targetUserId: number): Promise<void> {
+  await workspaceRequest<void>("POST", `/api/workspaces/${wsId}/transfer-owner`, { targetUserId });
+}
+
+export async function leaveWorkspace(wsId: number): Promise<void> {
+  await workspaceRequest<void>("POST", `/api/workspaces/${wsId}/leave`);
+}
+
 export const workspacesApi = {
   list: async (): Promise<Workspace[]> => {
     const data = await workspaceRequest<{ workspaces?: Workspace[] }>("GET", "/api/workspaces");
@@ -188,4 +208,9 @@ export const workspacesApi = {
     const data = await workspaceRequest<{ workspace: Workspace }>("POST", "/api/workspaces", { name });
     return data.workspace;
   },
+
+  rename: renameWorkspace,
+  delete: deleteWorkspace,
+  transferOwner: transferWorkspaceOwner,
+  leave: leaveWorkspace,
 };

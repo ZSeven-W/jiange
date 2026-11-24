@@ -31,14 +31,20 @@ func newSCIMTestServer(t *testing.T, st store.Store, now func() time.Time) (*Ser
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.scimServiceProviderConfig)
+	mux.HandleFunc("GET /scim/v2/Schemas", s.scimListSchemas)
+	mux.HandleFunc("GET /scim/v2/Schemas/{schemaId}", s.scimGetSchema)
+	mux.HandleFunc("GET /scim/v2/ResourceTypes", s.scimListResourceTypes)
+	mux.HandleFunc("GET /scim/v2/ResourceTypes/{typeId}", s.scimGetResourceType)
 	mux.HandleFunc("GET /scim/v2/Users", s.scimListUsers)
 	mux.HandleFunc("POST /scim/v2/Users", s.scimCreateUser)
 	mux.HandleFunc("GET /scim/v2/Users/{uid}", s.scimGetUser)
+	mux.HandleFunc("PUT /scim/v2/Users/{uid}", s.scimPutUser)
 	mux.HandleFunc("PATCH /scim/v2/Users/{uid}", s.scimPatchUser)
 	mux.HandleFunc("DELETE /scim/v2/Users/{uid}", s.scimDeleteUser)
 	mux.HandleFunc("GET /scim/v2/Groups", s.scimListGroups)
 	mux.HandleFunc("POST /scim/v2/Groups", s.scimCreateGroup)
 	mux.HandleFunc("GET /scim/v2/Groups/{gid}", s.scimGetGroup)
+	mux.HandleFunc("PUT /scim/v2/Groups/{gid}", s.scimPutGroup)
 	mux.HandleFunc("PATCH /scim/v2/Groups/{gid}", s.scimPatchGroup)
 	mux.HandleFunc("DELETE /scim/v2/Groups/{gid}", s.scimDeleteGroup)
 	mux.Handle("/", s.Handler())
@@ -140,9 +146,12 @@ func TestSCIMServiceProviderConfig(t *testing.T) {
 	}
 
 	var cfg struct {
-		Schemas               []string `json:"schemas"`
-		Patch                 struct{ Supported bool } `json:"patch"`
-		Filter                struct{ Supported bool; MaxResults int } `json:"filter"`
+		Schemas []string                 `json:"schemas"`
+		Patch   struct{ Supported bool } `json:"patch"`
+		Filter  struct {
+			Supported  bool
+			MaxResults int
+		} `json:"filter"`
 		AuthenticationSchemes []struct {
 			Type    string `json:"type"`
 			Name    string `json:"name"`
@@ -570,4 +579,459 @@ func TestSCIMGroupLifecycle(t *testing.T) {
 	// Verify deleted group returns 404
 	afterDel := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, adminPAT, nil, nil)
 	assertSCIMErrorResponse(t, afterDel, http.StatusNotFound, "")
+}
+
+func TestSCIMSchemasDiscovery(t *testing.T) {
+	st := store.NewMemory()
+	fixedNow := time.Date(2026, 11, 24, 14, 0, 0, 0, time.UTC)
+	_, ts, _ := newSCIMTestServer(t, st, func() time.Time { return fixedNow })
+
+	// 1. GET /scim/v2/Schemas (public, no auth required)
+	res := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Schemas", "", nil, nil)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /scim/v2/Schemas status=%d want 200", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, scimContentType) {
+		t.Fatalf("Content-Type=%q want %q", ct, scimContentType)
+	}
+	if cc := res.Header.Get("Cache-Control"); cc != "public, max-age=300" {
+		t.Fatalf("Cache-Control=%q want %q", cc, "public, max-age=300")
+	}
+
+	var list struct {
+		Schemas      []string             `json:"schemas"`
+		TotalResults int                  `json:"totalResults"`
+		StartIndex   int                  `json:"startIndex"`
+		ItemsPerPage int                  `json:"itemsPerPage"`
+		Resources    []scimSchemaResource `json:"Resources"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Schemas) == 0 || list.Schemas[0] != scimSchemaListResponse {
+		t.Fatalf("list schemas=%v want %q", list.Schemas, scimSchemaListResponse)
+	}
+	if list.TotalResults != 2 || list.ItemsPerPage != 2 || len(list.Resources) != 2 {
+		t.Fatalf("expected 2 core schemas, got total=%d items=%d len=%d", list.TotalResults, list.ItemsPerPage, len(list.Resources))
+	}
+
+	byID := map[string]scimSchemaResource{}
+	for _, s := range list.Resources {
+		byID[s.ID] = s
+		if len(s.Schemas) == 0 || s.Schemas[0] != scimSchemaSchema {
+			t.Fatalf("schema %s missing core Schema URN: %v", s.ID, s.Schemas)
+		}
+		if len(s.Attributes) == 0 {
+			t.Fatalf("schema %s has no attributes", s.ID)
+		}
+		for _, attr := range s.Attributes {
+			if attr.Name == "" || attr.Type == "" || attr.Mutability == "" || attr.Returned == "" || attr.Uniqueness == "" {
+				t.Fatalf("incomplete attribute descriptor in %s: %+v", s.ID, attr)
+			}
+		}
+	}
+
+	userSchema, ok := byID[scimSchemaUser]
+	if !ok {
+		t.Fatalf("missing User schema %q", scimSchemaUser)
+	}
+	foundUserName := false
+	for _, attr := range userSchema.Attributes {
+		if attr.Name == "userName" && attr.Required && attr.Uniqueness == "server" {
+			foundUserName = true
+		}
+	}
+	if !foundUserName {
+		t.Fatalf("User schema missing required server-unique userName attribute: %+v", userSchema.Attributes)
+	}
+
+	if _, ok := byID[scimSchemaGroup]; !ok {
+		t.Fatalf("missing Group schema %q", scimSchemaGroup)
+	}
+
+	// 2. GET /scim/v2/Schemas/{schemaId} for User & Group
+	for _, wantID := range []string{scimSchemaUser, scimSchemaGroup} {
+		singleRes := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Schemas/"+wantID, "", nil, nil)
+		if singleRes.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(singleRes.Body)
+			singleRes.Body.Close()
+			t.Fatalf("GET /scim/v2/Schemas/%s status=%d body=%s", wantID, singleRes.StatusCode, string(raw))
+		}
+		if ct := singleRes.Header.Get("Content-Type"); !strings.HasPrefix(ct, scimContentType) {
+			singleRes.Body.Close()
+			t.Fatalf("Content-Type=%q want %q", ct, scimContentType)
+		}
+		var got scimSchemaResource
+		if err := json.NewDecoder(singleRes.Body).Decode(&got); err != nil {
+			singleRes.Body.Close()
+			t.Fatal(err)
+		}
+		singleRes.Body.Close()
+		if got.ID != wantID {
+			t.Fatalf("schema id=%q want %q", got.ID, wantID)
+		}
+	}
+
+	// 3. Unknown schema -> 404 SCIM error
+	missingRes := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Schemas/urn:ietf:params:scim:schemas:core:2.0:Unknown", "", nil, nil)
+	assertSCIMErrorResponse(t, missingRes, http.StatusNotFound, "")
+}
+
+func TestSCIMResourceTypesDiscovery(t *testing.T) {
+	st := store.NewMemory()
+	fixedNow := time.Date(2026, 11, 24, 14, 15, 0, 0, time.UTC)
+	_, ts, _ := newSCIMTestServer(t, st, func() time.Time { return fixedNow })
+
+	// 1. GET /scim/v2/ResourceTypes (public, no auth required)
+	res := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/ResourceTypes", "", nil, nil)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET /scim/v2/ResourceTypes status=%d want 200", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, scimContentType) {
+		t.Fatalf("Content-Type=%q want %q", ct, scimContentType)
+	}
+
+	var list struct {
+		Schemas      []string                   `json:"schemas"`
+		TotalResults int                        `json:"totalResults"`
+		ItemsPerPage int                        `json:"itemsPerPage"`
+		Resources    []scimResourceTypeResource `json:"Resources"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	if len(list.Schemas) == 0 || list.Schemas[0] != scimSchemaListResponse {
+		t.Fatalf("schemas=%v want %q", list.Schemas, scimSchemaListResponse)
+	}
+	if list.TotalResults != 2 || len(list.Resources) != 2 {
+		t.Fatalf("expected 2 resource types, got %+v", list)
+	}
+
+	byID := map[string]scimResourceTypeResource{}
+	for _, rt := range list.Resources {
+		byID[rt.ID] = rt
+	}
+	if u := byID["User"]; u.Endpoint != "/scim/v2/Users" || u.Schema != scimSchemaUser {
+		t.Fatalf("unexpected User ResourceType: %+v", u)
+	}
+	if g := byID["Group"]; g.Endpoint != "/scim/v2/Groups" || g.Schema != scimSchemaGroup {
+		t.Fatalf("unexpected Group ResourceType: %+v", g)
+	}
+
+	// 2. GET /scim/v2/ResourceTypes/{typeId} (case-insensitive)
+	for _, tc := range []struct {
+		param    string
+		wantID   string
+		wantPath string
+	}{
+		{"User", "User", "/scim/v2/Users"},
+		{"user", "User", "/scim/v2/Users"},
+		{"Group", "Group", "/scim/v2/Groups"},
+		{"GROUP", "Group", "/scim/v2/Groups"},
+	} {
+		rtRes := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/ResourceTypes/"+tc.param, "", nil, nil)
+		if rtRes.StatusCode != http.StatusOK {
+			raw, _ := io.ReadAll(rtRes.Body)
+			rtRes.Body.Close()
+			t.Fatalf("GET ResourceTypes/%s status=%d body=%s", tc.param, rtRes.StatusCode, string(raw))
+		}
+		var got scimResourceTypeResource
+		if err := json.NewDecoder(rtRes.Body).Decode(&got); err != nil {
+			rtRes.Body.Close()
+			t.Fatal(err)
+		}
+		rtRes.Body.Close()
+		if got.ID != tc.wantID || got.Endpoint != tc.wantPath {
+			t.Fatalf("ResourceTypes/%s got %+v want id=%s endpoint=%s", tc.param, got, tc.wantID, tc.wantPath)
+		}
+	}
+
+	// 3. Unknown ResourceType -> 404 SCIM error
+	missingRes := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/ResourceTypes/UnknownType", "", nil, nil)
+	assertSCIMErrorResponse(t, missingRes, http.StatusNotFound, "")
+}
+
+func TestSCIMPutUserFullReplacement(t *testing.T) {
+	st := store.NewMemory()
+	fixedNow := time.Date(2026, 11, 24, 15, 0, 0, 0, time.UTC)
+	_, ts, ownerClient := newSCIMTestServer(t, st, func() time.Time { return fixedNow })
+
+	owner, ws := patTestRegister(t, ts, ownerClient, "put-owner@example.test", "Put Owner")
+	readPAT := scimCreatePAT(t, ts, ownerClient, "Read PAT", []string{"read"})
+	adminPAT := scimCreatePAT(t, ts, ownerClient, "Admin PAT", []string{"admin"})
+	wsQuery := fmt.Sprintf("?workspaceId=%d", ws.ID)
+
+	// Provision Alice
+	createRes := scimRequest(t, http.MethodPost, ts.URL+"/scim/v2/Users"+wsQuery, adminPAT, nil, map[string]any{
+		"schemas":     []string{scimSchemaUser},
+		"userName":    "alice.put@example.test",
+		"displayName": "Alice Initial",
+		"active":      true,
+	})
+	var alice scimUserResource
+	if err := json.NewDecoder(createRes.Body).Decode(&alice); err != nil {
+		t.Fatal(err)
+	}
+	createRes.Body.Close()
+
+	// 1. Auth guards: 401 unauthenticated, 403 non-admin PAT
+	unauthRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, "", nil, map[string]any{
+		"userName": "alice.put@example.test", "displayName": "No Auth", "active": true,
+	})
+	assertSCIMErrorResponse(t, unauthRes, http.StatusUnauthorized, "")
+
+	readRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, readPAT, nil, map[string]any{
+		"userName": "alice.put@example.test", "displayName": "Read Only", "active": true,
+	})
+	assertSCIMErrorResponse(t, readRes, http.StatusForbidden, "")
+
+	// 2. 404 for unknown user ID
+	notFoundRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/999999"+wsQuery, adminPAT, nil, map[string]any{
+		"userName": "ghost@example.test", "displayName": "Ghost", "active": true,
+	})
+	assertSCIMErrorResponse(t, notFoundRes, http.StatusNotFound, "")
+
+	// 3. 400 edge cases: invalid role, mismatched userName, displayName too long
+	badRoleRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"userName": "alice.put@example.test",
+		"roles":    []map[string]string{{"value": "superadmin"}},
+	})
+	assertSCIMErrorResponse(t, badRoleRes, http.StatusBadRequest, "invalidValue")
+
+	diffEmailRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"userName": "someone-else@example.test",
+		"active":   true,
+	})
+	assertSCIMErrorResponse(t, diffEmailRes, http.StatusBadRequest, "mutability")
+
+	longNameRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"userName":    "alice.put@example.test",
+		"displayName": strings.Repeat("a", 65),
+	})
+	assertSCIMErrorResponse(t, longNameRes, http.StatusBadRequest, "invalidValue")
+
+	// 4. Full replacement: update displayName + promote member -> admin
+	putRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"schemas":     []string{scimSchemaUser},
+		"userName":    "alice.put@example.test",
+		"displayName": "Alice Updated",
+		"active":      true,
+		"roles":       []map[string]string{{"value": "admin"}},
+	})
+	if putRes.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(putRes.Body)
+		putRes.Body.Close()
+		t.Fatalf("PUT user status=%d body=%s", putRes.StatusCode, string(raw))
+	}
+	var updated scimUserResource
+	if err := json.NewDecoder(putRes.Body).Decode(&updated); err != nil {
+		t.Fatal(err)
+	}
+	putRes.Body.Close()
+	if updated.DisplayName != "Alice Updated" || !updated.Active || len(updated.Roles) != 1 || updated.Roles[0].Value != store.WorkspaceRoleAdmin {
+		t.Fatalf("unexpected PUT user result: %+v", updated)
+	}
+
+	// Verify GET reflects updated displayName and admin role
+	getRes := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, nil)
+	var fetched scimUserResource
+	if err := json.NewDecoder(getRes.Body).Decode(&fetched); err != nil {
+		t.Fatal(err)
+	}
+	getRes.Body.Close()
+	if fetched.DisplayName != "Alice Updated" || fetched.Roles[0].Value != store.WorkspaceRoleAdmin {
+		t.Fatalf("GET after PUT mismatch: %+v", fetched)
+	}
+
+	// 5. Full replacement omitting roles resets non-owner role back to member
+	demoteRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"userName":    "alice.put@example.test",
+		"displayName": "Alice Member",
+		"active":      true,
+	})
+	var demoted scimUserResource
+	if err := json.NewDecoder(demoteRes.Body).Decode(&demoted); err != nil {
+		t.Fatal(err)
+	}
+	demoteRes.Body.Close()
+	if demoteRes.StatusCode != http.StatusOK || demoted.DisplayName != "Alice Member" || demoted.Roles[0].Value != store.WorkspaceRoleMember {
+		t.Fatalf("expected role reset to member, got status=%d user=%+v", demoteRes.StatusCode, demoted)
+	}
+
+	// 6. Owner protection: cannot deactivate or demote owner, but can update owner displayName
+	ownerDeact := scimRequest(t, http.MethodPut, fmt.Sprintf("%s/scim/v2/Users/%d%s", ts.URL, owner.ID, wsQuery), adminPAT, nil, map[string]any{
+		"userName": owner.Email,
+		"active":   false,
+	})
+	assertSCIMErrorResponse(t, ownerDeact, http.StatusForbidden, "mutability")
+
+	ownerDemote := scimRequest(t, http.MethodPut, fmt.Sprintf("%s/scim/v2/Users/%d%s", ts.URL, owner.ID, wsQuery), adminPAT, nil, map[string]any{
+		"userName": owner.Email,
+		"active":   true,
+		"roles":    []map[string]string{{"value": "member"}},
+	})
+	assertSCIMErrorResponse(t, ownerDemote, http.StatusForbidden, "mutability")
+
+	// 7. Deactivate Alice via PUT active=false -> removes from workspace
+	deactRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"userName":    "alice.put@example.test",
+		"displayName": "Alice Departed",
+		"active":      false,
+	})
+	var deactivated scimUserResource
+	if err := json.NewDecoder(deactRes.Body).Decode(&deactivated); err != nil {
+		t.Fatal(err)
+	}
+	deactRes.Body.Close()
+	if deactRes.StatusCode != http.StatusOK || deactivated.Active {
+		t.Fatalf("PUT deactivate failed: status=%d user=%+v", deactRes.StatusCode, deactivated)
+	}
+	afterDeact := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, nil)
+	assertSCIMErrorResponse(t, afterDeact, http.StatusNotFound, "")
+
+	// 8. Reactivate Alice via PUT active=true with matching userName -> restores into workspace
+	reactRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, map[string]any{
+		"userName":    "alice.put@example.test",
+		"displayName": "Alice Returned",
+		"active":      true,
+		"roles":       []map[string]string{{"value": "admin"}},
+	})
+	var reactivated scimUserResource
+	if err := json.NewDecoder(reactRes.Body).Decode(&reactivated); err != nil {
+		t.Fatal(err)
+	}
+	reactRes.Body.Close()
+	if reactRes.StatusCode != http.StatusOK || !reactivated.Active || reactivated.DisplayName != "Alice Returned" || reactivated.Roles[0].Value != store.WorkspaceRoleAdmin {
+		t.Fatalf("PUT reactivate failed: status=%d user=%+v", reactRes.StatusCode, reactivated)
+	}
+	afterReact := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Users/"+alice.ID+wsQuery, adminPAT, nil, nil)
+	afterReact.Body.Close()
+	if afterReact.StatusCode != http.StatusOK {
+		t.Fatalf("GET after reactivate status=%d want 200", afterReact.StatusCode)
+	}
+}
+
+func TestSCIMPutGroupFullReplacement(t *testing.T) {
+	st := store.NewMemory()
+	fixedNow := time.Date(2026, 11, 24, 15, 30, 0, 0, time.UTC)
+	_, ts, ownerClient := newSCIMTestServer(t, st, func() time.Time { return fixedNow })
+
+	_, ws := patTestRegister(t, ts, ownerClient, "put-grp-owner@example.test", "Put Group Owner")
+	readPAT := scimCreatePAT(t, ts, ownerClient, "Read PAT", []string{"read"})
+	adminPAT := scimCreatePAT(t, ts, ownerClient, "Admin PAT", []string{"admin"})
+	wsQuery := fmt.Sprintf("?workspaceId=%d", ws.ID)
+
+	provision := func(email, name string) scimUserResource {
+		t.Helper()
+		res := scimRequest(t, http.MethodPost, ts.URL+"/scim/v2/Users"+wsQuery, adminPAT, nil, map[string]any{
+			"userName":    email,
+			"displayName": name,
+		})
+		defer res.Body.Close()
+		var u scimUserResource
+		if err := json.NewDecoder(res.Body).Decode(&u); err != nil {
+			t.Fatal(err)
+		}
+		return u
+	}
+	u1 := provision("g1@example.test", "Member One")
+	u2 := provision("g2@example.test", "Member Two")
+	u3 := provision("g3@example.test", "Member Three")
+
+	// Create group with [u1, u2]
+	createRes := scimRequest(t, http.MethodPost, ts.URL+"/scim/v2/Groups"+wsQuery, adminPAT, nil, map[string]any{
+		"schemas":     []string{scimSchemaGroup},
+		"displayName": "Core Team",
+		"members":     []map[string]string{{"value": u1.ID}, {"value": u2.ID}},
+	})
+	var grp scimGroupResource
+	if err := json.NewDecoder(createRes.Body).Decode(&grp); err != nil {
+		t.Fatal(err)
+	}
+	createRes.Body.Close()
+
+	// 1. Auth guards: 401 & 403
+	unauthRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, "", nil, map[string]any{
+		"displayName": "No Auth", "members": []any{},
+	})
+	assertSCIMErrorResponse(t, unauthRes, http.StatusUnauthorized, "")
+
+	readRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, readPAT, nil, map[string]any{
+		"displayName": "Read Only", "members": []any{},
+	})
+	assertSCIMErrorResponse(t, readRes, http.StatusForbidden, "")
+
+	// 2. 404 unknown group
+	missingRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/999999"+wsQuery, adminPAT, nil, map[string]any{
+		"displayName": "Missing", "members": []any{},
+	})
+	assertSCIMErrorResponse(t, missingRes, http.StatusNotFound, "")
+
+	// 3. 400 edge cases: empty displayName, unknown workspace member
+	emptyNameRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, adminPAT, nil, map[string]any{
+		"displayName": "   ",
+		"members":     []map[string]string{{"value": u1.ID}},
+	})
+	assertSCIMErrorResponse(t, emptyNameRes, http.StatusBadRequest, "invalidValue")
+
+	badMemberRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, adminPAT, nil, map[string]any{
+		"displayName": "Should Not Rename",
+		"members":     []map[string]string{{"value": u1.ID}, {"value": "999999"}},
+	})
+	assertSCIMErrorResponse(t, badMemberRes, http.StatusBadRequest, "invalidValue")
+
+	// Verify failed PUT left group untouched
+	checkRes := scimRequest(t, http.MethodGet, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, adminPAT, nil, nil)
+	var unchanged scimGroupResource
+	if err := json.NewDecoder(checkRes.Body).Decode(&unchanged); err != nil {
+		t.Fatal(err)
+	}
+	checkRes.Body.Close()
+	if unchanged.DisplayName != "Core Team" || len(unchanged.Members) != 2 {
+		t.Fatalf("failed PUT mutated group unexpectedly: %+v", unchanged)
+	}
+
+	// 4. Full replacement: rename to "Platform Squad" and replace [u1, u2] -> [u2, u3]
+	putRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, adminPAT, nil, map[string]any{
+		"schemas":     []string{scimSchemaGroup},
+		"displayName": "Platform Squad",
+		"members":     []map[string]string{{"value": u2.ID}, {"value": u3.ID}},
+	})
+	if putRes.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(putRes.Body)
+		putRes.Body.Close()
+		t.Fatalf("PUT group status=%d body=%s", putRes.StatusCode, string(raw))
+	}
+	var replaced scimGroupResource
+	if err := json.NewDecoder(putRes.Body).Decode(&replaced); err != nil {
+		t.Fatal(err)
+	}
+	putRes.Body.Close()
+	if replaced.DisplayName != "Platform Squad" || len(replaced.Members) != 2 {
+		t.Fatalf("unexpected PUT group result: %+v", replaced)
+	}
+	memberIDs := map[string]bool{}
+	for _, m := range replaced.Members {
+		memberIDs[m.Value] = true
+	}
+	if memberIDs[u1.ID] || !memberIDs[u2.ID] || !memberIDs[u3.ID] {
+		t.Fatalf("expected exact member set {u2, u3}, got %v", memberIDs)
+	}
+
+	// 5. Full replacement with empty members clears all members
+	clearRes := scimRequest(t, http.MethodPut, ts.URL+"/scim/v2/Groups/"+grp.ID+wsQuery, adminPAT, nil, map[string]any{
+		"schemas":     []string{scimSchemaGroup},
+		"displayName": "Empty Squad",
+		"members":     []map[string]string{},
+	})
+	var cleared scimGroupResource
+	if err := json.NewDecoder(clearRes.Body).Decode(&cleared); err != nil {
+		t.Fatal(err)
+	}
+	clearRes.Body.Close()
+	if clearRes.StatusCode != http.StatusOK || cleared.DisplayName != "Empty Squad" || len(cleared.Members) != 0 {
+		t.Fatalf("expected empty members after PUT, got status=%d grp=%+v", clearRes.StatusCode, cleared)
+	}
 }

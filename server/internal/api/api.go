@@ -70,16 +70,24 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /readyz", s.readyz)
+	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /api/openapi.json", s.getOpenAPISpec)
 	mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.scimServiceProviderConfig)
+	mux.HandleFunc("GET /scim/v2/Schemas", s.scimListSchemas)
+	mux.HandleFunc("GET /scim/v2/Schemas/{schemaId}", s.scimGetSchema)
+	mux.HandleFunc("GET /scim/v2/ResourceTypes", s.scimListResourceTypes)
+	mux.HandleFunc("GET /scim/v2/ResourceTypes/{typeId}", s.scimGetResourceType)
 	mux.HandleFunc("GET /scim/v2/Users", s.scimListUsers)
 	mux.HandleFunc("POST /scim/v2/Users", s.scimCreateUser)
 	mux.HandleFunc("GET /scim/v2/Users/{uid}", s.scimGetUser)
+	mux.HandleFunc("PUT /scim/v2/Users/{uid}", s.scimPutUser)
 	mux.HandleFunc("PATCH /scim/v2/Users/{uid}", s.scimPatchUser)
 	mux.HandleFunc("DELETE /scim/v2/Users/{uid}", s.scimDeleteUser)
 	mux.HandleFunc("GET /scim/v2/Groups", s.scimListGroups)
 	mux.HandleFunc("POST /scim/v2/Groups", s.scimCreateGroup)
 	mux.HandleFunc("GET /scim/v2/Groups/{gid}", s.scimGetGroup)
+	mux.HandleFunc("PUT /scim/v2/Groups/{gid}", s.scimPutGroup)
 	mux.HandleFunc("PATCH /scim/v2/Groups/{gid}", s.scimPatchGroup)
 	mux.HandleFunc("DELETE /scim/v2/Groups/{gid}", s.scimDeleteGroup)
 	mux.HandleFunc("POST /api/auth/register", s.register)
@@ -290,10 +298,10 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/bases/{id}/records/{rid}/comments/{cid}/reactions": s.setRecordCommentReaction,
 
 		// 个人 AI 设置与文档 AI
-		"GET /api/me/ai":         s.getAISettings,
-		"PUT /api/me/ai":         s.putAISettings,
-		"DELETE /api/me/ai":      s.deleteAISettings,
-		"POST /api/me/ai/test":   s.testAISettings,
+		"GET /api/me/ai":             s.getAISettings,
+		"PUT /api/me/ai":             s.putAISettings,
+		"DELETE /api/me/ai":          s.deleteAISettings,
+		"POST /api/me/ai/test":       s.testAISettings,
 		"POST /api/docs/{id}/ai":     s.docAI,
 		"POST /api/ai/ask-workspace": s.aiAskWorkspace,
 		"POST /api/ai/sheet-assist":  s.aiSheetAssist,
@@ -305,18 +313,18 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/me/templates/{tid}": s.deleteUserTemplate,
 
 		// 独立电子表格（Sheet）
-		"GET /api/sheets/{id}":                        s.getSheetWorkbook,
-		"POST /api/sheets/{id}/account-title":         s.postAccountSheetTitle,
-		"POST /api/sheets/{id}/cells":                 s.writeSheetCells,
-		"POST /api/sheets/{id}/worksheets":            s.createWorksheet,
-		"PATCH /api/sheets/{id}/worksheets/{wid}":     s.updateWorksheetMeta,
-		"DELETE /api/sheets/{id}/worksheets/{wid}":    s.deleteWorksheet,
-		"POST /api/sheets/{id}/worksheets/{wid}/axes": s.mutateSheetAxis,
-		"POST /api/sheets/{id}/import-xlsx":           s.importSheetXlsx,
-		"GET /api/sheets/{id}/comments":               s.listSheetComments,
-		"POST /api/sheets/{id}/comments":              s.createSheetComment,
-		"PATCH /api/sheets/{id}/comments/{cid}":       s.patchSheetComment,
-		"DELETE /api/sheets/{id}/comments/{cid}":      s.deleteSheetComment,
+		"GET /api/sheets/{id}":                         s.getSheetWorkbook,
+		"POST /api/sheets/{id}/account-title":          s.postAccountSheetTitle,
+		"POST /api/sheets/{id}/cells":                  s.writeSheetCells,
+		"POST /api/sheets/{id}/worksheets":             s.createWorksheet,
+		"PATCH /api/sheets/{id}/worksheets/{wid}":      s.updateWorksheetMeta,
+		"DELETE /api/sheets/{id}/worksheets/{wid}":     s.deleteWorksheet,
+		"POST /api/sheets/{id}/worksheets/{wid}/axes":  s.mutateSheetAxis,
+		"POST /api/sheets/{id}/import-xlsx":            s.importSheetXlsx,
+		"GET /api/sheets/{id}/comments":                s.listSheetComments,
+		"POST /api/sheets/{id}/comments":               s.createSheetComment,
+		"PATCH /api/sheets/{id}/comments/{cid}":        s.patchSheetComment,
+		"DELETE /api/sheets/{id}/comments/{cid}":       s.deleteSheetComment,
 		"GET /api/sheets/{id}/versions":                s.listSheetVersions,
 		"POST /api/sheets/{id}/versions":               s.createSheetVersion,
 		"POST /api/sheets/{id}/versions/{vid}/restore": s.restoreSheetVersion,
@@ -327,6 +335,10 @@ func (s *Server) Handler() http.Handler {
 		// 企业组织架构（成员角色 / 部门 / 用户组）
 		"GET /api/workspaces":                                         s.listMyWorkspaces,
 		"POST /api/workspaces":                                        s.createWorkspace,
+		"PATCH /api/workspaces/{wsId}":                                s.renameWorkspace,
+		"DELETE /api/workspaces/{wsId}":                               s.deleteWorkspace,
+		"POST /api/workspaces/{wsId}/transfer-owner":                  s.transferWorkspaceOwner,
+		"POST /api/workspaces/{wsId}/leave":                           s.leaveWorkspace,
 		"GET /api/workspaces/{wsId}/org":                              s.getWorkspaceOrg,
 		"POST /api/workspaces/{wsId}/members":                         s.upsertWorkspaceMember,
 		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":        s.revokeWorkspaceInvitation,
@@ -348,16 +360,17 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/workspaces/{wsId}/org/sync-sources/{sourceId}/run": s.runOrgDirectorySync,
 
 		// 企业单点登录（SSO）、安全审计日志与全套件水印策略
-		"GET /api/workspaces/{wsId}/sso/providers":        s.listWorkspaceSSOProviders,
-		"POST /api/workspaces/{wsId}/sso/providers":       s.createWorkspaceSSOProvider,
-		"PATCH /api/workspaces/{wsId}/sso/providers/{pid}": s.updateWorkspaceSSOProvider,
+		"GET /api/workspaces/{wsId}/sso/providers":          s.listWorkspaceSSOProviders,
+		"POST /api/workspaces/{wsId}/sso/providers":         s.createWorkspaceSSOProvider,
+		"PATCH /api/workspaces/{wsId}/sso/providers/{pid}":  s.updateWorkspaceSSOProvider,
 		"DELETE /api/workspaces/{wsId}/sso/providers/{pid}": s.deleteWorkspaceSSOProvider,
-		"POST /api/workspaces/{wsId}/sso/discover":        s.discoverSSOProvider,
-		"GET /api/workspaces/{wsId}/audit-logs":           s.listWorkspaceAuditLogs,
-		"GET /api/workspaces/{wsId}/audit-logs/export":    s.exportWorkspaceAuditLogs,
+		"POST /api/workspaces/{wsId}/sso/discover":          s.discoverSSOProvider,
+		"GET /api/workspaces/{wsId}/audit-logs":             s.listWorkspaceAuditLogs,
+		"GET /api/workspaces/{wsId}/audit-logs/export":      s.exportWorkspaceAuditLogs,
 		"GET /api/workspaces/{wsId}/security-policy":        s.getWorkspaceSecurityPolicy,
 		"PUT /api/workspaces/{wsId}/security-policy":        s.putWorkspaceSecurityPolicy,
 		"POST /api/workspaces/{wsId}/dlp/check":             s.checkWorkspaceDLP,
+		"POST /api/workspaces/{wsId}/retention/run":         s.runWorkspaceRetention,
 
 		// 开放平台（PAT 个人访问令牌、空间事件 Webhook）与二步验证（TOTP MFA）
 		"GET /api/me/tokens":                                   s.listMyPATs,
@@ -472,6 +485,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	return httpx.Chain(mux,
 		httpx.WithRequestID,
+		s.observabilityMiddleware,
 		httpx.Logger(s.Log),
 		httpx.Recover(s.Log),
 		httpx.SecurityHeaders,

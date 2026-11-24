@@ -1,0 +1,20 @@
+Jiange has been deployed to namespace {{ .Release.Namespace }}.
+
+1. Access Jiange:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}
+{{- end }}
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "jiange.fullname" . }} 8080:{{ .Values.service.port }}
+  Then open http://127.0.0.1:8080
+{{- end }}
+
+2. Health & Observability Endpoints:
+  Liveness:  /healthz
+  Readiness: /readyz
+  Metrics:   /metrics (Prometheus text format 0.0.4)
+
+3. Backup & Restore:
+  kubectl --namespace {{ .Release.Namespace }} exec deploy/{{ include "jiange.fullname" . }} -- /usr/local/bin/jiange backup /tmp/jiange-backup.tar.gz
+  kubectl --namespace {{ .Release.Namespace }} cp <pod>:/tmp/jiange-backup.tar.gz ./jiange-backup.tar.gz

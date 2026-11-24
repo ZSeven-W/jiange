@@ -226,11 +226,11 @@ func exerciseAuditLogs(t *testing.T, st auditTestStore) {
 		q    string
 		want int
 	}{
-		{"CHEN", 2},          // actor_name / email
-		{"192.168.5.42", 1},  // ip_address
-		{"架构设计", 1},          // resource_title
-		{"watermark", 1},     // action & resource_title
-		{"Secret Other", 0},  // other workspace must never match
+		{"CHEN", 2},         // actor_name / email
+		{"192.168.5.42", 1}, // ip_address
+		{"架构设计", 1},         // resource_title
+		{"watermark", 1},    // action & resource_title
+		{"Secret Other", 0}, // other workspace must never match
 	} {
 		res, err := st.ListAuditLogsGuarded(ctx, ownerGuard, ws.ID, store.AuditLogFilter{Query: tc.q})
 		if err != nil || res.Total != tc.want {
@@ -487,12 +487,168 @@ func exerciseWorkspaceSecurityPolicy(t *testing.T, st auditTestStore) {
 	_ = fmt.Sprint(readBack2)
 }
 
+func exerciseRetentionPurge(t *testing.T, st auditTestStore) {
+	t.Helper()
+	ctx := context.Background()
+	ws, otherWS, owner, _, _, outsider, ownerGuard, _, _, outsiderGuard := setupAuditUsers(t, st)
+
+	// Initially no workspaces have retention_days > 0.
+	policies, err := st.ListRetentionPolicies(ctx)
+	if err != nil {
+		t.Fatalf("initial ListRetentionPolicies: %v", err)
+	}
+	if len(policies) != 0 {
+		t.Fatalf("expected 0 retention policies initially, got %+v", policies)
+	}
+
+	// Set ws to 30 days and otherWS to 0 (disabled).
+	days30 := 30
+	days0 := 0
+	if _, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		RetentionDays: &days30,
+	}); err != nil {
+		t.Fatalf("set ws retention 30d: %v", err)
+	}
+	if _, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, outsiderGuard, otherWS.ID, store.WorkspaceSecurityPolicyPatch{
+		RetentionDays: &days0,
+	}); err != nil {
+		t.Fatalf("set otherWS retention 0d: %v", err)
+	}
+
+	policies, err = st.ListRetentionPolicies(ctx)
+	if err != nil {
+		t.Fatalf("ListRetentionPolicies: %v", err)
+	}
+	if len(policies) != 1 || policies[0].WorkspaceID != ws.ID || policies[0].RetentionDays != 30 {
+		t.Fatalf("ListRetentionPolicies = %+v, want only ws %d with 30d", policies, ws.ID)
+	}
+
+	now := time.Now().UTC()
+	oldTime := now.Add(-60 * 24 * time.Hour)
+	freshTime := now.Add(-5 * 24 * time.Hour)
+	cutoff := now.Add(-30 * 24 * time.Hour)
+
+	// Append expired + fresh audit logs in ws, plus an expired log in otherWS.
+	for _, entry := range []store.AuditLogEntry{
+		{WorkspaceID: ws.ID, ActorID: owner.ID, Action: "doc.create", ResourceTitle: "Old Log 1", CreatedAt: oldTime},
+		{WorkspaceID: ws.ID, ActorID: owner.ID, Action: "doc.update", ResourceTitle: "Old Log 2", CreatedAt: oldTime.Add(time.Hour)},
+		{WorkspaceID: ws.ID, ActorID: owner.ID, Action: "doc.create", ResourceTitle: "Fresh Log", CreatedAt: freshTime},
+		{WorkspaceID: otherWS.ID, ActorID: outsider.ID, Action: "doc.create", ResourceTitle: "Other WS Old Log", CreatedAt: oldTime},
+	} {
+		if err := st.AppendAuditLog(ctx, entry); err != nil {
+			t.Fatalf("AppendAuditLog: %v", err)
+		}
+	}
+
+	// Create docs in ws: active doc, fresh trashed doc, expired trashed folder + child doc; plus expired trashed doc in otherWS.
+	activeDoc, err := st.CreateDriveNode(ctx, ownerGuard, ws.ID, nil, "doc", "Active Doc", false)
+	if err != nil {
+		t.Fatalf("create active doc: %v", err)
+	}
+	freshTrashedDoc, err := st.CreateDriveNode(ctx, ownerGuard, ws.ID, nil, "doc", "Fresh Trashed", false)
+	if err != nil {
+		t.Fatalf("create fresh trashed doc: %v", err)
+	}
+	expiredFolder, err := st.CreateDriveFolder(ctx, ownerGuard, ws.ID, nil, "Expired Folder", false)
+	if err != nil {
+		t.Fatalf("create expired folder: %v", err)
+	}
+	expiredChildDoc, err := st.CreateDriveNode(ctx, ownerGuard, ws.ID, &expiredFolder.ID, "doc", "Expired Child", false)
+	if err != nil {
+		t.Fatalf("create expired child doc: %v", err)
+	}
+	otherExpiredDoc, err := st.CreateDriveNode(ctx, outsiderGuard, otherWS.ID, nil, "doc", "Other WS Expired Trash", false)
+	if err != nil {
+		t.Fatalf("create otherWS doc: %v", err)
+	}
+
+	if err := st.TrashDriveNode(ctx, ownerGuard, freshTrashedDoc.ID, freshTrashedDoc.Revision); err != nil {
+		t.Fatalf("trash fresh doc: %v", err)
+	}
+	if err := st.TrashDriveNode(ctx, ownerGuard, expiredFolder.ID, expiredFolder.Revision); err != nil {
+		t.Fatalf("trash expired folder: %v", err)
+	}
+	if err := st.TrashDriveNode(ctx, outsiderGuard, otherExpiredDoc.ID, otherExpiredDoc.Revision); err != nil {
+		t.Fatalf("trash otherWS doc: %v", err)
+	}
+
+	// Backdate deletion timestamps for the expired nodes.
+	setDeletedAt := func(nodeID int64, at time.Time) {
+		t.Helper()
+		switch impl := st.(type) {
+		case *store.Memory:
+			impl.SetMemoryNodeDeletedAt(nodeID, at)
+		case *store.Postgres:
+			if _, err := impl.Pool.Exec(ctx, `UPDATE nodes SET deleted_at = $2, drive_revision = drive_revision + 1 WHERE id = $1`, nodeID, at); err != nil {
+				t.Fatalf("backdate node %d deleted_at: %v", nodeID, err)
+			}
+		}
+	}
+	setDeletedAt(expiredFolder.ID, oldTime)
+	setDeletedAt(expiredChildDoc.ID, oldTime)
+	setDeletedAt(otherExpiredDoc.ID, oldTime)
+	setDeletedAt(freshTrashedDoc.ID, freshTime)
+
+	// Run retention purge ONLY for ws.ID.
+	purgedLogs, purgedNodes, err := st.PurgeExpiredRetentionData(ctx, ws.ID, cutoff)
+	if err != nil {
+		t.Fatalf("PurgeExpiredRetentionData: %v", err)
+	}
+	if purgedLogs != 2 {
+		t.Fatalf("purgedLogs = %d, want 2", purgedLogs)
+	}
+	if purgedNodes != 2 {
+		t.Fatalf("purgedNodes = %d, want 2 (expired folder + child)", purgedNodes)
+	}
+
+	// Verify ws audit logs: only Fresh Log remains.
+	wsLogs, err := st.ListAuditLogsGuarded(ctx, ownerGuard, ws.ID, store.AuditLogFilter{})
+	if err != nil {
+		t.Fatalf("list ws audit logs: %v", err)
+	}
+	if wsLogs.Total != 1 || wsLogs.Items[0].ResourceTitle != "Fresh Log" {
+		t.Fatalf("remaining ws logs = %+v, want only Fresh Log", wsLogs)
+	}
+
+	// Verify otherWS expired log & trash node are untouched!
+	otherLogs, err := st.ListAuditLogsGuarded(ctx, outsiderGuard, otherWS.ID, store.AuditLogFilter{})
+	if err != nil || otherLogs.Total != 1 {
+		t.Fatalf("otherWS logs = %+v err=%v, want 1 untouched", otherLogs, err)
+	}
+	otherTrash, err := st.ListTrash(ctx, outsider.ID)
+	if err != nil || len(otherTrash) != 1 || otherTrash[0].ID != otherExpiredDoc.ID {
+		t.Fatalf("otherWS trash = %+v err=%v, want untouched doc %d", otherTrash, err, otherExpiredDoc.ID)
+	}
+
+	// Verify ws trash: only Fresh Trashed remains; active doc still exists.
+	wsTrash, err := st.ListTrash(ctx, owner.ID)
+	if err != nil {
+		t.Fatalf("ListTrash: %v", err)
+	}
+	if len(wsTrash) != 1 || wsTrash[0].ID != freshTrashedDoc.ID {
+		t.Fatalf("ws trash after purge = %+v, want only fresh doc %d", wsTrash, freshTrashedDoc.ID)
+	}
+	if _, err := st.GetDoc(ctx, owner.ID, activeDoc.ID); err != nil {
+		t.Fatalf("active doc should remain accessible, got err=%v", err)
+	}
+
+	// Re-running purge immediately is a no-op (0 logs, 0 nodes).
+	purgedLogs2, purgedNodes2, err := st.PurgeExpiredRetentionData(ctx, ws.ID, cutoff)
+	if err != nil || purgedLogs2 != 0 || purgedNodes2 != 0 {
+		t.Fatalf("second purge = (%d, %d, %v), want (0, 0, nil)", purgedLogs2, purgedNodes2, err)
+	}
+}
+
 func TestAuditLogMemory(t *testing.T) {
 	exerciseAuditLogs(t, store.NewMemory())
 }
 
 func TestWorkspaceSecurityPolicyMemory(t *testing.T) {
 	exerciseWorkspaceSecurityPolicy(t, store.NewMemory())
+}
+
+func TestRetentionPurgeMemory(t *testing.T) {
+	exerciseRetentionPurge(t, store.NewMemory())
 }
 
 func TestAuditLogAndPolicyPostgres(t *testing.T) {
@@ -520,4 +676,11 @@ func TestAuditLogAndPolicyPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Run("WorkspaceSecurityPolicy", func(t *testing.T) { exerciseWorkspaceSecurityPolicy(t, pg) })
+	if _, err := pg.Pool.Exec(ctx, `DROP SCHEMA public CASCADE; CREATE SCHEMA public`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := migrate.Up(ctx, pg.Pool); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("RetentionPurge", func(t *testing.T) { exerciseRetentionPurge(t, pg) })
 }

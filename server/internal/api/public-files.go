@@ -44,6 +44,7 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	var docMeta store.DocMeta
 	authorize := func() (bool, error) {
 		doc, _, err := StateAtHead(r.Context(), s.Store, docID)
 		if err != nil {
@@ -99,11 +100,15 @@ func (s *Server) getPublicFile(w http.ResponseWriter, r *http.Request) {
 		if !(imageReference && canInlineImage(file.Mime)) && !allowDownload {
 			return false, store.ErrNotFound
 		}
+		docMeta = meta
 		return !allowDownload, nil
 	}
 	requireRaster, err := authorize()
 	if err != nil {
 		s.fileAccessError(w, r, err)
+		return
+	}
+	if docMeta.ID > 0 && !s.enforceDocExportDLP(w, r, docMeta, "public_file_download") {
 		return
 	}
 	s.serveFileAuthorized(w, r, file, requireRaster, authorize)

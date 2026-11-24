@@ -47,9 +47,10 @@ var ErrInvalidSecurityPolicy = fmt.Errorf("store: invalid workspace security pol
 
 // memEnterprise holds in-memory audit logs and workspace security policies for Memory store.
 type memEnterprise struct {
-	nextAuditID int64
-	auditLogs   []AuditLogEntry
-	policies    map[int64]WorkspaceSecurityPolicy
+	nextAuditID    int64
+	auditLogs      []AuditLogEntry
+	policies       map[int64]WorkspaceSecurityPolicy
+	trashDeletedAt map[int64]time.Time
 }
 
 // AuditLogEntry records a security-relevant event inside a workspace.
@@ -126,12 +127,23 @@ type WorkspaceSecurityPolicyPatch struct {
 	RetentionDays       *int      `json:"retentionDays,omitempty"`
 }
 
+// RetentionPurgeStats summarizes one workspace data-retention cleanup run.
+type RetentionPurgeStats struct {
+	WorkspaceID      int64     `json:"workspaceId"`
+	RetentionDays    int       `json:"retentionDays"`
+	PurgedAuditLogs  int64     `json:"purgedAuditLogs"`
+	PurgedTrashNodes int64     `json:"purgedTrashNodes"`
+	RanAt            time.Time `json:"ranAt"`
+}
+
 // AuditLogStore persists enterprise security audit logs and workspace security policies.
 type AuditLogStore interface {
 	AppendAuditLog(ctx context.Context, entry AuditLogEntry) error
 	ListAuditLogsGuarded(ctx context.Context, guard RestoreGuard, wsID int64, filter AuditLogFilter) (AuditLogPage, error)
 	GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID int64) (WorkspaceSecurityPolicy, error)
 	UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard RestoreGuard, wsID int64, patch WorkspaceSecurityPolicyPatch) (WorkspaceSecurityPolicy, error)
+	ListRetentionPolicies(ctx context.Context) ([]WorkspaceSecurityPolicy, error)
+	PurgeExpiredRetentionData(ctx context.Context, workspaceID int64, cutoff time.Time) (purgedAuditLogs int64, purgedTrashNodes int64, err error)
 }
 
 var (
@@ -547,6 +559,124 @@ func (m *Memory) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard
 	return cloneSecurityPolicy(next), nil
 }
 
+// SetMemoryNodeDeletedAt sets an explicit deletion timestamp on a node in Memory store
+// (primarily used by retention sweeper tests to simulate historical trash timestamps).
+func (m *Memory) SetMemoryNodeDeletedAt(nodeID int64, deletedAt time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.enterprise.trashDeletedAt == nil {
+		m.enterprise.trashDeletedAt = map[int64]time.Time{}
+	}
+	m.enterprise.trashDeletedAt[nodeID] = deletedAt.UTC()
+}
+
+// ListRetentionPolicies returns all workspace security policies with retention_days > 0.
+func (m *Memory) ListRetentionPolicies(ctx context.Context) ([]WorkspaceSecurityPolicy, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]WorkspaceSecurityPolicy, 0)
+	for _, p := range m.enterprise.policies {
+		if p.RetentionDays > 0 {
+			out = append(out, cloneSecurityPolicy(p))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].WorkspaceID < out[j].WorkspaceID })
+	return out, nil
+}
+
+// PurgeExpiredRetentionData deletes workspace audit logs older than cutoff and
+// permanently purges soft-deleted nodes deleted before cutoff.
+func (m *Memory) PurgeExpiredRetentionData(ctx context.Context, workspaceID int64, cutoff time.Time) (purgedAuditLogs int64, purgedTrashNodes int64, err error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
+	if workspaceID <= 0 {
+		return 0, 0, nil
+	}
+	cutoffUTC := cutoff.UTC()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.enterprise.auditLogs) > 0 {
+		kept := make([]AuditLogEntry, 0, len(m.enterprise.auditLogs))
+		for _, e := range m.enterprise.auditLogs {
+			if e.WorkspaceID == workspaceID && e.CreatedAt.UTC().Before(cutoffUTC) {
+				purgedAuditLogs++
+				continue
+			}
+			kept = append(kept, e)
+		}
+		m.enterprise.auditLogs = kept
+	}
+
+	expired := map[int64]bool{}
+	for _, d := range m.d.docs {
+		if d.meta.WorkspaceID != workspaceID || !d.deleted || d.purged {
+			continue
+		}
+		delAt := d.meta.UpdatedAt
+		if ts, ok := m.enterprise.trashDeletedAt[d.meta.ID]; ok {
+			delAt = ts
+		} else if delAt.IsZero() {
+			delAt = d.meta.CreatedAt
+		}
+		if delAt.UTC().Before(cutoffUTC) {
+			expired[d.meta.ID] = true
+		}
+	}
+	if len(expired) > 0 {
+		changed := true
+		for changed {
+			changed = false
+			for _, d := range m.d.docs {
+				if d.meta.WorkspaceID != workspaceID || !d.deleted || d.purged || expired[d.meta.ID] {
+					continue
+				}
+				if d.meta.ParentID != nil && expired[*d.meta.ParentID] {
+					expired[d.meta.ID] = true
+					changed = true
+				}
+			}
+		}
+		for i := range m.sh.files {
+			if f := m.sh.files[i]; f.ID != 0 && expired[f.DocID] {
+				m.sh.files[i] = FileMeta{}
+			}
+		}
+		for _, d := range m.d.docs {
+			if expired[d.meta.ID] {
+				d.purged = true
+				delete(m.sheets.books, d.meta.ID)
+				delete(m.enterprise.trashDeletedAt, d.meta.ID)
+				purgedTrashNodes++
+			}
+		}
+	}
+	return purgedAuditLogs, purgedTrashNodes, nil
+}
+
+// GetSheetWorkbookSystem loads a sheet workbook snapshot without requiring a
+// user session guard (used by server-side enforcement hooks such as DLP).
+func (m *Memory) GetSheetWorkbookSystem(ctx context.Context, nodeID int64) (SheetSnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return SheetSnapshot{}, err
+	}
+	if !validSheetID(nodeID) {
+		return SheetSnapshot{}, ErrNotFound
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d := m.doc(nodeID)
+	wb := m.sheets.books[nodeID]
+	if d == nil || d.deleted || d.purged || d.meta.Kind != "sheet" || wb == nil {
+		return SheetSnapshot{}, ErrNotFound
+	}
+	return m.sheetSnapshotLocked(d, wb, RoleView), nil
+}
+
 // --- Postgres implementation ---
 
 func (p *Postgres) AppendAuditLog(ctx context.Context, entry AuditLogEntry) error {
@@ -839,4 +969,123 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 		return drivePGEnd(ctx, guard, expires)
 	})
 	return out, orgPGError(err)
+}
+
+// ListRetentionPolicies returns all workspace security policies with retention_days > 0.
+func (p *Postgres) ListRetentionPolicies(ctx context.Context) ([]WorkspaceSecurityPolicy, error) {
+	rows, err := p.Pool.Query(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
+		watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
+		dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
+		COALESCE(updated_by, 0), updated_at
+		FROM workspace_security_policies
+		WHERE retention_days > 0
+		ORDER BY workspace_id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	items, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (pol WorkspaceSecurityPolicy, err error) {
+		err = r.Scan(
+			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
+			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
+			&pol.WatermarkOpacity,
+			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays,
+			&pol.UpdatedBy, &pol.UpdatedAt,
+		)
+		if err == nil {
+			pol = cloneSecurityPolicy(pol)
+		}
+		return
+	})
+	if err != nil {
+		return nil, err
+	}
+	if items == nil {
+		items = []WorkspaceSecurityPolicy{}
+	}
+	return items, nil
+}
+
+// PurgeExpiredRetentionData deletes workspace audit logs older than cutoff and
+// permanently deletes soft-deleted nodes whose deleted_at < cutoff.
+func (p *Postgres) PurgeExpiredRetentionData(ctx context.Context, workspaceID int64, cutoff time.Time) (purgedAuditLogs int64, purgedTrashNodes int64, err error) {
+	if workspaceID <= 0 {
+		return 0, 0, nil
+	}
+	cutoffUTC := cutoff.UTC()
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		if e := drivePGLockWorkspace(ctx, tx, workspaceID); e != nil {
+			return e
+		}
+		auditTag, e := tx.Exec(ctx,
+			`DELETE FROM audit_logs WHERE workspace_id = $1 AND created_at < $2`,
+			workspaceID, cutoffUTC,
+		)
+		if e != nil {
+			return e
+		}
+		purgedAuditLogs = auditTag.RowsAffected()
+
+		var deletedNodes int64
+		e = tx.QueryRow(ctx,
+			`WITH RECURSIVE expired(id) AS (
+				SELECT id FROM nodes
+				 WHERE workspace_id = $1 AND deleted_at IS NOT NULL AND deleted_at < $2
+				UNION
+				SELECT n.id FROM nodes n
+				  JOIN expired e ON n.parent_id = e.id
+				 WHERE n.workspace_id = $1 AND n.deleted_at IS NOT NULL
+			),
+			removed AS (
+				DELETE FROM nodes WHERE id IN (SELECT id FROM expired) RETURNING id
+			)
+			SELECT COUNT(*) FROM removed`,
+			workspaceID, cutoffUTC,
+		).Scan(&deletedNodes)
+		if e != nil {
+			return e
+		}
+		purgedTrashNodes = deletedNodes
+		return nil
+	})
+	return purgedAuditLogs, purgedTrashNodes, err
+}
+
+// GetSheetWorkbookSystem loads a sheet workbook snapshot without requiring a
+// user session guard (used by server-side enforcement hooks such as DLP).
+func (p *Postgres) GetSheetWorkbookSystem(ctx context.Context, nodeID int64) (snap SheetSnapshot, err error) {
+	if !validSheetID(nodeID) {
+		return SheetSnapshot{}, ErrNotFound
+	}
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var info pgSheetNode
+		var kind string
+		var deleted bool
+		e := tx.QueryRow(ctx,
+			`SELECT n.id, n.workspace_id, n.parent_id, n.title, n.kind, n.creator_id,
+			        COALESCE((SELECT u.name FROM users u WHERE u.id = n.creator_id), ''),
+			        n.drive_revision, n.deleted_at IS NOT NULL, n.updated_at
+			   FROM nodes n WHERE n.id = $1`, nodeID).
+			Scan(&info.nodeID, &info.workspaceID, &info.parentID, &info.title, &kind,
+				&info.creatorID, &info.creatorName, &info.driveRevision, &deleted, &info.updatedAt)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if e != nil {
+			return e
+		}
+		if kind != "sheet" || deleted {
+			return ErrNotFound
+		}
+		e = tx.QueryRow(ctx, `SELECT revision FROM sheet_workbooks WHERE node_id = $1`, nodeID).Scan(&info.workbookRevision)
+		if errors.Is(e, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if e != nil {
+			return e
+		}
+		info.role = RoleView
+		snap, e = loadSheetSnapshotPG(ctx, tx, info)
+		return e
+	})
+	return snap, err
 }

@@ -254,3 +254,130 @@ func TestPresenterSyncBroadcastLateJoinAndDisconnect(t *testing.T) {
 		t.Fatalf("expected Bob stop presenting, got %+v", stopC3)
 	}
 }
+
+func TestSlidesSyncMultiReplicaFanout(t *testing.T) {
+	bus := store.NewMemoryRealtimeBus()
+	hubA := &Hub{Bus: bus, PingInterval: time.Hour, SweepInterval: time.Hour}
+	hubB := &Hub{Bus: bus, PingInterval: time.Hour, SweepInterval: time.Hour}
+
+	ctx := context.Background()
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	go func() { _ = hubA.Run(runCtx) }()
+	go func() { _ = hubB.Run(runCtx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && bus.SubscriberCount(RealtimeChannel) < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := bus.SubscriberCount(RealtimeChannel); got != 2 {
+		t.Fatalf("expected 2 slides realtime subscribers, got %d", got)
+	}
+
+	const deckID int64 = 505
+	srvA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hubA.Serve(w, r, deckID, store.User{ID: 1, Name: "Alice"}, func(context.Context) error { return nil })
+	}))
+	defer srvA.Close()
+	srvB := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		user := store.User{ID: 2, Name: "Bob"}
+		if r.URL.Query().Get("u") == "3" {
+			user = store.User{ID: 3, Name: "Carol"}
+		}
+		hubB.Serve(w, r, deckID, user, func(context.Context) error { return nil })
+	}))
+	defer srvB.Close()
+
+	cAlice, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srvA.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cAlice.CloseNow()
+	cBob, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srvB.URL, "http"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cBob.CloseNow()
+
+	// 1. Cross-replica cursor presence: Alice on hubA -> Bob on hubB.
+	if err := cAlice.Write(ctx, websocket.MessageText, []byte(`{"type":"cursor","pageId":42}`)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		m := readMsg(t, ctx, cBob)
+		if m.Type == "presence" {
+			foundAlice := false
+			for _, col := range m.Collaborators {
+				if col.UserID == 1 && col.Name == "Alice" && col.PageID == 42 {
+					foundAlice = true
+				}
+			}
+			if foundAlice {
+				break
+			}
+		}
+		if i == 11 {
+			t.Fatal("Bob on hubB did not receive Alice's remote cursor presence")
+		}
+	}
+
+	// 2. Cross-replica revision notification: hubA.Notify -> Bob on hubB.
+	hubA.Notify(deckID, 1)
+	revBob := readUntilType(t, ctx, cBob, "revision")
+	if revBob.ActorID != 1 || revBob.Seq < 1 {
+		t.Fatalf("unexpected remote revision on Bob: %+v", revBob)
+	}
+
+	// 3. Cross-replica live presenter sync: Alice starts presenting on hubA -> Bob on hubB receives presenter_sync.
+	if err := cAlice.Write(ctx, websocket.MessageText, []byte(`{"type":"presenter_sync","active":true,"pageId":99,"animStep":3,"laserX":0.4,"laserY":0.6}`)); err != nil {
+		t.Fatal(err)
+	}
+	presBob := readUntilType(t, ctx, cBob, "presenter_sync")
+	if !presBob.Active || presBob.PresenterID != 1 || presBob.PresenterName != "Alice" || presBob.PageID != 99 || presBob.AnimStep != 3 {
+		t.Fatalf("unexpected remote presenter_sync on Bob: %+v", presBob)
+	}
+	if presBob.LaserX == nil || *presBob.LaserX != 0.4 || presBob.LaserY == nil || *presBob.LaserY != 0.6 {
+		t.Fatalf("unexpected remote laser coords on Bob: (%v, %v)", presBob.LaserX, presBob.LaserY)
+	}
+
+	// 4. Late-joining viewer Carol connects to hubB and immediately receives Alice's active presenter state.
+	cCarol, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(srvB.URL, "http")+"?u=3", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cCarol.CloseNow()
+	presCarol := readUntilType(t, ctx, cCarol, "presenter_sync")
+	if !presCarol.Active || presCarol.PresenterID != 1 || presCarol.PageID != 99 || presCarol.AnimStep != 3 {
+		t.Fatalf("late joiner Carol on hubB missed active remote presenter: %+v", presCarol)
+	}
+
+	// 5. Alice disconnects from hubA -> Bob and Carol on hubB receive presenter stop AND Alice removed from presence.
+	_ = cAlice.Close(websocket.StatusNormalClosure, "presenter disconnected")
+	stopCarol := readUntilType(t, ctx, cCarol, "presenter_sync")
+	if stopCarol.Active || stopCarol.PresenterID != 1 {
+		t.Fatalf("Carol expected presenter stop on remote disconnect, got %+v", stopCarol)
+	}
+	var sawStopBob, sawAliceGoneBob bool
+	for i := 0; i < 16 && !(sawStopBob && sawAliceGoneBob); i++ {
+		m := readMsg(t, ctx, cBob)
+		switch m.Type {
+		case "presenter_sync":
+			if !m.Active && m.PresenterID == 1 {
+				sawStopBob = true
+			}
+		case "presence":
+			hasAlice := false
+			for _, col := range m.Collaborators {
+				if col.UserID == 1 {
+					hasAlice = true
+				}
+			}
+			if !hasAlice {
+				sawAliceGoneBob = true
+			}
+		}
+	}
+	if !sawStopBob || !sawAliceGoneBob {
+		t.Fatalf("Bob did not observe both presenter stop and Alice leave (stop=%v gone=%v)", sawStopBob, sawAliceGoneBob)
+	}
+}

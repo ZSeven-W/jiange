@@ -215,3 +215,81 @@ func TestBtSyncMemorySeparatesBaseEventReplayAndFanout(t *testing.T) {
 		t.Fatalf("fanout exposed unrelated base: %v", got)
 	}
 }
+
+func TestBtSyncMultiReplicaFanout(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	u, ws, err := st.CreateUser(ctx, "bt-multi@example.test", "Multi", "x")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := st.CreateBase(ctx, ws.ID, u.ID, nil, "multi-replica")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Huge SweepInterval proves delivery comes from RealtimeBus, never the fallback sweep.
+	hubA := &Hub{Store: st, PingInterval: time.Hour, SweepInterval: time.Hour}
+	hubB := &Hub{Store: st, PingInterval: time.Hour, SweepInterval: time.Hour}
+
+	runCtx, cancelRun := context.WithCancel(ctx)
+	defer cancelRun()
+	go func() { _ = hubA.Run(runCtx) }()
+	go func() { _ = hubB.Run(runCtx) }()
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && st.RealtimeSubscriberCount(RealtimeChannel) < 2 {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := st.RealtimeSubscriberCount(RealtimeChannel); got != 2 {
+		t.Fatalf("expected 2 bt realtime subscribers, got %d", got)
+	}
+
+	serveHub := func(h *Hub) *httptest.Server {
+		mux := http.NewServeMux()
+		mux.HandleFunc("GET /sync/{id}", func(w http.ResponseWriter, r *http.Request) {
+			id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+			h.Serve(w, r, id)
+		})
+		srv := httptest.NewServer(mux)
+		t.Cleanup(srv.Close)
+		return srv
+	}
+	srvA := serveHub(hubA)
+	srvB := serveHub(hubB)
+
+	// Case 1: Hub A has NO local room yet, while Client B is connected to Hub B.
+	// Hub A's Notify must still publish across the bus so Client B catches up immediately.
+	clientB := dial(t, srvB.URL, base.ID, nil)
+	defer clientB.close()
+
+	seq1, err := st.AppendBtEvent(ctx, base.ID, []byte(`{"kind":"cells","rid":1,"cells":{"1":"replica-a"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubA.Notify(base.ID)
+
+	mB := clientB.next("events")
+	evsB := mB["events"].([]any)
+	if len(evsB) != 1 || int64(evsB[0].(map[string]any)["seq"].(float64)) != seq1 {
+		t.Fatalf("remote clientB expected seq %d, got %v", seq1, evsB)
+	}
+
+	// Case 2: Both hubs have active clients; Hub B notifies and both replicas receive seq2 cleanly.
+	clientA := dial(t, srvA.URL, base.ID, nil)
+	defer clientA.close()
+
+	seq2, err := st.AppendBtEvent(ctx, base.ID, []byte(`{"kind":"cells","rid":2,"cells":{"1":"replica-b"}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubB.Notify(base.ID)
+
+	for name, c := range map[string]*btClient{"clientA": clientA, "clientB": clientB} {
+		m := c.next("events")
+		evs := m["events"].([]any)
+		if len(evs) != 1 || int64(evs[0].(map[string]any)["seq"].(float64)) != seq2 {
+			t.Fatalf("%s expected seq %d, got %v", name, seq2, evs)
+		}
+	}
+}

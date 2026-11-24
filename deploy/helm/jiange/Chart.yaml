@@ -1,0 +1,14 @@
+apiVersion: v2
+name: jiange
+description: Production Helm chart for Jiange collaborative docs, bases, sheets, slides, and wiki platform
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - jiange
+  - collaborative-docs
+  - knowledge-base
+  - spreadsheet
+  - wiki
+maintainers:
+  - name: Jiange Maintainers

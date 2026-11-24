@@ -14,15 +14,15 @@ type session struct {
 
 // Memory is a thread-safe in-memory Store for tests and local experiments.
 type Memory struct {
-	mu               sync.Mutex
-	users            []User
-	workspaces       []Workspace
-	members          map[int64][]int64   // user -> workspace ids
-	workspaceRoles   map[[2]int64]string // (workspace, user) -> owner | admin | member
-	org              memOrg
-	wiki             memWiki
-	sso              memSSO
-	enterprise       memEnterprise
+	mu                sync.Mutex
+	users             []User
+	workspaces        []Workspace
+	members           map[int64][]int64   // user -> workspace ids
+	workspaceRoles    map[[2]int64]string // (workspace, user) -> owner | admin | member
+	org               memOrg
+	wiki              memWiki
+	sso               memSSO
+	enterprise        memEnterprise
 	linkPasswords     memLinkPasswords
 	sheetHistory      memSheetHistory
 	sheetDefinedNames memSheetDefinedNames
@@ -31,43 +31,43 @@ type Memory struct {
 	webhooks          memWebhooks
 	notifChannels     memNotifChannels
 	mfa               memMFA
-	sessions         map[string]session
-	d                memDocs
-	sh               memShare
-	b                memBase
-	slides           []SlidesPage
-	slidesSequence   int64
-	sheets           memSheets
-	comments         []Comment
-	commentSequence  int64
-	suggestions      []DocSuggestion
-	suggestionSeq    int64
-	syncedBlocks     map[string]SyncedBlock
-	surveys          map[int64]Survey
-	surveyResponses  []SurveyResponse
-	surveyRespSeq    int64
-	searchIndex      map[int64]SearchIndexEntry
-	refIndexState    map[int64]ReferenceIndexState
-	refIndexEdges    map[int64][]ReferenceEdge
-	driveShortcuts   []DriveShortcut
-	driveShortcutSeq int64
-	sheetComments    []SheetComment
-	sheetCommentSeq  int64
-	baseDashboards   []BaseDashboard
-	baseDashboardSeq int64
-	reactions        map[reactionKey]time.Time
-	docReactions     map[docReactionKey]time.Time
-	aiSettings       map[int64]AISettings
-	templates        []memTemplate
-	templateSeq      int64
-	notifications    []Notification
-	favorites        map[int64][]int64
-	pins             map[int64][]int64
-	recent           map[[2]int64]time.Time // (user, doc) -> last visit
-	links            map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
-	automations      []Automation
-	nextAutomationID int64
-	clipboardCopies  map[clipboardCopyKey]clipboardCopyResult
+	sessions          map[string]session
+	d                 memDocs
+	sh                memShare
+	b                 memBase
+	slides            []SlidesPage
+	slidesSequence    int64
+	sheets            memSheets
+	comments          []Comment
+	commentSequence   int64
+	suggestions       []DocSuggestion
+	suggestionSeq     int64
+	syncedBlocks      map[string]SyncedBlock
+	surveys           map[int64]Survey
+	surveyResponses   []SurveyResponse
+	surveyRespSeq     int64
+	searchIndex       map[int64]SearchIndexEntry
+	refIndexState     map[int64]ReferenceIndexState
+	refIndexEdges     map[int64][]ReferenceEdge
+	driveShortcuts    []DriveShortcut
+	driveShortcutSeq  int64
+	sheetComments     []SheetComment
+	sheetCommentSeq   int64
+	baseDashboards    []BaseDashboard
+	baseDashboardSeq  int64
+	reactions         map[reactionKey]time.Time
+	docReactions      map[docReactionKey]time.Time
+	aiSettings        map[int64]AISettings
+	templates         []memTemplate
+	templateSeq       int64
+	notifications     []Notification
+	favorites         map[int64][]int64
+	pins              map[int64][]int64
+	recent            map[[2]int64]time.Time // (user, doc) -> last visit
+	links             map[[2]int64][]int64   // (fieldID, fromRecord) -> toRecords
+	automations       []Automation
+	nextAutomationID  int64
+	clipboardCopies   map[clipboardCopyKey]clipboardCopyResult
 }
 
 func NewMemory() *Memory {

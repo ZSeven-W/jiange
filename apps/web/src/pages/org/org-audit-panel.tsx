@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Stamp,
+  Trash2,
   X,
 } from "lucide-react";
 import { ApiError } from "@/lib/api";
@@ -21,6 +22,7 @@ import {
   type AuditLogPage,
   type DlpAction,
   type DlpCheckResult,
+  type RetentionPurgeStats,
   type WorkspaceSecurityPolicy,
 } from "@/lib/enterprise-api";
 import {
@@ -69,6 +71,9 @@ export const KNOWN_AUDIT_ACTIONS = [
   "share.link_update",
   "dlp.share_blocked",
   "dlp.share_warned",
+  "dlp.export_blocked",
+  "dlp.export_warned",
+  "retention.purged",
   "org.member_update",
   "org.member_invite",
   "org.member_remove",
@@ -118,6 +123,12 @@ export function formatAuditActionLabel(action: string): string {
       return t("DLP 拦截公开分享");
     case "dlp.share_warned":
       return t("DLP 敏感词告警");
+    case "dlp.export_blocked":
+      return t("DLP 拦截导出/下载");
+    case "dlp.export_warned":
+      return t("DLP 导出敏感告警");
+    case "retention.purged":
+      return t("执行数据保留清理");
     case "org.member_update":
       return t("变更成员角色");
     case "org.member_invite":
@@ -172,10 +183,15 @@ function actionBadgeTone(action: string): string {
   if (action.startsWith("auth.")) {
     return "bg-[#e1eaff] text-[#1456f0] dark:bg-[#1d3461] dark:text-[#6698ff]";
   }
-  if (action.endsWith(".delete") || action.endsWith(".remove") || action === "dlp.share_blocked") {
+  if (
+    action.endsWith(".delete") ||
+    action.endsWith(".remove") ||
+    action === "dlp.share_blocked" ||
+    action === "dlp.export_blocked"
+  ) {
     return "bg-[#fde2e2] text-[#d83931] dark:bg-[#4c1d1d] dark:text-[#ff7875]";
   }
-  if (action.startsWith("audit.")) {
+  if (action.startsWith("audit.") || action.startsWith("retention.")) {
     return "bg-[#f0e6ff] text-[#6425d0] dark:bg-[#2d1e4f] dark:text-[#b388ff]";
   }
   if (
@@ -227,6 +243,9 @@ export function OrgAuditPanel({
   const [testingDlp, setTestingDlp] = useState(false);
   const [dlpTestResult, setDlpTestResult] = useState<DlpCheckResult | null>(null);
   const [dlpTestError, setDlpTestError] = useState("");
+  const [runningRetention, setRunningRetention] = useState(false);
+  const [retentionResult, setRetentionResult] = useState<RetentionPurgeStats | null>(null);
+  const [retentionError, setRetentionError] = useState("");
 
   // Audit filter & pagination state
   const [searchInput, setSearchInput] = useState("");
@@ -241,6 +260,8 @@ export function OrgAuditPanel({
     setDlpTestInput("");
     setDlpTestResult(null);
     setDlpTestError("");
+    setRetentionResult(null);
+    setRetentionError("");
     setSearchInput("");
     setActionFilter("");
     setResourceFilter("");
@@ -486,6 +507,32 @@ export function OrgAuditPanel({
       else setDlpTestError(t("敏感词检测失败"));
     } finally {
       setTestingDlp(false);
+    }
+  };
+
+  const handleRunRetentionPurge = async () => {
+    if (!canAdmin || savingPolicy || runningRetention || !workspaceId || retentionDays <= 0) return;
+    setRunningRetention(true);
+    setRetentionError("");
+    setRetentionResult(null);
+    setError("");
+    setNotice("");
+    try {
+      const stats = await enterpriseApi.runRetentionPurge(workspaceId, userId);
+      setRetentionResult(stats);
+      await qc.invalidateQueries({ queryKey: ["workspace-audit-logs", workspaceId] });
+      setNotice(
+        t("数据保留清理完成：已清理 {logs} 条审计日志、{nodes} 个过期回收站节点", {
+          logs: stats.purgedAuditLogs,
+          nodes: stats.purgedTrashNodes,
+        }),
+      );
+    } catch (e) {
+      if (e instanceof ApiError) setRetentionError(e.message);
+      else if (e instanceof Error) setRetentionError(e.message);
+      else setRetentionError(t("执行数据保留清理失败"));
+    } finally {
+      setRunningRetention(false);
     }
   };
 
@@ -948,24 +995,56 @@ export function OrgAuditPanel({
 
             <div className="space-y-1.5">
               <p className="text-[12px] font-medium text-foreground">{t("回收站与审计数据保留周期")}</p>
-              <FeishuSelect
-                ariaLabel={t("回收站与审计数据保留周期")}
-                value={String(retentionDays)}
-                options={retentionOptions}
-                disabled={!canAdmin || savingPolicy}
-                onChange={(val) => {
-                  const parsed = Number.parseInt(val, 10);
-                  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3650) {
-                    updateDraft({ retentionDays: parsed });
-                  }
-                }}
-                className="h-9 w-full border"
-                menuMinWidth={180}
-                dataAttr={{ "data-retention-days-select": true }}
-              />
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-[140px] flex-1">
+                  <FeishuSelect
+                    ariaLabel={t("回收站与审计数据保留周期")}
+                    value={String(retentionDays)}
+                    options={retentionOptions}
+                    disabled={!canAdmin || savingPolicy}
+                    onChange={(val) => {
+                      const parsed = Number.parseInt(val, 10);
+                      if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3650) {
+                        updateDraft({ retentionDays: parsed });
+                      }
+                    }}
+                    className="h-9 w-full border"
+                    menuMinWidth={180}
+                    dataAttr={{ "data-retention-days-select": true }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={!canAdmin || savingPolicy || runningRetention || retentionDays <= 0}
+                  onClick={() => void handleRunRetentionPurge()}
+                  data-retention-run-btn=""
+                  className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-3 text-[12px] font-medium transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  <Trash2 size={13} aria-hidden />
+                  {runningRetention ? t("清理中…") : t("立即执行清理")}
+                </button>
+              </div>
               <p className="text-[11px] text-subtle">
                 {t("设置回收站文档与企业安全审计日志的合规保留期限，选择永久保留则不自动清理。")}
               </p>
+              {retentionError && (
+                <p className="text-[12px] text-destructive" role="alert" data-retention-run-error="">
+                  {retentionError}
+                </p>
+              )}
+              {retentionResult && (
+                <p
+                  className="inline-flex items-center gap-1 text-[12px] font-medium text-[#008026] dark:text-[#52c41a]"
+                  role="status"
+                  data-retention-run-result=""
+                >
+                  <CheckCircle2 size={13} aria-hidden />
+                  {t("数据保留清理完成：已清理 {logs} 条审计日志、{nodes} 个过期回收站节点", {
+                    logs: retentionResult.purgedAuditLogs,
+                    nodes: retentionResult.purgedTrashNodes,
+                  })}
+                </p>
+              )}
             </div>
           </div>
 

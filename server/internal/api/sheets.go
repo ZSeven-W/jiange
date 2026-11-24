@@ -105,6 +105,23 @@ func (s *Server) writeSheetCells(w http.ResponseWriter, r *http.Request) {
 	if s.SheetHub != nil && !res.Replayed && len(res.Cells) > 0 {
 		s.SheetHub.NotifyCells(id, res.WorkbookRevision, u.ID, res.WorksheetID, res.Cells)
 	}
+	if !res.Replayed && len(res.Cells) > 0 {
+		var wsID int64
+		if meta, metaErr := s.Store.GetDocSystem(r.Context(), id); metaErr == nil {
+			wsID = meta.WorkspaceID
+		} else if meta, metaErr := s.Store.GetDoc(r.Context(), u.ID, id); metaErr == nil {
+			wsID = meta.WorkspaceID
+		}
+		if wsID > 0 {
+			s.dispatchWorkspaceEvent(wsID, store.WebhookEventSheetCellsUpdated, map[string]any{
+				"sheetId":          id,
+				"worksheetId":      res.WorksheetID,
+				"cellCount":        len(res.Cells),
+				"workbookRevision": res.WorkbookRevision,
+				"actorId":          u.ID,
+			})
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, res)
 }
@@ -231,6 +248,31 @@ func (s *Server) importSheetXlsx(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.SheetHub != nil {
 		s.SheetHub.Notify(id, snap.WorkbookRevision, u.ID)
+	}
+	wsID := snap.WorkspaceID
+	if wsID <= 0 {
+		if meta, metaErr := s.Store.GetDocSystem(r.Context(), id); metaErr == nil {
+			wsID = meta.WorkspaceID
+		} else if meta, metaErr := s.Store.GetDoc(r.Context(), u.ID, id); metaErr == nil {
+			wsID = meta.WorkspaceID
+		}
+	}
+	if wsID > 0 {
+		cellCount := 0
+		var firstWorksheetID int64
+		for i, sheet := range snap.Sheets {
+			if i == 0 {
+				firstWorksheetID = sheet.ID
+			}
+			cellCount += len(sheet.Cells)
+		}
+		s.dispatchWorkspaceEvent(wsID, store.WebhookEventSheetCellsUpdated, map[string]any{
+			"sheetId":          id,
+			"worksheetId":      firstWorksheetID,
+			"cellCount":        cellCount,
+			"workbookRevision": snap.WorkbookRevision,
+			"actorId":          u.ID,
+		})
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, snap)

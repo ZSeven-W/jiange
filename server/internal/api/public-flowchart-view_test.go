@@ -265,16 +265,16 @@ func TestPublicFlowProjectionFramesMindLayoutAndRelations(t *testing.T) {
 		"fc.mr.mr_1": `{"id":"mr_1","fromId":"b1","toId":"b2","label":"  强依赖  ","private":"HIDDEN-REL-EXTRA"}`,
 		"fc.mr.mr_2": `{"id":"mr_2","fromId":"root","toId":"b2"}`,
 		// Invalid / orphan / oversized relations
-		"fc.mr.deleted":    "",
-		"fc.mr.bad!id":     `{"id":"bad!id","fromId":"b1","toId":"b2","label":"HIDDEN-BAD-REL-ID"}`,
-		"fc.mr.mismatch":   `{"id":"other","fromId":"b1","toId":"b2","label":"HIDDEN-REL-MISMATCH"}`,
-		"fc.mr.self":       `{"id":"self","fromId":"b1","toId":"b1","label":"HIDDEN-SELF"}`,
-		"fc.mr.missing":    `{"id":"missing","fromId":"b1","toId":"nope","label":"HIDDEN-MISSING"}`,
-		"fc.mr.to_orphan":  `{"id":"to_orphan","fromId":"b1","toId":"orphan","label":"HIDDEN-TO-ORPHAN"}`,
-		"fc.mr.to_cycle":   `{"id":"to_cycle","fromId":"b1","toId":"c1","label":"HIDDEN-TO-CYCLE"}`,
-		"fc.mr.longlabel":  `{"id":"longlabel","fromId":"b1","toId":"b2","label":"` + strings.Repeat("Z", 81) + `"}`,
-		"fc.mr.nul":        `{"id":"nul","fromId":"b1","toId":"b2","label":"a\u0000b"}`,
-		"fc.mr.oversized":  `{"id":"oversized","fromId":"b1","toId":"b2","pad":"` + strings.Repeat("y", 2100) + `"}`,
+		"fc.mr.deleted":   "",
+		"fc.mr.bad!id":    `{"id":"bad!id","fromId":"b1","toId":"b2","label":"HIDDEN-BAD-REL-ID"}`,
+		"fc.mr.mismatch":  `{"id":"other","fromId":"b1","toId":"b2","label":"HIDDEN-REL-MISMATCH"}`,
+		"fc.mr.self":      `{"id":"self","fromId":"b1","toId":"b1","label":"HIDDEN-SELF"}`,
+		"fc.mr.missing":   `{"id":"missing","fromId":"b1","toId":"nope","label":"HIDDEN-MISSING"}`,
+		"fc.mr.to_orphan": `{"id":"to_orphan","fromId":"b1","toId":"orphan","label":"HIDDEN-TO-ORPHAN"}`,
+		"fc.mr.to_cycle":  `{"id":"to_cycle","fromId":"b1","toId":"c1","label":"HIDDEN-TO-CYCLE"}`,
+		"fc.mr.longlabel": `{"id":"longlabel","fromId":"b1","toId":"b2","label":"` + strings.Repeat("Z", 81) + `"}`,
+		"fc.mr.nul":       `{"id":"nul","fromId":"b1","toId":"b2","label":"a\u0000b"}`,
+		"fc.mr.oversized": `{"id":"oversized","fromId":"b1","toId":"b2","pad":"` + strings.Repeat("y", 2100) + `"}`,
 	}
 
 	before, _ := json.Marshal(input)
@@ -461,14 +461,14 @@ func TestPublicFlowProjectionStickyVotesAndMindExtras(t *testing.T) {
 		"fc.msu.badcol":  `{"label":"ok","color":"not-hex"}`,
 		"fc.msu.longlbl": `{"label":"` + strings.Repeat("总", 81) + `","color":"#722ed1"}`,
 		// Valid & invalid badges (fc.mg.*)
-		"fc.mg.b1":       `{"priority":1,"progress":50,"tag":"  核心  ","secret":"HIDDEN-BADGE-SECRET"}`,
-		"fc.mg.b2":       `{"progress":100}`,
-		"fc.mg.root":     `{}`,
-		"fc.mg.orphan":   `{"priority":2,"tag":"HIDDEN-ORPHAN-MG"}`,
-		"fc.mg.badprio":  `{"priority":9}`,
-		"fc.mg.badprog":  `{"progress":33}`,
-		"fc.mg.longtag":  `{"tag":"` + strings.Repeat("标", 17) + `"}`,
-		"fc.mg.corrupt":  `[]`,
+		"fc.mg.b1":      `{"priority":1,"progress":50,"tag":"  核心  ","secret":"HIDDEN-BADGE-SECRET"}`,
+		"fc.mg.b2":      `{"progress":100}`,
+		"fc.mg.root":    `{}`,
+		"fc.mg.orphan":  `{"priority":2,"tag":"HIDDEN-ORPHAN-MG"}`,
+		"fc.mg.badprio": `{"priority":9}`,
+		"fc.mg.badprog": `{"progress":33}`,
+		"fc.mg.longtag": `{"tag":"` + strings.Repeat("标", 17) + `"}`,
+		"fc.mg.corrupt": `[]`,
 	}
 
 	out := publicFlowProps(input)
@@ -573,18 +573,18 @@ func TestPublicFlowProjectionExtrasOnPublicLink(t *testing.T) {
 	create := doc.CreateBlock(31, collab.Root, "Z", "flowchart")
 	ops := []collab.Op{create}
 	props := map[string]string{
-		"fc.v":          "1",
-		"fc.theme":      "feishu",
-		"fc.n.st1":      `{"shape":"sticky","x":20,"y":20,"w":180,"h":150,"text":"头脑风暴便利贴","fill":"#fff3b0","secret":"HIDDEN-ST"}`,
-		"fc.vt.st1":     `{"voters":["u1","u2"],"secret":"HIDDEN-VT"}`,
-		"fc.m.root":     `{"parent":null,"order":0,"text":"季度规划","x":80,"y":80}`,
-		"fc.m.c1":       `{"parent":"root","order":0,"text":"目标拆解"}`,
-		"fc.m.c2":       `{"parent":"root","order":1,"text":"里程碑"}`,
-		"fc.mb.c1":      `{"label":"关键阶段","color":"#3370ff","secret":"HIDDEN-MB"}`,
-		"fc.msu.root":   `{"label":"季度总结","color":"#722ed1","secret":"HIDDEN-MSU"}`,
-		"fc.mg.c1":      `{"priority":1,"progress":75,"tag":"高优","secret":"HIDDEN-MG"}`,
-		"fc.mb.ghost":   `{"label":"HIDDEN-GHOST-MB","color":"#3370ff"}`,
-		"fc.vt.ghost":   `{"voters":["HIDDEN-GHOST-VT"]}`,
+		"fc.v":        "1",
+		"fc.theme":    "feishu",
+		"fc.n.st1":    `{"shape":"sticky","x":20,"y":20,"w":180,"h":150,"text":"头脑风暴便利贴","fill":"#fff3b0","secret":"HIDDEN-ST"}`,
+		"fc.vt.st1":   `{"voters":["u1","u2"],"secret":"HIDDEN-VT"}`,
+		"fc.m.root":   `{"parent":null,"order":0,"text":"季度规划","x":80,"y":80}`,
+		"fc.m.c1":     `{"parent":"root","order":0,"text":"目标拆解"}`,
+		"fc.m.c2":     `{"parent":"root","order":1,"text":"里程碑"}`,
+		"fc.mb.c1":    `{"label":"关键阶段","color":"#3370ff","secret":"HIDDEN-MB"}`,
+		"fc.msu.root": `{"label":"季度总结","color":"#722ed1","secret":"HIDDEN-MSU"}`,
+		"fc.mg.c1":    `{"priority":1,"progress":75,"tag":"高优","secret":"HIDDEN-MG"}`,
+		"fc.mb.ghost": `{"label":"HIDDEN-GHOST-MB","color":"#3370ff"}`,
+		"fc.vt.ghost": `{"voters":["HIDDEN-GHOST-VT"]}`,
 	}
 	keys := make([]string, 0, len(props))
 	for k := range props {

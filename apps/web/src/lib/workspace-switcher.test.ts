@@ -6,9 +6,13 @@ import { ApiError, type DocMeta, type Me, type Workspace } from "@/lib/api";
 import { Sidebar } from "@/components/sidebar";
 import {
   activeWorkspaceStorageKey,
+  deleteWorkspace,
   getActiveWorkspaceId,
+  leaveWorkspace,
+  renameWorkspace,
   setActiveWorkspaceId,
   subscribeActiveWorkspace,
+  transferWorkspaceOwner,
   useActiveWorkspace,
   workspacesApi,
 } from "./workspace-switcher";
@@ -196,5 +200,103 @@ describe("workspace-switcher storage & subscriptions", () => {
     expect(html).toContain("研发空间文档");
     expect(html).not.toContain("空间一文档");
     expect(html).not.toContain("<select");
+  });
+
+  it("supports renameWorkspace, deleteWorkspace, transferWorkspaceOwner, and leaveWorkspace", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    // Rename workspace (PATCH /api/workspaces/:wsId)
+    const renamedWs: Workspace = { id: 20, name: "新研发空间", ownerId: 1 };
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ workspace: renamedWs }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    const renamed = await renameWorkspace(20, "新研发空间");
+    expect(renamed).toEqual(renamedWs);
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/workspaces/20", {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "新研发空间" }),
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "forbidden", message: "仅空间所有者或管理员可重命名" }), {
+        status: 403,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(workspacesApi.rename(20, "无权")).rejects.toMatchObject({
+      status: 403,
+      code: "forbidden",
+    });
+
+    // Delete workspace (DELETE /api/workspaces/:wsId -> 204 No Content)
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(deleteWorkspace(20)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/workspaces/20", {
+      method: "DELETE",
+      credentials: "same-origin",
+      headers: undefined,
+      body: undefined,
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "last_workspace", message: "无法删除最后一个工作空间" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(workspacesApi.delete(10)).rejects.toMatchObject({
+      status: 409,
+      code: "last_workspace",
+    });
+
+    // Transfer owner (POST /api/workspaces/:wsId/transfer-owner)
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ ok: true, workspaceId: 20, ownerId: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(transferWorkspaceOwner(20, 2)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/workspaces/20/transfer-owner", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetUserId: 2 }),
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "not_found", message: "目标成员不存在" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(workspacesApi.transferOwner(20, 999)).rejects.toBeInstanceOf(ApiError);
+
+    // Leave workspace (POST /api/workspaces/:wsId/leave -> 204 No Content)
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(leaveWorkspace(30)).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenLastCalledWith("/api/workspaces/30/leave", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: undefined,
+      body: undefined,
+    });
+
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: "owner_cannot_leave", message: "空间所有者不能直接退出" }), {
+        status: 409,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+    await expect(workspacesApi.leave(10)).rejects.toMatchObject({
+      status: 409,
+      code: "owner_cannot_leave",
+    });
   });
 });

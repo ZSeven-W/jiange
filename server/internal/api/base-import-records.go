@@ -168,6 +168,27 @@ func (s *Server) importBaseRecords(w http.ResponseWriter, r *http.Request) {
 	if s.BtHub != nil {
 		s.BtHub.Notify(b.ID)
 	}
+	if count > 0 {
+		var tableID int64
+		if tables, tErr := s.Store.BaseTables(r.Context(), b.ID); tErr == nil {
+			for _, tbl := range tables {
+				if tbl.IsDefault {
+					tableID = tbl.ID
+					break
+				}
+			}
+			if tableID == 0 && len(tables) > 0 {
+				tableID = tables[0].ID
+			}
+		}
+		s.dispatchWorkspaceEvent(b.WorkspaceID, store.WebhookEventBaseRecordMutated, map[string]any{
+			"baseId":  b.ID,
+			"tableId": tableID,
+			"action":  "import",
+			"count":   count,
+			"actorId": u.ID,
+		})
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusOK, map[string]int{"imported": count})
 }

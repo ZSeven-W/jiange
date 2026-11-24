@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildEndpointCurl,
   buildScimBaseUrl,
+  extractOpenAPISchemaRef,
   filterOpenAPIEndpoints,
   flattenOpenAPIEndpoints,
   OrgDeveloperPanel,
+  SCIM_ENDPOINT_REFERENCES,
   type OpenAPISpec,
 } from "./org-developer-panel";
 
@@ -22,6 +24,14 @@ const sampleSpec: OpenAPISpec = {
     { name: "SCIM 2.0", description: "RFC 7643/7644 provisioning" },
     { name: "Webhooks", description: "Workspace webhooks" },
   ],
+  components: {
+    schemas: {
+      ErrorResponse: { type: "object" },
+      DocMeta: { type: "object" },
+      SCIMUser: { type: "object" },
+      SCIMError: { type: "object" },
+    },
+  },
   paths: {
     "/api/docs": {
       get: {
@@ -32,7 +42,24 @@ const sampleSpec: OpenAPISpec = {
         parameters: [
           { name: "workspaceId", in: "query", required: true, description: "Workspace ID", schema: { type: "integer" } },
         ],
-        responses: { "200": { description: "Document list" }, "401": { description: "Unauthorized" } },
+        responses: {
+          "200": {
+            description: "Document list",
+            content: {
+              "application/json": {
+                schema: { type: "array", items: { $ref: "#/components/schemas/DocMeta" } },
+              },
+            },
+          },
+          "401": {
+            description: "Unauthorized",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ErrorResponse" },
+              },
+            },
+          },
+        },
       },
       post: {
         operationId: "createDoc",
@@ -54,7 +81,16 @@ const sampleSpec: OpenAPISpec = {
             },
           },
         },
-        responses: { "201": { description: "Document created" } },
+        responses: {
+          "201": {
+            description: "Document created",
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/DocMeta" },
+              },
+            },
+          },
+        },
       },
     },
     "/api/docs/{id}/link": {
@@ -91,9 +127,30 @@ const sampleSpec: OpenAPISpec = {
           },
         },
         responses: {
-          "201": { description: "User provisioned" },
-          "403": { description: "Admin PAT required" },
-          "409": { description: "User already exists" },
+          "201": {
+            description: "User provisioned",
+            content: {
+              "application/scim+json": {
+                schema: { $ref: "#/components/schemas/SCIMUser" },
+              },
+            },
+          },
+          "403": {
+            description: "Admin PAT required",
+            content: {
+              "application/scim+json": {
+                schema: { $ref: "#/components/schemas/SCIMError" },
+              },
+            },
+          },
+          "409": {
+            description: "User already exists",
+            content: {
+              "application/scim+json": {
+                schema: { $ref: "#/components/schemas/SCIMError" },
+              },
+            },
+          },
         },
       },
     },
@@ -152,6 +209,54 @@ describe("org-developer-panel helpers", () => {
     expect(delCurl).toContain("-X DELETE");
     expect(delCurl).toContain("https://docs.example.com/api/workspaces/7/webhooks/{wid}");
   });
+
+  it("extracts direct, array, and nested schema $ref names cleanly", () => {
+    expect(extractOpenAPISchemaRef({ $ref: "#/components/schemas/SCIMUser" })).toBe("SCIMUser");
+    expect(
+      extractOpenAPISchemaRef({ type: "array", items: { $ref: "#/components/schemas/DocMeta" } }),
+    ).toBe("DocMeta[]");
+    expect(
+      extractOpenAPISchemaRef({
+        type: "object",
+        properties: {
+          items: { type: "array", items: { $ref: "#/components/schemas/AuditLogEntry" } },
+          total: { type: "integer" },
+        },
+      }),
+    ).toBe("AuditLogEntry[]");
+  });
+
+  it("includes RFC 7644 discovery and PUT methods in SCIM_ENDPOINT_REFERENCES and avoids workspaceId on public SCIM discovery cURL", () => {
+    const paths = SCIM_ENDPOINT_REFERENCES.map((r) => r.path);
+    expect(paths).toContain("/scim/v2/ServiceProviderConfig");
+    expect(paths).toContain("/scim/v2/Schemas");
+    expect(paths).toContain("/scim/v2/ResourceTypes");
+    const userItem = SCIM_ENDPOINT_REFERENCES.find((r) => r.path === "/scim/v2/Users/{uid}");
+    const groupItem = SCIM_ENDPOINT_REFERENCES.find((r) => r.path === "/scim/v2/Groups/{gid}");
+    expect(userItem?.methods).toContain("PUT");
+    expect(groupItem?.methods).toContain("PUT");
+
+    const schemasCurl = buildEndpointCurl(
+      {
+        key: "GET /scim/v2/Schemas",
+        method: "GET",
+        path: "/scim/v2/Schemas",
+        tag: "SCIM 2.0",
+        tags: ["SCIM 2.0"],
+        operationId: "scimListSchemas",
+        summary: "List SCIM schemas",
+        description: "",
+        parameters: [],
+        contentType: "application/scim+json",
+        responses: [],
+        isPublic: true,
+      },
+      "https://docs.example.com",
+      7,
+    );
+    expect(schemasCurl).toContain('"https://docs.example.com/scim/v2/Schemas"');
+    expect(schemasCurl).not.toContain("workspaceId=7");
+  });
 });
 
 describe("OrgDeveloperPanel", () => {
@@ -163,7 +268,7 @@ describe("OrgDeveloperPanel", () => {
           workspaceId={7}
           canAdmin={true}
           initialSpec={sampleSpec}
-          initialExpandedKeys={["POST /scim/v2/Users"]}
+          initialExpandedKeys={["POST /scim/v2/Users", "GET /api/docs"]}
           originOverride="https://docs.example.com"
         />
       </QueryClientProvider>,
@@ -171,7 +276,7 @@ describe("OrgDeveloperPanel", () => {
 
     expect(html).toContain("data-org-developer-panel");
 
-    // Section 1: SCIM 2.0
+    // Section 1: SCIM 2.0 (including RFC 7644 Schemas, ResourceTypes, and PUT)
     expect(html).toContain("SCIM 2.0 身份供应配置");
     expect(html).toContain("https://docs.example.com/scim/v2?workspaceId=7");
     expect(html).toContain("Authorization: Bearer &lt;admin PAT&gt;");
@@ -179,13 +284,19 @@ describe("OrgDeveloperPanel", () => {
     expect(html).toContain("Okta");
     expect(html).toContain("Azure AD (Entra ID)");
     expect(html).toContain("ServiceProviderConfig");
+    expect(html).toContain("/scim/v2/Schemas");
+    expect(html).toContain("/scim/v2/ResourceTypes");
     expect(html).toContain("/scim/v2/Users");
+    expect(html).toContain("/scim/v2/Users/{uid}");
     expect(html).toContain("/scim/v2/Groups");
+    expect(html).toContain("/scim/v2/Groups/{gid}");
 
-    // Section 2: OpenAPI 3.1 Browser
+    // Section 2: OpenAPI 3.1 Browser + schemas count badge
     expect(html).toContain("OpenAPI 3.1 开放接口浏览器");
     expect(html).toContain("OpenAPI 3.1.0 · v0.2.0");
     expect(html).toContain("共 6 个接口");
+    expect(html).toContain("data-openapi-schema-count");
+    expect(html).toContain("共 4 个数据模型");
     expect(html).toContain("data-openapi-tag-pills");
     expect(html).toContain("data-openapi-search");
     expect(html).toContain("下载 openapi.json");
@@ -197,9 +308,14 @@ describe("OrgDeveloperPanel", () => {
     expect(html).toContain('data-http-method="PUT"');
     expect(html).toContain('data-http-method="DELETE"');
 
-    // Expanded endpoint card details & cURL
+    // Expanded endpoint card details, response status codes, schema $ref names, & cURL
     expect(html).toContain('data-openapi-detail="POST /scim/v2/Users"');
     expect(html).toContain("Creates or links a user by email and adds them to the workspace.");
+    expect(html).toContain('data-response-code="201"');
+    expect(html).toContain('data-response-schema="SCIMUser"');
+    expect(html).toContain('data-response-schema="SCIMError"');
+    expect(html).toContain('data-response-schema="DocMeta[]"');
+    expect(html).toContain('data-response-schema="ErrorResponse"');
     expect(html).toContain("复制 cURL");
     expect(html).toContain("Authorization: Bearer $JIANGE_PAT");
 

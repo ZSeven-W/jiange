@@ -40,11 +40,21 @@ export interface OpenAPIParameter {
 }
 
 export interface OpenAPISchemaProperty {
+  $ref?: string;
   type?: string;
+  format?: string;
   description?: string;
   example?: unknown;
   enum?: string[];
-  items?: { type?: string };
+  items?: { $ref?: string; type?: string };
+}
+
+export interface OpenAPISchemaObject {
+  $ref?: string;
+  type?: string;
+  required?: string[];
+  properties?: Record<string, OpenAPISchemaProperty>;
+  items?: { $ref?: string; type?: string };
 }
 
 export interface OpenAPIRequestBody {
@@ -53,11 +63,17 @@ export interface OpenAPIRequestBody {
   content?: Record<
     string,
     {
-      schema?: {
-        type?: string;
-        required?: string[];
-        properties?: Record<string, OpenAPISchemaProperty>;
-      };
+      schema?: OpenAPISchemaObject;
+    }
+  >;
+}
+
+export interface OpenAPIResponseObject {
+  description?: string;
+  content?: Record<
+    string,
+    {
+      schema?: OpenAPISchemaObject;
     }
   >;
 }
@@ -69,7 +85,7 @@ export interface OpenAPIOperation {
   description?: string;
   parameters?: OpenAPIParameter[];
   requestBody?: OpenAPIRequestBody;
-  responses?: Record<string, { description?: string }>;
+  responses?: Record<string, OpenAPIResponseObject>;
   security?: unknown[];
 }
 
@@ -83,9 +99,15 @@ export interface OpenAPISpec {
   tags?: Array<{ name: string; description?: string }>;
   components?: {
     securitySchemes?: Record<string, unknown>;
-    schemas?: Record<string, unknown>;
+    schemas?: Record<string, OpenAPISchemaObject>;
   };
   paths: Record<string, Record<string, OpenAPIOperation>>;
+}
+
+export interface OpenAPIEndpointResponse {
+  code: string;
+  description: string;
+  schemaRef?: string;
 }
 
 export interface OpenAPIEndpointItem {
@@ -100,12 +122,12 @@ export interface OpenAPIEndpointItem {
   parameters: OpenAPIParameter[];
   requestBody?: OpenAPIRequestBody;
   contentType: string;
-  responses: Array<{ code: string; description: string }>;
+  responses: OpenAPIEndpointResponse[];
   isPublic: boolean;
 }
 
 export interface SCIMEndpointReference {
-  resource: "ServiceProviderConfig" | "Users" | "Groups";
+  resource: "ServiceProviderConfig" | "Schemas" | "ResourceTypes" | "Users" | "Groups";
   methods: OpenAPIHttpMethod[];
   path: string;
   descriptionKey: string;
@@ -119,6 +141,18 @@ export const SCIM_ENDPOINT_REFERENCES: readonly SCIMEndpointReference[] = [
     descriptionKey: "查询 SCIM 2.0 能力声明（支持 PatchOp、Filter 与 Bearer 鉴权）",
   },
   {
+    resource: "Schemas",
+    methods: ["GET"],
+    path: "/scim/v2/Schemas",
+    descriptionKey: "查询 SCIM 2.0 核心 Schema 属性定义（支持 /Schemas/{schemaId} 单项查询）",
+  },
+  {
+    resource: "ResourceTypes",
+    methods: ["GET"],
+    path: "/scim/v2/ResourceTypes",
+    descriptionKey: "查询 SCIM 2.0 支持的资源类型与端点映射（支持 /ResourceTypes/{typeId}）",
+  },
+  {
     resource: "Users",
     methods: ["GET", "POST"],
     path: "/scim/v2/Users",
@@ -126,9 +160,9 @@ export const SCIM_ENDPOINT_REFERENCES: readonly SCIMEndpointReference[] = [
   },
   {
     resource: "Users",
-    methods: ["GET", "PATCH", "DELETE"],
+    methods: ["GET", "PUT", "PATCH", "DELETE"],
     path: "/scim/v2/Users/{uid}",
-    descriptionKey: "查询单个用户、调整角色、通过 active=false 停用或移出空间",
+    descriptionKey: "查询单个用户、全量替换 (PUT)、局部更新角色/停用 (PATCH) 或移出空间",
   },
   {
     resource: "Groups",
@@ -138,9 +172,9 @@ export const SCIM_ENDPOINT_REFERENCES: readonly SCIMEndpointReference[] = [
   },
   {
     resource: "Groups",
-    methods: ["GET", "PATCH", "DELETE"],
+    methods: ["GET", "PUT", "PATCH", "DELETE"],
     path: "/scim/v2/Groups/{gid}",
-    descriptionKey: "重命名用户组、增删组成员或删除用户组",
+    descriptionKey: "查询用户组、全量替换名称与成员 (PUT)、增删成员 (PATCH) 或删除用户组",
   },
 ] as const;
 
@@ -162,6 +196,46 @@ export function buildScimBaseUrl(origin: string, workspaceId: number): string {
   return `${cleanOrigin}/scim/v2${suffix}`;
 }
 
+function stripSchemaRefPrefix(ref: string): string {
+  return ref.replace(/^#\/components\/schemas\//, "");
+}
+
+export function extractOpenAPISchemaRef(schema?: OpenAPISchemaObject): string | undefined {
+  if (!schema) return undefined;
+  if (schema.$ref) {
+    return stripSchemaRefPrefix(schema.$ref);
+  }
+  if (schema.type === "array" && schema.items?.$ref) {
+    return `${stripSchemaRefPrefix(schema.items.$ref)}[]`;
+  }
+  if (schema.properties) {
+    const refs: string[] = [];
+    for (const prop of Object.values(schema.properties)) {
+      if (prop.$ref) {
+        const name = stripSchemaRefPrefix(prop.$ref);
+        if (!refs.includes(name)) refs.push(name);
+      } else if (prop.type === "array" && prop.items?.$ref) {
+        const name = `${stripSchemaRefPrefix(prop.items.$ref)}[]`;
+        if (!refs.includes(name)) refs.push(name);
+      }
+    }
+    if (refs.length > 0) {
+      return refs.join(", ");
+    }
+  }
+  return undefined;
+}
+
+function isPublicSCIMDiscoveryPath(path: string): boolean {
+  return (
+    path === "/scim/v2/ServiceProviderConfig" ||
+    path === "/scim/v2/Schemas" ||
+    path.startsWith("/scim/v2/Schemas/") ||
+    path === "/scim/v2/ResourceTypes" ||
+    path.startsWith("/scim/v2/ResourceTypes/")
+  );
+}
+
 export function flattenOpenAPIEndpoints(spec: OpenAPISpec | null | undefined): OpenAPIEndpointItem[] {
   if (!spec?.paths) return [];
   const tagOrder = new Map<string, number>();
@@ -177,8 +251,16 @@ export function flattenOpenAPIEndpoints(spec: OpenAPISpec | null | undefined): O
       const contentTypes = op.requestBody?.content ? Object.keys(op.requestBody.content) : [];
       const contentType =
         contentTypes[0] ?? (path.startsWith("/scim/") ? "application/scim+json" : "application/json");
-      const responses = Object.entries(op.responses ?? {})
-        .map(([code, val]) => ({ code, description: val?.description ?? "" }))
+      const responses: OpenAPIEndpointResponse[] = Object.entries(op.responses ?? {})
+        .map(([code, val]) => {
+          const media = val?.content ? Object.values(val.content)[0] : undefined;
+          const schemaRef = extractOpenAPISchemaRef(media?.schema);
+          return {
+            code,
+            description: val?.description ?? "",
+            ...(schemaRef ? { schemaRef } : {}),
+          };
+        })
         .sort((a, b) => a.code.localeCompare(b.code));
       items.push({
         key: `${method} ${path}`,
@@ -272,7 +354,7 @@ export function buildEndpointCurl(
   let resolvedPath = endpoint.path.replaceAll("{wsId}", ws);
   if (
     resolvedPath.startsWith("/scim/v2/") &&
-    resolvedPath !== "/scim/v2/ServiceProviderConfig" &&
+    !isPublicSCIMDiscoveryPath(resolvedPath) &&
     workspaceId > 0
   ) {
     resolvedPath = `${resolvedPath}?workspaceId=${workspaceId}`;
@@ -403,6 +485,11 @@ export function OrgDeveloperPanel({
   const spec = specQuery.data ?? null;
 
   const allEndpoints = useMemo(() => flattenOpenAPIEndpoints(spec), [spec]);
+
+  const schemaCount = useMemo(
+    () => Object.keys(spec?.components?.schemas ?? {}).length,
+    [spec],
+  );
 
   const tagCounts = useMemo(() => {
     const counts = new Map<string, number>();
@@ -681,6 +768,14 @@ export function OrgDeveloperPanel({
                     >
                       {t("共 {count} 个接口", { count: allEndpoints.length })}
                     </span>
+                    {schemaCount > 0 && (
+                      <span
+                        data-openapi-schema-count
+                        className="rounded-full bg-sidebar px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                      >
+                        {t("共 {count} 个数据模型", { count: schemaCount })}
+                      </span>
+                    )}
                   </>
                 )}
               </div>
@@ -982,10 +1077,11 @@ export function OrgDeveloperPanel({
                             <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-subtle">
                               {t("响应状态码")}
                             </p>
-                            <div className="flex flex-wrap gap-1.5">
+                            <div className="flex flex-wrap gap-1.5" data-openapi-responses={ep.key}>
                               {ep.responses.map((resp) => (
                                 <span
                                   key={resp.code}
+                                  data-response-code={resp.code}
                                   className={cn(
                                     "inline-flex items-center gap-1.5 rounded px-2 py-0.5 text-[11px]",
                                     responseBadgeTone(resp.code),
@@ -993,6 +1089,14 @@ export function OrgDeveloperPanel({
                                 >
                                   <code className="font-mono font-semibold">{resp.code}</code>
                                   <span>{resp.description}</span>
+                                  {resp.schemaRef && (
+                                    <code
+                                      data-response-schema={resp.schemaRef}
+                                      className="rounded bg-surface/80 px-1.5 py-0.5 font-mono text-[10px] font-medium text-foreground ring-1 ring-inset ring-border/70"
+                                    >
+                                      {resp.schemaRef}
+                                    </code>
+                                  )}
                                 </span>
                               ))}
                             </div>

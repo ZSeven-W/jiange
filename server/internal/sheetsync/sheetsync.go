@@ -4,6 +4,8 @@ package sheetsync
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -15,11 +17,38 @@ import (
 )
 
 const (
-	outBuffer         = 256
-	storeTimeout      = 5 * time.Second
-	checkTTL          = 2 * time.Second
-	cursorMinInterval = 30 * time.Millisecond
+	// RealtimeChannel is the Postgres LISTEN/NOTIFY channel used for cross-replica sheet sync.
+	RealtimeChannel = store.RealtimeChannelSheet
+
+	outBuffer          = 256
+	storeTimeout       = 5 * time.Second
+	checkTTL           = 2 * time.Second
+	cursorMinInterval  = 30 * time.Millisecond
+	maxBusPayloadBytes = 7500
+	remotePresenceTTL  = 90 * time.Second
 )
+
+type sheetBusEvent struct {
+	Origin           string                    `json:"origin"`
+	Kind             string                    `json:"kind"` // "rev" | "cells" | "cursor" | "leave"
+	SheetID          int64                     `json:"sheetId"`
+	WorkbookRevision int64                     `json:"rev,omitempty"`
+	ActorID          int64                     `json:"actorId,omitempty"`
+	WorksheetID      int64                     `json:"worksheetId,omitempty"`
+	CellDelta        []store.SheetCellRevision `json:"cellDelta,omitempty"`
+	Collaborator     *Collaborator             `json:"collaborator,omitempty"`
+	UserID           int64                     `json:"userId,omitempty"`
+}
+
+type remotePeerKey struct {
+	origin string
+	userID int64
+}
+
+type remoteCursor struct {
+	collaborator Collaborator
+	updatedAt    time.Time
+}
 
 type Collaborator struct {
 	UserID      int64  `json:"userId"`
@@ -33,25 +62,30 @@ type Collaborator struct {
 }
 
 type Hub struct {
-	Store          store.SheetStore
+	Store store.SheetStore
+	// Bus optionally overrides the RealtimeBus used for cross-replica fan-out.
+	// When nil, Hub automatically uses Store if Store implements store.RealtimeBus.
+	Bus            store.RealtimeBus
 	Log            *slog.Logger
 	OriginPatterns []string
 	PingInterval   time.Duration
 	SweepInterval  time.Duration
 
-	mu    sync.Mutex
-	rooms map[int64]*room
+	mu         sync.Mutex
+	instanceID string
+	rooms      map[int64]*room
 }
 
 type room struct {
-	hub   *Hub
-	id    int64
-	refs  int
-	head  int64
-	stop  chan struct{}
-	wake  chan struct{}
-	mu    sync.Mutex
-	conns map[*conn]struct{}
+	hub    *Hub
+	id     int64
+	refs   int
+	head   int64
+	stop   chan struct{}
+	wake   chan struct{}
+	mu     sync.Mutex
+	conns  map[*conn]struct{}
+	remote map[remotePeerKey]remoteCursor
 }
 
 type conn struct {
@@ -100,18 +134,88 @@ func (h *Hub) acquireRoom(id int64) *room {
 	r := h.rooms[id]
 	if r == nil {
 		r = &room{
-			hub:   h,
-			id:    id,
-			head:  initial,
-			stop:  make(chan struct{}),
-			wake:  make(chan struct{}, 1),
-			conns: map[*conn]struct{}{},
+			hub:    h,
+			id:     id,
+			head:   initial,
+			stop:   make(chan struct{}),
+			wake:   make(chan struct{}, 1),
+			conns:  map[*conn]struct{}{},
+			remote: map[remotePeerKey]remoteCursor{},
 		}
 		h.rooms[id] = r
 		go r.sweepLoop()
 	}
 	r.refs++
 	return r
+}
+
+func (h *Hub) bus() store.RealtimeBus {
+	if h.Bus != nil {
+		return h.Bus
+	}
+	if b, ok := h.Store.(store.RealtimeBus); ok {
+		return b
+	}
+	return nil
+}
+
+func (h *Hub) originID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.instanceID == "" {
+		var buf [12]byte
+		_, _ = rand.Read(buf[:])
+		h.instanceID = hex.EncodeToString(buf[:])
+	}
+	return h.instanceID
+}
+
+func (h *Hub) publishRaw(payload string) {
+	bus := h.bus()
+	if bus == nil || len(payload) == 0 || len(payload) > store.MaxRealtimePayloadBytes {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), storeTimeout)
+		defer cancel()
+		if err := bus.PublishRealtime(ctx, RealtimeChannel, payload); err != nil {
+			h.log().Warn("sheet realtime publish", "err", err)
+		}
+	}()
+}
+
+// Run consumes cross-replica spreadsheet revision and cursor presence events
+// from the RealtimeBus until ctx ends.
+func (h *Hub) Run(ctx context.Context) error {
+	bus := h.bus()
+	if bus == nil {
+		<-ctx.Done()
+		return nil
+	}
+	origin := h.originID()
+	return bus.ListenRealtime(ctx, RealtimeChannel, func(payload string) {
+		var ev sheetBusEvent
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			return
+		}
+		if ev.Origin == origin || ev.SheetID <= 0 {
+			return
+		}
+		switch ev.Kind {
+		case "rev":
+			h.applyRevisionLocal(ev.SheetID, ev.WorkbookRevision, ev.ActorID, 0, nil)
+		case "cells":
+			h.applyRevisionLocal(ev.SheetID, ev.WorkbookRevision, ev.ActorID, ev.WorksheetID, ev.CellDelta)
+		case "cursor":
+			if ev.Collaborator != nil && ev.Collaborator.UserID > 0 {
+				h.applyRemoteCursor(ev.SheetID, ev.Origin, *ev.Collaborator)
+			}
+		case "leave":
+			if ev.UserID > 0 {
+				h.applyRemoteLeave(ev.SheetID, ev.Origin, ev.UserID)
+			}
+		}
+	})
 }
 
 func (h *Hub) releaseRoom(r *room) {
@@ -136,10 +240,7 @@ func (h *Hub) Notify(sheetID, workbookRevision, actorID int64) {
 	h.NotifyCells(sheetID, workbookRevision, actorID, 0, nil)
 }
 
-// NotifyCells broadcasts a workbook revision update along with an optional
-// incremental cell delta (up to 200 cells) so connected collaborators apply
-// cell edits in place without refetching the full workbook snapshot.
-func (h *Hub) NotifyCells(sheetID, workbookRevision, actorID, worksheetID int64, cells []store.SheetCellRevision) {
+func (h *Hub) applyRevisionLocal(sheetID, workbookRevision, actorID, worksheetID int64, cells []store.SheetCellRevision) {
 	h.mu.Lock()
 	r := h.rooms[sheetID]
 	h.mu.Unlock()
@@ -166,6 +267,114 @@ func (h *Hub) NotifyCells(sheetID, workbookRevision, actorID, worksheetID int64,
 	r.mu.Unlock()
 }
 
+// NotifyCells broadcasts a workbook revision update along with an optional
+// incremental cell delta (up to 200 cells) so connected collaborators apply
+// cell edits in place without refetching the full workbook snapshot.
+// When a RealtimeBus is attached, it also publishes the delta (falling back to
+// a compact revision invalidation when the JSON exceeds Postgres's 8000-byte
+// NOTIFY ceiling).
+func (h *Hub) NotifyCells(sheetID, workbookRevision, actorID, worksheetID int64, cells []store.SheetCellRevision) {
+	h.applyRevisionLocal(sheetID, workbookRevision, actorID, worksheetID, cells)
+	if sheetID <= 0 || h.bus() == nil {
+		return
+	}
+	origin := h.originID()
+	if worksheetID > 0 && len(cells) > 0 && len(cells) <= 200 {
+		raw := mustJSON(sheetBusEvent{
+			Origin:           origin,
+			Kind:             "cells",
+			SheetID:          sheetID,
+			WorkbookRevision: workbookRevision,
+			ActorID:          actorID,
+			WorksheetID:      worksheetID,
+			CellDelta:        cells,
+		})
+		if len(raw) <= maxBusPayloadBytes {
+			h.publishRaw(string(raw))
+			return
+		}
+	}
+	compact := mustJSON(sheetBusEvent{
+		Origin:           origin,
+		Kind:             "rev",
+		SheetID:          sheetID,
+		WorkbookRevision: workbookRevision,
+		ActorID:          actorID,
+	})
+	h.publishRaw(string(compact))
+}
+
+func (h *Hub) applyRemoteCursor(sheetID int64, origin string, col Collaborator) {
+	h.mu.Lock()
+	r := h.rooms[sheetID]
+	h.mu.Unlock()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	if r.remote == nil {
+		r.remote = map[remotePeerKey]remoteCursor{}
+	}
+	r.remote[remotePeerKey{origin: origin, userID: col.UserID}] = remoteCursor{
+		collaborator: col,
+		updatedAt:    time.Now(),
+	}
+	frame := r.presenceLocked()
+	for existing := range r.conns {
+		existing.send(frame)
+	}
+	r.mu.Unlock()
+}
+
+func (h *Hub) applyRemoteLeave(sheetID int64, origin string, userID int64) {
+	h.mu.Lock()
+	r := h.rooms[sheetID]
+	h.mu.Unlock()
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	key := remotePeerKey{origin: origin, userID: userID}
+	if _, ok := r.remote[key]; !ok {
+		r.mu.Unlock()
+		return
+	}
+	delete(r.remote, key)
+	frame := r.presenceLocked()
+	for existing := range r.conns {
+		existing.send(frame)
+	}
+	r.mu.Unlock()
+}
+
+func (r *room) publishCursor(col Collaborator) {
+	if r.hub.bus() == nil {
+		return
+	}
+	raw := mustJSON(sheetBusEvent{
+		Origin:       r.hub.originID(),
+		Kind:         "cursor",
+		SheetID:      r.id,
+		Collaborator: &col,
+	})
+	if len(raw) <= maxBusPayloadBytes {
+		r.hub.publishRaw(string(raw))
+	}
+}
+
+func (r *room) publishLeave(userID int64) {
+	if r.hub.bus() == nil || userID <= 0 {
+		return
+	}
+	raw := mustJSON(sheetBusEvent{
+		Origin:  r.hub.originID(),
+		Kind:    "leave",
+		SheetID: r.id,
+		UserID:  userID,
+	})
+	r.hub.publishRaw(string(raw))
+}
+
 func (r *room) addConn(c *conn) {
 	r.mu.Lock()
 	r.conns[c] = struct{}{}
@@ -173,7 +382,9 @@ func (r *room) addConn(c *conn) {
 	for existing := range r.conns {
 		existing.send(frame)
 	}
+	cur := Collaborator{UserID: c.userID, Name: c.name}
 	r.mu.Unlock()
+	r.publishCursor(cur)
 }
 
 func (r *room) removeConn(c *conn) {
@@ -183,11 +394,30 @@ func (r *room) removeConn(c *conn) {
 		return
 	}
 	delete(r.conns, c)
+	var remaining *Collaborator
+	for other := range r.conns {
+		if other.userID == c.userID {
+			if other.cursor != nil {
+				cp := *other.cursor
+				remaining = &cp
+				break
+			}
+			if remaining == nil {
+				cp := Collaborator{UserID: other.userID, Name: other.name}
+				remaining = &cp
+			}
+		}
+	}
 	frame := r.presenceLocked()
 	for existing := range r.conns {
 		existing.send(frame)
 	}
 	r.mu.Unlock()
+	if remaining != nil {
+		r.publishCursor(*remaining)
+	} else {
+		r.publishLeave(c.userID)
+	}
 }
 
 func (r *room) updateCursor(c *conn, worksheetID int64, row, col, anchorRow, anchorCol int, editing bool) {
@@ -196,7 +426,7 @@ func (r *room) updateCursor(c *conn, worksheetID int64, row, col, anchorRow, anc
 		r.mu.Unlock()
 		return
 	}
-	c.cursor = &Collaborator{
+	cur := Collaborator{
 		UserID:      c.userID,
 		Name:        c.name,
 		WorksheetID: worksheetID,
@@ -206,14 +436,28 @@ func (r *room) updateCursor(c *conn, worksheetID int64, row, col, anchorRow, anc
 		AnchorCol:   anchorCol,
 		Editing:     editing,
 	}
+	c.cursor = &cur
 	frame := r.presenceLocked()
 	for existing := range r.conns {
 		existing.send(frame)
 	}
 	r.mu.Unlock()
+	r.publishCursor(cur)
+}
+
+func (r *room) pruneExpiredRemoteLocked(now time.Time) bool {
+	removed := false
+	for k, entry := range r.remote {
+		if now.Sub(entry.updatedAt) > remotePresenceTTL {
+			delete(r.remote, k)
+			removed = true
+		}
+	}
+	return removed
 }
 
 func (r *room) presenceLocked() []byte {
+	r.pruneExpiredRemoteLocked(time.Now())
 	byUser := map[int64]Collaborator{}
 	for c := range r.conns {
 		cur := Collaborator{UserID: c.userID, Name: c.name, Row: 0, Col: 0}
@@ -222,6 +466,12 @@ func (r *room) presenceLocked() []byte {
 		}
 		if existing, exists := byUser[c.userID]; !exists || (cur.WorksheetID > 0 && existing.WorksheetID == 0) {
 			byUser[c.userID] = cur
+		}
+	}
+	for _, entry := range r.remote {
+		cur := entry.collaborator
+		if existing, exists := byUser[cur.UserID]; !exists || (cur.WorksheetID > 0 && existing.WorksheetID == 0) {
+			byUser[cur.UserID] = cur
 		}
 	}
 	list := make([]Collaborator, 0, len(byUser))
@@ -241,6 +491,14 @@ func (r *room) sweepLoop() {
 		case <-r.wake:
 		case <-t.C:
 		}
+		r.mu.Lock()
+		if r.pruneExpiredRemoteLocked(time.Now()) {
+			frame := r.presenceLocked()
+			for c := range r.conns {
+				c.send(frame)
+			}
+		}
+		r.mu.Unlock()
 		if r.hub.Store == nil {
 			continue
 		}

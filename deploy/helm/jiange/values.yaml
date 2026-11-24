@@ -1,0 +1,145 @@
+# Default production-oriented values for Jiange.
+replicaCount: 2
+
+image:
+  repository: ghcr.io/zseven-w/jiange
+  pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+  annotations: {}
+
+config:
+  addr: ":8080"
+  sessionTTL: "720h"
+  secureCookies: true
+  autoVersionEvery: "30m"
+  enableConditionalCancel: false
+  # Comma-separated host[:port] list allowed to open collaborative WebSockets.
+  allowedOrigins: "jiange.example.com"
+  linkPreviewAllowCidrs: ""
+  # Leave empty in multi-replica deployments and use S3/MinIO below.
+  blobDir: ""
+  s3:
+    endpoint: "http://minio:9000"
+    bucket: "jiange"
+
+secrets:
+  # Recommended for production: reference a pre-existing Secret (ExternalSecrets,
+  # SealedSecrets, Vault) containing keys: database-url, secret-key,
+  # s3-access-key, s3-secret-key, and optionally metrics-token.
+  existingSecret: ""
+  databaseUrl: "postgres://jiange:change-me@postgres:5432/jiange?sslmode=require"
+  # 32+ character secret used for JIANGE_SECRET_KEY (encrypts AI keys, SSO, webhooks).
+  secretKey: ""
+  s3AccessKey: ""
+  s3SecretKey: ""
+  # Optional Bearer token required to scrape /metrics (JIANGE_METRICS_TOKEN).
+  metricsToken: ""
+
+# Extra environment variables passed directly to the Jiange container.
+extraEnv: []
+
+ingress:
+  enabled: false
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  hosts:
+    - host: jiange.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: jiange-tls
+  #    hosts:
+  #      - jiange.example.com
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 1Gi
+
+probes:
+  startup:
+    path: /healthz
+    initialDelaySeconds: 5
+    periodSeconds: 5
+    timeoutSeconds: 3
+    failureThreshold: 30
+  liveness:
+    path: /healthz
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    path: /readyz
+    initialDelaySeconds: 5
+    periodSeconds: 10
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+metrics:
+  podAnnotations: true
+  serviceMonitor:
+    enabled: false
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: 10s
+    path: /metrics
+    labels: {}
+    # Set true when secrets.existingSecret contains a metrics-token key.
+    useMetricsToken: false
+
+terminationGracePeriodSeconds: 30
+
+nodeSelector: {}
+tolerations: []
+
+# Prefer spreading replicas across different nodes for high availability.
+affinity: {}

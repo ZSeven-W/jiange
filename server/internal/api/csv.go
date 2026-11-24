@@ -132,6 +132,27 @@ func (s *Server) importCSV(w http.ResponseWriter, r *http.Request) {
 	if s.BtHub != nil {
 		s.BtHub.Notify(b.ID)
 	}
+	if count > 0 {
+		var tableID int64
+		if tables, tErr := s.Store.BaseTables(r.Context(), b.ID); tErr == nil {
+			for _, tbl := range tables {
+				if tbl.IsDefault {
+					tableID = tbl.ID
+					break
+				}
+			}
+			if tableID == 0 && len(tables) > 0 {
+				tableID = tables[0].ID
+			}
+		}
+		s.dispatchWorkspaceEvent(b.WorkspaceID, store.WebhookEventBaseRecordMutated, map[string]any{
+			"baseId":  b.ID,
+			"tableId": tableID,
+			"action":  "import",
+			"count":   count,
+			"actorId": u.ID,
+		})
+	}
 	if rowErrors == nil {
 		rowErrors = []csvRowError{}
 	}
@@ -709,6 +730,9 @@ func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request) {
 	// change. Do not write headers or buffered data until the final check.
 	if s.baseExportAccess(r.Context(), r, b.ID) != nil {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持导出")
+		return
+	}
+	if !s.enforceDocExportDLP(w, r, b, "csv_export") {
 		return
 	}
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")

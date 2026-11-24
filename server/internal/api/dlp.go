@@ -2,10 +2,13 @@ package api
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"regexp/syntax"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/ZSeven-W/jiange/server/internal/httpx"
@@ -29,6 +32,10 @@ type DLPMatch struct {
 
 type dlpPolicySystemStore interface {
 	GetWorkspaceSecurityPolicySystem(ctx context.Context, wsID int64) (store.WorkspaceSecurityPolicy, error)
+}
+
+type dlpSheetSystemStore interface {
+	GetSheetWorkbookSystem(ctx context.Context, nodeID int64) (store.SheetSnapshot, error)
 }
 
 func isDLPRegexRule(rule string) bool {
@@ -285,6 +292,46 @@ func (s *Server) extractDocPlainTextForDLP(ctx context.Context, docID int64, act
 				appendBody(extractSearchableSurveyText(sv))
 			}
 		}
+	case "sheet":
+		if sheetSys, ok := s.Store.(dlpSheetSystemStore); ok {
+			if snap, err := sheetSys.GetSheetWorkbookSystem(ctx, docID); err == nil {
+				appendBody(extractSearchableSheetText(snap))
+			}
+		}
+	}
+	return b.String()
+}
+
+func extractSearchableSheetText(snap store.SheetSnapshot) string {
+	var b strings.Builder
+	writePart := func(raw string) bool {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return true
+		}
+		if b.Len() >= dlpMaxScanBytes {
+			return false
+		}
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		remaining := dlpMaxScanBytes - b.Len()
+		if len(trimmed) > remaining {
+			b.WriteString(truncateUTF8Bytes(trimmed, remaining))
+			return false
+		}
+		b.WriteString(trimmed)
+		return true
+	}
+	for _, ws := range snap.Sheets {
+		if !writePart(ws.Title) {
+			break
+		}
+		for _, cell := range ws.Cells {
+			if !writePart(cell.Raw) {
+				return b.String()
+			}
+		}
 	}
 	return b.String()
 }
@@ -337,6 +384,182 @@ func (s *Server) enforceDocShareDLP(w http.ResponseWriter, r *http.Request, d st
 	}
 	s.recordAudit(r, d.WorkspaceID, "dlp.share_warned", d.Kind, d.ID, d.Title, detail)
 	return true
+}
+
+// enforceDocExportDLP evaluates a document against workspace DLP rules before
+// allowing an export or public file download. Returns false when blocked
+// (HTTP 422 JSON response already written).
+func (s *Server) enforceDocExportDLP(w http.ResponseWriter, r *http.Request, d store.DocMeta, channel string) bool {
+	if d.ID <= 0 || d.WorkspaceID <= 0 {
+		return true
+	}
+	actor, _ := UserFrom(r.Context())
+	policy, ok := s.loadWorkspaceDLPPolicy(r.Context(), d.WorkspaceID, actor.ID)
+	if !ok || !policy.DLPEnabled || len(policy.DLPKeywords) == 0 {
+		return true
+	}
+	text := s.extractDocPlainTextForDLP(r.Context(), d.ID, actor)
+	matches := EvaluateDLP(policy, text)
+	if len(matches) == 0 {
+		return true
+	}
+	detail := map[string]any{
+		"channel":      channel,
+		"matchCount":   len(matches),
+		"matchedRules": uniqueMatchedRules(matches),
+	}
+	if policy.DLPAction == store.DLPActionBlock {
+		s.recordAudit(r, d.WorkspaceID, "dlp.export_blocked", d.Kind, d.ID, d.Title, detail)
+		httpx.JSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"error":   "dlp_blocked",
+			"code":    "dlp_blocked",
+			"message": "内容命中企业数据防泄漏（DLP）敏感规则，已拦截导出/下载",
+			"matches": matches,
+		})
+		return false
+	}
+	s.recordAudit(r, d.WorkspaceID, "dlp.export_warned", d.Kind, d.ID, d.Title, detail)
+	return true
+}
+
+// SweepRetentionPolicies runs background data retention cleanup across all
+// workspaces with retention_days > 0, purging expired audit logs and soft-deleted
+// trash nodes and writing a retention.purged audit entry whenever records were removed.
+func SweepRetentionPolicies(ctx context.Context, st store.Store, log *slog.Logger) ([]store.RetentionPurgeStats, error) {
+	if st == nil {
+		return nil, nil
+	}
+	auditStore, ok := st.(store.AuditLogStore)
+	if !ok {
+		return nil, nil
+	}
+	policies, err := auditStore.ListRetentionPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	results := make([]store.RetentionPurgeStats, 0, len(policies))
+	var firstErr error
+	for _, p := range policies {
+		if err := ctx.Err(); err != nil {
+			return results, err
+		}
+		if p.WorkspaceID <= 0 || p.RetentionDays <= 0 {
+			continue
+		}
+		cutoff := now.Add(-time.Duration(p.RetentionDays) * 24 * time.Hour)
+		purgedLogs, purgedNodes, err := auditStore.PurgeExpiredRetentionData(ctx, p.WorkspaceID, cutoff)
+		if err != nil {
+			if log != nil {
+				log.Warn("retention purge failed", "wsId", p.WorkspaceID, "retentionDays", p.RetentionDays, "err", err)
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		stats := store.RetentionPurgeStats{
+			WorkspaceID:      p.WorkspaceID,
+			RetentionDays:    p.RetentionDays,
+			PurgedAuditLogs:  purgedLogs,
+			PurgedTrashNodes: purgedNodes,
+			RanAt:            now,
+		}
+		results = append(results, stats)
+		if purgedLogs > 0 || purgedNodes > 0 {
+			detail := marshalAuditDetail(map[string]any{
+				"trigger":          "scheduled",
+				"retentionDays":    p.RetentionDays,
+				"cutoff":           cutoff.Format(time.RFC3339),
+				"purgedAuditLogs":  purgedLogs,
+				"purgedTrashNodes": purgedNodes,
+			})
+			if err := auditStore.AppendAuditLog(ctx, store.AuditLogEntry{
+				WorkspaceID:   p.WorkspaceID,
+				ActorID:       0,
+				ActorName:     "系统",
+				Action:        "retention.purged",
+				ResourceType:  "workspace",
+				ResourceID:    p.WorkspaceID,
+				ResourceTitle: fmt.Sprintf("数据保留自动清理（%d 天）", p.RetentionDays),
+				Detail:        detail,
+				CreatedAt:     now,
+			}); err != nil && log != nil {
+				log.Warn("append retention audit log failed", "wsId", p.WorkspaceID, "err", err)
+			}
+			if log != nil {
+				log.Info("retention policy purged expired data",
+					"wsId", p.WorkspaceID,
+					"retentionDays", p.RetentionDays,
+					"purgedAuditLogs", purgedLogs,
+					"purgedTrashNodes", purgedNodes,
+				)
+			}
+		}
+	}
+	return results, firstErr
+}
+
+// runWorkspaceRetention handles POST /api/workspaces/{wsId}/retention/run.
+// Requires workspace owner or admin. Immediately executes retention cleanup
+// using the workspace's configured retention_days policy.
+func (s *Server) runWorkspaceRetention(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	wsID, ok := s.parsePositivePathID(w, r, "wsId")
+	if !ok {
+		return
+	}
+	guard, ok := s.driveGuard(w, r)
+	if !ok {
+		return
+	}
+	if !driveExpectedUser(w, r, guard.UserID) {
+		return
+	}
+	auditStore, ok := s.auditLogStore(w)
+	if !ok {
+		return
+	}
+	orgSnap, err := s.Store.GetWorkspaceOrg(r.Context(), guard, wsID)
+	if err != nil {
+		s.auditError(w, r, err)
+		return
+	}
+	if orgSnap.CallerRole != store.WorkspaceRoleOwner && orgSnap.CallerRole != store.WorkspaceRoleAdmin {
+		httpx.Error(w, http.StatusForbidden, "forbidden", "仅空间所有者或管理员可执行数据保留清理")
+		return
+	}
+	policy, err := auditStore.GetWorkspaceSecurityPolicy(r.Context(), guard.UserID, wsID)
+	if err != nil {
+		s.auditError(w, r, err)
+		return
+	}
+	if policy.RetentionDays <= 0 {
+		httpx.Error(w, http.StatusBadRequest, "retention_disabled", "当前空间未启用数据保留周期，请先设置大于 0 天的保留期限")
+		return
+	}
+	now := s.now().UTC()
+	cutoff := now.Add(-time.Duration(policy.RetentionDays) * 24 * time.Hour)
+	purgedLogs, purgedNodes, err := auditStore.PurgeExpiredRetentionData(r.Context(), wsID, cutoff)
+	if err != nil {
+		s.auditError(w, r, err)
+		return
+	}
+	stats := store.RetentionPurgeStats{
+		WorkspaceID:      wsID,
+		RetentionDays:    policy.RetentionDays,
+		PurgedAuditLogs:  purgedLogs,
+		PurgedTrashNodes: purgedNodes,
+		RanAt:            now,
+	}
+	s.recordAudit(r, wsID, "retention.purged", "workspace", wsID, fmt.Sprintf("数据保留手动清理（%d 天）", policy.RetentionDays), map[string]any{
+		"trigger":          "manual",
+		"retentionDays":    policy.RetentionDays,
+		"cutoff":           cutoff.Format(time.RFC3339),
+		"purgedAuditLogs":  purgedLogs,
+		"purgedTrashNodes": purgedNodes,
+	})
+	httpx.JSON(w, http.StatusOK, stats)
 }
 
 // checkWorkspaceDLP handles POST /api/workspaces/{wsId}/dlp/check.

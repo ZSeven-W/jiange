@@ -150,6 +150,14 @@ func TestSheetDefinedNamesAPIAndBroadcast(t *testing.T) {
 	}
 	defer wsConn.CloseNow()
 
+	// Wait for the initial presence frame so the server has registered the socket in the room.
+	initWSCtx, initWSCancel := context.WithTimeout(ctx, 2*time.Second)
+	if _, _, err := wsConn.Read(initWSCtx); err != nil {
+		initWSCancel()
+		t.Fatalf("initial ws presence read: %v", err)
+	}
+	initWSCancel()
+
 	// 5. Owner PUT saves workbook-global + worksheet-scoped names.
 	putRes := sheetReq(t, cOwner, http.MethodPut, dnURL, uidOwner, "1", map[string]any{
 		"definedNames": []store.SheetDefinedName{

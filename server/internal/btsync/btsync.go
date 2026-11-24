@@ -8,6 +8,8 @@ package btsync
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -20,6 +22,9 @@ import (
 )
 
 const (
+	// RealtimeChannel is the Postgres LISTEN/NOTIFY channel used for cross-replica bitable events.
+	RealtimeChannel = store.RealtimeChannelBt
+
 	catchUpChunk   = 500
 	catchUpBatches = 8
 	outBuffer      = 512
@@ -27,12 +32,22 @@ const (
 	replayTimeout  = 15 * time.Second
 )
 
+type btBusEvent struct {
+	Origin string `json:"origin"`
+	BaseID int64  `json:"baseId"`
+}
+
 type Hub struct {
 	Store store.DocStore
-	Log   *slog.Logger
+	// Bus optionally overrides the RealtimeBus used for cross-replica fan-out.
+	// When nil, Hub automatically uses Store if Store implements store.RealtimeBus.
+	Bus store.RealtimeBus
+	Log *slog.Logger
 	// OriginPatterns are extra allowed browser origins (host[:port]).
 	OriginPatterns []string
 	PingInterval   time.Duration
+	// SweepInterval controls the fallback catch-up ticker (default 2s).
+	SweepInterval time.Duration
 	// StoreTimeout bounds head/replay queries so a stalled store cannot keep a
 	// room or request blocked indefinitely. Zero uses the default.
 	StoreTimeout time.Duration
@@ -40,6 +55,7 @@ type Hub struct {
 	ReplayTimeout time.Duration
 
 	mu           sync.Mutex
+	instanceID   string
 	rooms        map[int64]*room
 	initializing map[int64]*roomInit
 }
@@ -138,8 +154,49 @@ func (h *Hub) release(r *room) {
 	}
 }
 
-// Notify pokes a base's room so it streams newly appended events.
-func (h *Hub) Notify(baseID int64) {
+func (h *Hub) bus() store.RealtimeBus {
+	if h.Bus != nil {
+		return h.Bus
+	}
+	if b, ok := h.Store.(store.RealtimeBus); ok {
+		return b
+	}
+	return nil
+}
+
+func (h *Hub) originID() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.instanceID == "" {
+		var buf [12]byte
+		_, _ = rand.Read(buf[:])
+		h.instanceID = hex.EncodeToString(buf[:])
+	}
+	return h.instanceID
+}
+
+// Run consumes cross-replica bitable change notifications from the RealtimeBus
+// until ctx ends, waking local rooms whose base changed on another replica.
+func (h *Hub) Run(ctx context.Context) error {
+	bus := h.bus()
+	if bus == nil {
+		<-ctx.Done()
+		return nil
+	}
+	origin := h.originID()
+	return bus.ListenRealtime(ctx, RealtimeChannel, func(payload string) {
+		var ev btBusEvent
+		if err := json.Unmarshal([]byte(payload), &ev); err != nil {
+			return
+		}
+		if ev.Origin == origin || ev.BaseID <= 0 {
+			return
+		}
+		h.wakeLocal(ev.BaseID)
+	})
+}
+
+func (h *Hub) wakeLocal(baseID int64) {
 	h.mu.Lock()
 	r := h.rooms[baseID]
 	h.mu.Unlock()
@@ -151,6 +208,30 @@ func (h *Hub) Notify(baseID int64) {
 		default:
 		}
 	}
+}
+
+// Notify pokes a base's local room and publishes a cross-replica notification so
+// remote hubs stream newly appended events immediately.
+func (h *Hub) Notify(baseID int64) {
+	h.wakeLocal(baseID)
+	if baseID <= 0 {
+		return
+	}
+	bus := h.bus()
+	if bus == nil {
+		return
+	}
+	payload := string(mustJSON(btBusEvent{
+		Origin: h.originID(),
+		BaseID: baseID,
+	}))
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), h.storeTimeout())
+		defer cancel()
+		if err := bus.PublishRealtime(ctx, RealtimeChannel, payload); err != nil {
+			h.log().Warn("bt realtime publish", "base", baseID, "err", err)
+		}
+	}()
 }
 
 // Rooms reports the number of open rooms (tests and metrics).
@@ -236,6 +317,13 @@ func (h *Hub) pingInterval() time.Duration {
 		return h.PingInterval
 	}
 	return 20 * time.Second
+}
+
+func (h *Hub) sweepInterval() time.Duration {
+	if h.SweepInterval > 0 {
+		return h.SweepInterval
+	}
+	return 2 * time.Second
 }
 
 func (h *Hub) storeTimeout() time.Duration {
@@ -414,7 +502,7 @@ func invalidationFrame(events []store.BtEvent) []byte {
 // sweepLoop periodically catches up so events appended by other instances
 // (or missed notifies) still reach connections.
 func (r *room) sweepLoop() {
-	t := time.NewTicker(2 * time.Second)
+	t := time.NewTicker(r.hub.sweepInterval())
 	defer t.Stop()
 	for {
 		select {

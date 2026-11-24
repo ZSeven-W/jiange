@@ -172,7 +172,7 @@ func (s *Server) listSlidesVersions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createSlidesVersion(w http.ResponseWriter, r *http.Request) {
-	_, g, id, st, ok := s.slidesExtrasGuard(w, r)
+	u, g, id, st, ok := s.slidesExtrasGuard(w, r)
 	if !ok {
 		return
 	}
@@ -189,6 +189,20 @@ func (s *Server) createSlidesVersion(w http.ResponseWriter, r *http.Request) {
 	version, err := st.CreateSlidesVersionGuarded(r.Context(), g, id, in.Label, false)
 	if driveWriteErr(w, err, "create slides version") {
 		return
+	}
+	var wsID int64
+	if meta, metaErr := s.Store.GetDocSystem(r.Context(), id); metaErr == nil {
+		wsID = meta.WorkspaceID
+	} else if meta, metaErr := s.Store.GetDoc(r.Context(), u.ID, id); metaErr == nil {
+		wsID = meta.WorkspaceID
+	}
+	if wsID > 0 {
+		s.dispatchWorkspaceEvent(wsID, store.WebhookEventSlidesVersionCreated, map[string]any{
+			"slidesId":  id,
+			"versionId": version.ID,
+			"name":      version.Label,
+			"actorId":   u.ID,
+		})
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	httpx.JSON(w, http.StatusCreated, map[string]any{"version": version})

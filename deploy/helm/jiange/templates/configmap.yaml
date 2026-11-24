@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "jiange.fullname" . }}
+  labels:
+    {{- include "jiange.labels" . | nindent 4 }}
+data:
+  JIANGE_ADDR: {{ .Values.config.addr | quote }}
+  JIANGE_SESSION_TTL: {{ .Values.config.sessionTTL | quote }}
+  JIANGE_SECURE_COOKIES: {{ ternary "true" "false" .Values.config.secureCookies | quote }}
+  JIANGE_AUTO_VERSION_EVERY: {{ .Values.config.autoVersionEvery | quote }}
+  JIANGE_ENABLE_CONDITIONAL_CANCEL: {{ ternary "true" "false" .Values.config.enableConditionalCancel | quote }}
+  {{- if .Values.config.allowedOrigins }}
+  JIANGE_ALLOWED_ORIGINS: {{ .Values.config.allowedOrigins | quote }}
+  {{- end }}
+  {{- if .Values.config.linkPreviewAllowCidrs }}
+  JIANGE_LINK_PREVIEW_ALLOW_CIDRS: {{ .Values.config.linkPreviewAllowCidrs | quote }}
+  {{- end }}
+  {{- if .Values.config.blobDir }}
+  JIANGE_BLOB_DIR: {{ .Values.config.blobDir | quote }}
+  {{- end }}
+  {{- if .Values.config.s3.endpoint }}
+  JIANGE_S3_ENDPOINT: {{ .Values.config.s3.endpoint | quote }}
+  JIANGE_S3_BUCKET: {{ .Values.config.s3.bucket | quote }}
+  {{- end }}
