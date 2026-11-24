@@ -7,6 +7,7 @@ coverage
 *.tsbuildinfo
 output
 docs
+.DS_Store
 
 # Embedded UI on the Uppcoder deploy branch: a plain `go build` needs these files.
 !server/webui/dist/.gitkeep
