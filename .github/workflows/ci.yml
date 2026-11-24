@@ -91,3 +91,80 @@ jobs:
       - run: go vet ./...
       - run: go test -race -count=1 ./...
       - run: go test ./collab -run '^$' -fuzz FuzzDecode -fuzztime 20s
+
+  e2e:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: jiange
+          POSTGRES_PASSWORD: jiange
+          POSTGRES_DB: jiange_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U jiange" --health-interval 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - run: pnpm install --frozen-lockfile
+      - name: Build web frontend & embed into Go server
+        run: |
+          pnpm --filter @jiange/web... build
+          rm -rf server/webui/dist
+          mkdir -p server/webui/dist
+          cp -R apps/web/dist/. server/webui/dist/
+          (cd server && go build -o ../jiange ./cmd/jiange)
+      - name: Start Jiange server and wait for /readyz
+        env:
+          DATABASE_URL: postgres://jiange:jiange@127.0.0.1:5432/jiange_e2e?sslmode=disable
+          JIANGE_ADDR: 127.0.0.1:8080
+          JIANGE_SECURE_COOKIES: "false"
+          JIANGE_BLOB_DIR: /tmp/jiange-e2e-blobs
+          JIANGE_ALLOWED_ORIGINS: 127.0.0.1:8080,localhost:8080
+          JIANGE_AUTO_VERSION_EVERY: "0"
+        run: |
+          mkdir -p "$JIANGE_BLOB_DIR"
+          ./jiange > /tmp/jiange-e2e.log 2>&1 &
+          echo $! > /tmp/jiange-e2e.pid
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/readyz >/dev/null 2>&1; then
+              echo "Jiange server is ready."
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Timed out waiting for http://127.0.0.1:8080/readyz"
+          cat /tmp/jiange-e2e.log || true
+          exit 1
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run Playwright E2E suite
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+          E2E_API_URL: http://127.0.0.1:8080
+        run: pnpm test:e2e
+      - name: Stop Jiange server
+        if: always()
+        run: |
+          if [ -f /tmp/jiange-e2e.pid ]; then
+            kill "$(cat /tmp/jiange-e2e.pid)" 2>/dev/null || true
+          fi
+      - name: Upload Playwright failure artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-e2e-artifacts
+          path: |
+            playwright-report
+            test-results
+            /tmp/jiange-e2e.log
+          if-no-files-found: ignore
+          retention-days: 7

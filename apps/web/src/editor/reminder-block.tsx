@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bell, Calendar, Check, Clock, Trash2 } from "lucide-react";
+import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** Format a local Date as YYYY-MM-DD. */
@@ -22,24 +23,24 @@ export interface ReminderBadge {
 
 /** Pure relative status calculation for a date reminder block. */
 export function reminderStatus(date: string | undefined, time: string | undefined, done: boolean, now = new Date()): ReminderBadge {
-  if (done) return { text: "已完成", tone: "done" };
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { text: "未设日期", tone: "unset" };
+  if (done) return { text: t("已完成"), tone: "done" };
+  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return { text: t("未设日期"), tone: "unset" };
   const [y, m, d] = date.split("-").map(Number);
   const targetDay = new Date(y, m - 1, d);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const diffDays = Math.round((targetDay.getTime() - today.getTime()) / 86400000);
-  if (diffDays < 0) return { text: `已过期 ${Math.abs(diffDays)} 天`, tone: "overdue" };
+  if (diffDays < 0) return { text: t("已过期 {days} 天", { days: Math.abs(diffDays) }), tone: "overdue" };
   if (diffDays === 0) {
     if (time && /^\d{2}:\d{2}$/.test(time)) {
       const [hh, mm] = time.split(":").map(Number);
       const targetExact = new Date(y, m - 1, d, hh, mm);
-      if (targetExact.getTime() < now.getTime()) return { text: "今日已过时", tone: "overdue" };
+      if (targetExact.getTime() < now.getTime()) return { text: t("今日已过时"), tone: "overdue" };
     }
-    return { text: "今天", tone: "today" };
+    return { text: t("今天"), tone: "today" };
   }
-  if (diffDays === 1) return { text: "明天", tone: "soon" };
-  if (diffDays <= 7) return { text: `${diffDays} 天后`, tone: "soon" };
-  return { text: `${diffDays} 天后`, tone: "future" };
+  if (diffDays === 1) return { text: t("明天"), tone: "soon" };
+  if (diffDays <= 7) return { text: t("{days} 天后", { days: diffDays }), tone: "soon" };
+  return { text: t("{days} 天后", { days: diffDays }), tone: "future" };
 }
 
 const BADGE_CLASS: Record<ReminderBadge["tone"], string> = {
@@ -68,6 +69,7 @@ export function ReminderBlockView({
   onChange?: (key: "date" | "time" | "label" | "done", value: string) => void;
   onDelete?: () => void;
 }) {
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const [draftLabel, setDraftLabel] = useState(label ?? "");
   const [lastPropLabel, setLastPropLabel] = useState(label ?? "");
@@ -112,7 +114,7 @@ export function ReminderBlockView({
           type="button"
           disabled={readOnly || !onChange}
           onClick={() => onChange?.("done", done ? "" : "true")}
-          aria-label={done ? "标记为未完成" : "标记为已完成"}
+          aria-label={done ? t("标记为未完成") : t("标记为已完成")}
           aria-pressed={!!done}
           data-reminder-toggle
           className={cn(
@@ -127,7 +129,7 @@ export function ReminderBlockView({
 
         <span className="inline-flex shrink-0 items-center gap-1 font-medium text-primary">
           <Bell size={13} />
-          <span data-reminder-display-date>{date || "选择日期"}</span>
+          <span data-reminder-display-date>{date || t("选择日期")}</span>
           {time && <span className="text-[12px] text-muted-foreground" data-reminder-display-time>{time}</span>}
         </span>
 
@@ -153,7 +155,7 @@ export function ReminderBlockView({
                 (e.target as HTMLInputElement).blur();
               }
             }}
-            placeholder="输入提醒事项…"
+            placeholder={t("输入提醒事项…")}
             data-reminder-label
             className={cn(
               "min-w-[140px] flex-1 rounded bg-transparent px-1.5 py-0.5 text-[13px] outline-none focus:bg-surface focus:ring-1 focus:ring-primary/40",
@@ -162,7 +164,7 @@ export function ReminderBlockView({
           />
         ) : (
           <span className={cn("min-w-0 flex-1 break-words text-[13px]", done && "text-muted-foreground line-through")} data-reminder-label-readonly>
-            {label || "日期提醒"}
+            {label || t("日期提醒")}
           </span>
         )}
 
@@ -175,13 +177,13 @@ export function ReminderBlockView({
               className="inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] text-muted-foreground hover:bg-hover hover:text-foreground"
             >
               <Calendar size={11} />
-              {editing ? "收起时间" : "设置时间"}
+              {editing ? t("收起时间") : t("设置时间")}
             </button>
             {onDelete && (
               <button
                 type="button"
                 onClick={onDelete}
-                aria-label="删除日期提醒"
+                aria-label={t("删除日期提醒")}
                 className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-hover hover:text-destructive"
               >
                 <Trash2 size={12} />
@@ -220,7 +222,7 @@ export function ReminderBlockView({
               data-reminder-preset="today"
               className="h-6 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
             >
-              今天
+              {t("今天")}
             </button>
             <button
               type="button"
@@ -228,7 +230,7 @@ export function ReminderBlockView({
               data-reminder-preset="tomorrow"
               className="h-6 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
             >
-              明天
+              {t("明天")}
             </button>
             <button
               type="button"
@@ -236,7 +238,7 @@ export function ReminderBlockView({
               data-reminder-preset="nextweek"
               className="h-6 rounded border bg-surface px-2 text-[11px] hover:bg-hover"
             >
-              下周
+              {t("下周")}
             </button>
           </div>
         </div>

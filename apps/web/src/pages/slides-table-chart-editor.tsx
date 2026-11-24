@@ -1,6 +1,7 @@
 import { BarChart3, Play, Plus, Sparkles, Table2, Trash2 } from "lucide-react";
 import type { SlideShape, SlideShapeAnimation, SlideShapeAnimationEffect, SlideShapeAnimationTrigger } from "@/lib/api";
 import { FeishuSelect } from "@/components/feishu-select";
+import { t, useI18n } from "@/lib/i18n";
 import {
   DEFAULT_SLIDE_ANIMATION_DURATION_MS,
   SLIDE_ANIMATION_OPTIONS,
@@ -15,11 +16,11 @@ export const SLIDE_CHART_PALETTE = [
   "#f53f3f",
 ] as const;
 
-export const SLIDE_CHART_TYPE_OPTIONS = [
-  { value: "bar", label: "柱状图" },
-  { value: "line", label: "折线图" },
-  { value: "pie", label: "饼图" },
-] as const;
+export const SLIDE_CHART_TYPE_OPTIONS: readonly { readonly value: "bar" | "line" | "pie"; readonly label: string }[] = [
+  { value: "bar", get label() { return t("柱状图"); } },
+  { value: "line", get label() { return t("折线图"); } },
+  { value: "pie", get label() { return t("饼图"); } },
+];
 
 export const MAX_TABLE_ROWS = 12;
 export const MAX_TABLE_COLS = 8;
@@ -32,9 +33,9 @@ export type SlideChartData = NonNullable<SlideShape["chart"]>;
 export function createDefaultSlideTable(): SlideTableData {
   return {
     rows: [
-      ["项目", "指标", "进展"],
-      ["研发效率", "92%", "已完成"],
-      ["客户增长", "+34%", "进行中"],
+      [t("项目"), t("指标"), t("进展")],
+      [t("研发效率"), "92%", t("已完成")],
+      [t("客户增长"), "+34%", t("进行中")],
     ],
     headerRow: true,
     headerFill: "#edf2ff",
@@ -45,11 +46,11 @@ export function createDefaultSlideTable(): SlideTableData {
 export function createDefaultSlideChart(): SlideChartData {
   return {
     type: "bar",
-    title: "季度业绩概览",
+    title: t("季度业绩概览"),
     categories: ["Q1", "Q2", "Q3"],
     series: [
       {
-        name: "完成值",
+        name: t("完成值"),
         values: [68, 92, 118],
         color: SLIDE_CHART_PALETTE[0],
       },
@@ -92,7 +93,7 @@ export function addTableCol(table: SlideTableData): SlideTableData {
   if (cols >= MAX_TABLE_COLS) return { ...table, rows };
   return {
     ...table,
-    rows: rows.map((row, ri) => [...row, ri === 0 ? `列 ${cols + 1}` : ""]),
+    rows: rows.map((row, ri) => [...row, ri === 0 ? t("列 {n}", { n: cols + 1 }) : ""]),
   };
 }
 
@@ -126,12 +127,13 @@ export function SlideChartSvg({
   chart?: SlideChartData;
   className?: string;
 }) {
+  const { t } = useI18n();
   const safeChart: SlideChartData = chart ?? createDefaultSlideChart();
   const chartType = safeChart.type === "column" ? "bar" : safeChart.type;
   const categories = safeChart.categories.length > 0 ? safeChart.categories : ["A", "B", "C"];
   const series = safeChart.series.length > 0
     ? safeChart.series
-    : [{ name: "系列 1", values: categories.map(() => 0), color: SLIDE_CHART_PALETTE[0] }];
+    : [{ name: t("系列 {n}", { n: 1 }), values: categories.map(() => 0), color: SLIDE_CHART_PALETTE[0] }];
 
   const W = 400;
   const H = 240;
@@ -140,11 +142,11 @@ export function SlideChartSvg({
   const legendItems =
     chartType === "pie"
       ? categories.map((cat, idx) => ({
-          label: cat || `分类 ${idx + 1}`,
+          label: cat || t("分类 {n}", { n: idx + 1 }),
           color: SLIDE_CHART_PALETTE[idx % SLIDE_CHART_PALETTE.length],
         }))
       : series.map((s, idx) => ({
-          label: s.name || `系列 ${idx + 1}`,
+          label: s.name || t("系列 {n}", { n: idx + 1 }),
           color: s.color || SLIDE_CHART_PALETTE[idx % SLIDE_CHART_PALETTE.length],
         }));
   const showLegend = legendItems.length > 0;
@@ -177,7 +179,7 @@ export function SlideChartSvg({
         viewBox={`0 0 ${W} ${H}`}
         className="block h-full w-full"
         role="img"
-        aria-label={titleText || "幻灯片图表"}
+        aria-label={titleText || t("幻灯片图表")}
       >
         <rect x="0" y="0" width={W} height={H} fill="#ffffff" />
 
@@ -211,7 +213,7 @@ export function SlideChartSvg({
                 <g>
                   <circle cx={cx} cy={cy} r={radius} fill="#f2f3f5" stroke="#dee0e3" strokeWidth="1.5" />
                   <text x={cx} y={cy + 4} textAnchor="middle" fill="#8f959e" fontSize="11">
-                    暂无数据
+                    {t("暂无数据")}
                   </text>
                 </g>
               );
@@ -333,7 +335,7 @@ export function SlideChartSvg({
                   fill="#646a73"
                   fontSize="10"
                 >
-                  {truncateLabel(cat || `类 ${ci + 1}`, 8)}
+                  {truncateLabel(cat || t("类 {n}", { n: ci + 1 }), 8)}
                 </text>
               );
             })}
@@ -482,6 +484,7 @@ export function SlideTableEditor({
   canEdit: boolean;
   onChange: (patch: Partial<SlideShape>) => void;
 }) {
+  const { t } = useI18n();
   const table: SlideTableData = shape.table ?? createDefaultSlideTable();
   const rows = normalizeTableRows(table);
   const rowCount = rows.length;
@@ -504,7 +507,7 @@ export function SlideTableEditor({
       <div className="mb-2.5 flex items-center justify-between">
         <div className="flex items-center gap-1.5 font-medium text-[#1f2329]">
           <Table2 size={14} className="text-[#3370ff]" />
-          <span>表格数据</span>
+          <span>{t("表格数据")}</span>
         </div>
         <span className="rounded bg-[#f2f3f5] px-1.5 py-0.5 text-[11px] tabular-nums text-[#646a73]">
           {rowCount} × {colCount}
@@ -519,7 +522,7 @@ export function SlideTableEditor({
           onClick={() => commitTable(addTableRow(table))}
           className="h-7 rounded border border-[#dee0e3] bg-white text-[11px] text-[#1f2329] hover:bg-[#f2f3f5] disabled:opacity-40"
         >
-          + 行
+          {t("+ 行")}
         </button>
         <button
           type="button"
@@ -528,7 +531,7 @@ export function SlideTableEditor({
           onClick={() => commitTable(addTableCol(table))}
           className="h-7 rounded border border-[#dee0e3] bg-white text-[11px] text-[#1f2329] hover:bg-[#f2f3f5] disabled:opacity-40"
         >
-          + 列
+          {t("+ 列")}
         </button>
         <button
           type="button"
@@ -537,7 +540,7 @@ export function SlideTableEditor({
           onClick={() => commitTable(removeTableRow(table))}
           className="h-7 rounded border border-[#dee0e3] bg-white text-[11px] text-[#646a73] hover:bg-[#fff2f0] hover:text-[#d83931] disabled:opacity-40"
         >
-          - 末行
+          {t("- 末行")}
         </button>
         <button
           type="button"
@@ -546,7 +549,7 @@ export function SlideTableEditor({
           onClick={() => commitTable(removeTableCol(table))}
           className="h-7 rounded border border-[#dee0e3] bg-white text-[11px] text-[#646a73] hover:bg-[#fff2f0] hover:text-[#d83931] disabled:opacity-40"
         >
-          - 末列
+          {t("- 末列")}
         </button>
       </div>
 
@@ -560,7 +563,7 @@ export function SlideTableEditor({
                     <input
                       type="text"
                       maxLength={500}
-                      aria-label={`表格第 ${ri + 1} 行第 ${ci + 1} 列`}
+                      aria-label={t("表格第 {row} 行第 {col} 列", { row: ri + 1, col: ci + 1 })}
                       data-slide-table-cell={`${ri}-${ci}`}
                       disabled={!canEdit}
                       value={cell}
@@ -592,12 +595,13 @@ export function SlideChartEditor({
   canEdit: boolean;
   onChange: (patch: Partial<SlideShape>) => void;
 }) {
+  const { t } = useI18n();
   const chart: SlideChartData = shape.chart ?? createDefaultSlideChart();
   const normalizedType = chart.type === "column" ? "bar" : chart.type;
   const categories = chart.categories.length > 0 ? chart.categories : ["Q1"];
   const series = chart.series.length > 0
     ? chart.series
-    : [{ name: "系列 1", values: categories.map(() => 0), color: SLIDE_CHART_PALETTE[0] }];
+    : [{ name: t("系列 {n}", { n: 1 }), values: categories.map(() => 0), color: SLIDE_CHART_PALETTE[0] }];
 
   const commitChart = (next: SlideChartData) => {
     if (!canEdit) return;
@@ -644,7 +648,7 @@ export function SlideChartEditor({
       series: [
         ...series,
         {
-          name: `系列 ${idx + 1}`,
+          name: t("系列 {n}", { n: idx + 1 }),
           values: categories.map(() => 40 + idx * 15),
           color: SLIDE_CHART_PALETTE[idx % SLIDE_CHART_PALETTE.length],
         },
@@ -684,14 +688,14 @@ export function SlideChartEditor({
     <div className="mb-5 border-b border-[#e5e6eb] pb-4" data-slide-chart-editor>
       <div className="mb-3 flex items-center gap-1.5 font-medium text-[#1f2329]">
         <BarChart3 size={14} className="text-[#3370ff]" />
-        <span>图表配置</span>
+        <span>{t("图表配置")}</span>
       </div>
 
       <div className="flex h-9 items-center justify-between gap-2">
-        <span className="text-[#4e5969]">图表类型</span>
+        <span className="text-[#4e5969]">{t("图表类型")}</span>
         <FeishuSelect
-          ariaLabel="图表类型"
-          title="图表类型"
+          ariaLabel={t("图表类型")}
+          title={t("图表类型")}
           value={normalizedType}
           options={SLIDE_CHART_TYPE_OPTIONS}
           disabled={!canEdit}
@@ -704,23 +708,23 @@ export function SlideChartEditor({
       </div>
 
       <label className="mt-2 block">
-        <span className="mb-1 block text-[12px] text-[#4e5969]">图表标题</span>
+        <span className="mb-1 block text-[12px] text-[#4e5969]">{t("图表标题")}</span>
         <input
           type="text"
           maxLength={120}
-          aria-label="图表标题"
+          aria-label={t("图表标题")}
           data-slide-chart-title
           disabled={!canEdit}
           value={chart.title ?? ""}
           onChange={(e) => commitChart({ ...chart, title: e.target.value })}
-          placeholder="输入图表标题"
+          placeholder={t("输入图表标题")}
           className="h-8 w-full rounded-md border border-[#dee0e3] bg-white px-2 text-[12px] text-[#1f2329] outline-none focus:border-[#3370ff] disabled:opacity-40"
         />
       </label>
 
       <div className="mt-3">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[12px] font-medium text-[#4e5969]">分类项</span>
+          <span className="text-[12px] font-medium text-[#4e5969]">{t("分类项")}</span>
           <button
             type="button"
             data-slide-chart-add-category
@@ -729,7 +733,7 @@ export function SlideChartEditor({
             className="inline-flex h-6 items-center gap-0.5 rounded border border-[#dee0e3] px-1.5 text-[11px] text-[#3370ff] hover:bg-[#f0f5ff] disabled:opacity-40"
           >
             <Plus size={11} />
-            <span>分类</span>
+            <span>{t("分类")}</span>
           </button>
         </div>
         <div className="space-y-1">
@@ -737,7 +741,7 @@ export function SlideChartEditor({
             <div key={ci} className="flex items-center gap-1">
               <input
                 type="text"
-                aria-label={`分类 ${ci + 1}`}
+                aria-label={t("分类 {n}", { n: ci + 1 })}
                 data-slide-chart-category={ci}
                 disabled={!canEdit}
                 value={cat}
@@ -747,7 +751,7 @@ export function SlideChartEditor({
               {categories.length > 1 && (
                 <button
                   type="button"
-                  aria-label={`删除分类 ${ci + 1}`}
+                  aria-label={t("删除分类 {n}", { n: ci + 1 })}
                   disabled={!canEdit}
                   onClick={() => removeCategory(ci)}
                   className="grid size-7 shrink-0 place-items-center rounded text-[#8f959e] hover:bg-[#fff2f0] hover:text-[#d83931] disabled:opacity-40"
@@ -762,7 +766,7 @@ export function SlideChartEditor({
 
       <div className="mt-3">
         <div className="mb-1.5 flex items-center justify-between">
-          <span className="text-[12px] font-medium text-[#4e5969]">数据系列</span>
+          <span className="text-[12px] font-medium text-[#4e5969]">{t("数据系列")}</span>
           <button
             type="button"
             data-slide-chart-add-series
@@ -771,7 +775,7 @@ export function SlideChartEditor({
             className="inline-flex h-6 items-center gap-0.5 rounded border border-[#dee0e3] px-1.5 text-[11px] text-[#3370ff] hover:bg-[#f0f5ff] disabled:opacity-40"
           >
             <Plus size={11} />
-            <span>系列</span>
+            <span>{t("系列")}</span>
           </button>
         </div>
         <div className="space-y-2">
@@ -788,7 +792,7 @@ export function SlideChartEditor({
                   <input
                     type="text"
                     maxLength={80}
-                    aria-label={`系列 ${si + 1} 名称`}
+                    aria-label={t("系列 {n} 名称", { n: si + 1 })}
                     data-slide-chart-series-name={si}
                     disabled={!canEdit}
                     value={s.name}
@@ -798,7 +802,7 @@ export function SlideChartEditor({
                   {series.length > 1 && (
                     <button
                       type="button"
-                      aria-label={`删除系列 ${si + 1}`}
+                      aria-label={t("删除系列 {n}", { n: si + 1 })}
                       disabled={!canEdit}
                       onClick={() => removeSeries(si)}
                       className="grid size-6 shrink-0 place-items-center rounded text-[#8f959e] hover:bg-[#fff2f0] hover:text-[#d83931] disabled:opacity-40"
@@ -810,10 +814,10 @@ export function SlideChartEditor({
                 <div className="grid grid-cols-3 gap-1">
                   {categories.map((cat, ci) => (
                     <label key={ci} className="flex flex-col gap-0.5">
-                      <span className="truncate text-[10px] text-[#8f959e]">{cat || `类 ${ci + 1}`}</span>
+                      <span className="truncate text-[10px] text-[#8f959e]">{cat || t("类 {n}", { n: ci + 1 })}</span>
                       <input
                         type="number"
-                        aria-label={`${s.name || `系列 ${si + 1}`} - ${cat || `分类 ${ci + 1}`}`}
+                        aria-label={`${s.name || t("系列 {n}", { n: si + 1 })} - ${cat || t("分类 {n}", { n: ci + 1 })}`}
                         data-slide-chart-value={`${si}-${ci}`}
                         disabled={!canEdit}
                         value={s.values[ci] ?? 0}
@@ -850,10 +854,43 @@ export function SlideElementAnimationControls({
   onChange: (anim: SlideShapeAnimation | null) => void;
   onPreview?: (shapeId: string, anim: SlideShapeAnimation) => void;
 }) {
+  const { t } = useI18n();
   const effectValue = animation?.effect ?? "none";
   const triggerValue: SlideShapeAnimationTrigger = animation?.trigger ?? "click";
   const orderValue = animation?.order ?? defaultOrder;
   const durationValue = animation?.durationMs ?? DEFAULT_SLIDE_ANIMATION_DURATION_MS;
+
+  const animationOptions = SLIDE_ANIMATION_OPTIONS.map((opt) => ({
+    value: opt.value,
+    label:
+      opt.value === "none"
+        ? t("无动画")
+        : opt.value === "fade-in"
+          ? t("淡入")
+          : opt.value === "slide-up"
+            ? t("上浮入场")
+            : opt.value === "zoom-in"
+              ? t("缩放出现")
+              : opt.value === "bounce"
+                ? t("弹性强调")
+                : opt.value === "pulse"
+                  ? t("脉冲高亮")
+                  : opt.value === "fade-out"
+                    ? t("淡出")
+                    : opt.label,
+  }));
+
+  const triggerOptions = SLIDE_ANIMATION_TRIGGER_OPTIONS.map((opt) => ({
+    value: opt.value,
+    label:
+      opt.value === "click"
+        ? t("点击触发")
+        : opt.value === "with_prev"
+          ? t("与上一动画同时")
+          : opt.value === "after_prev"
+            ? t("上一动画之后")
+            : opt.label,
+  }));
 
   const handleEffectChange = (val: string) => {
     if (!canEdit) return;
@@ -873,7 +910,7 @@ export function SlideElementAnimationControls({
     <div className="mb-5 border-b border-[#e5e6eb] pb-4" data-slide-element-animation-section>
       <div className="mb-3 flex items-center gap-1.5 font-medium text-[#1f2329]">
         <Sparkles size={14} className="text-[#3370ff]" />
-        <span>元素动画</span>
+        <span>{t("元素动画")}</span>
         {animation && (
           <span className="ml-auto grid size-5 place-items-center rounded-full bg-[#3370ff] text-[10px] font-semibold tabular-nums text-white">
             {animation.order}
@@ -882,12 +919,12 @@ export function SlideElementAnimationControls({
       </div>
 
       <div className="flex h-9 items-center justify-between gap-2">
-        <span className="text-[#4e5969]">动画效果</span>
+        <span className="text-[#4e5969]">{t("动画效果")}</span>
         <FeishuSelect
-          ariaLabel="元素动画效果"
-          title="元素动画效果"
+          ariaLabel={t("元素动画效果")}
+          title={t("元素动画效果")}
           value={effectValue}
-          options={SLIDE_ANIMATION_OPTIONS}
+          options={animationOptions}
           disabled={!canEdit}
           onChange={handleEffectChange}
           className="h-8 w-[132px] border border-[#dee0e3] px-2 text-[12px]"
@@ -900,12 +937,12 @@ export function SlideElementAnimationControls({
       {animation && (
         <>
           <div className="mt-2 flex h-9 items-center justify-between gap-2">
-            <span className="text-[#4e5969]">触发方式</span>
+            <span className="text-[#4e5969]">{t("触发方式")}</span>
             <FeishuSelect
-              ariaLabel="元素动画触发方式"
-              title="元素动画触发方式"
+              ariaLabel={t("元素动画触发方式")}
+              title={t("元素动画触发方式")}
               value={triggerValue}
-              options={SLIDE_ANIMATION_TRIGGER_OPTIONS}
+              options={triggerOptions}
               disabled={!canEdit}
               onChange={(val) =>
                 onChange({
@@ -922,10 +959,10 @@ export function SlideElementAnimationControls({
 
           <div className="mt-2 grid grid-cols-2 gap-2">
             <label className="flex items-center justify-between gap-1.5 rounded-md border border-[#dee0e3] bg-white px-2 py-1">
-              <span className="text-[11px] text-[#646a73]">顺序</span>
+              <span className="text-[11px] text-[#646a73]">{t("顺序")}</span>
               <input
                 type="number"
-                aria-label="动画顺序"
+                aria-label={t("动画顺序")}
                 data-slide-elem-anim-order
                 disabled={!canEdit}
                 min={1}
@@ -941,10 +978,10 @@ export function SlideElementAnimationControls({
               />
             </label>
             <label className="flex items-center justify-between gap-1 rounded-md border border-[#dee0e3] bg-white px-2 py-1">
-              <span className="text-[11px] text-[#646a73]">时长</span>
+              <span className="text-[11px] text-[#646a73]">{t("时长")}</span>
               <input
                 type="number"
-                aria-label="动画时长(毫秒)"
+                aria-label={t("动画时长(毫秒)")}
                 data-slide-elem-anim-duration
                 disabled={!canEdit}
                 min={100}
@@ -975,7 +1012,7 @@ export function SlideElementAnimationControls({
         className="mt-2.5 flex h-8 w-full items-center justify-center gap-1 rounded-md border border-[#dee0e3] text-[12px] hover:bg-[#f2f3f5] disabled:opacity-40"
       >
         <Play size={12} />
-        <span>预览动画</span>
+        <span>{t("预览动画")}</span>
       </button>
     </div>
   );

@@ -3,11 +3,13 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp, CheckCircle2, ClipboardList, Star } from "lucide-react";
 import { ApiError, surveysApi, type SurveyQuestion } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { computeVisibleSurveyQuestions } from "./skip-logic";
 import { SignaturePad } from "./signature-pad";
 
 export function PublicSurveyPage({ token }: { token: string }) {
+  const { t } = useI18n();
   const [respondentName, setRespondentName] = useState("");
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -46,14 +48,14 @@ export function PublicSurveyPage({ token }: { token: string }) {
       await surveysApi.submitPublic(token, { respondentName: respondentName.trim(), answers: payload });
       setSubmitted(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "提交问卷失败");
+      setError(err instanceof Error ? err.message : t("提交问卷失败"));
     } finally {
       setSubmitting(false);
     }
   };
 
   if (query.isPending) {
-    return <div className="grid min-h-full place-items-center bg-[#F5F6F7] p-6 text-sm text-muted-foreground">正在加载问卷…</div>;
+    return <div className="grid min-h-full place-items-center bg-[#F5F6F7] p-6 text-sm text-muted-foreground">{t("正在加载问卷…")}</div>;
   }
 
   if (query.isError) {
@@ -62,9 +64,9 @@ export function PublicSurveyPage({ token }: { token: string }) {
       <div className="grid min-h-full place-items-center bg-[#F5F6F7] p-6">
         <div className="max-w-md rounded-xl border bg-surface p-8 text-center shadow-xs">
           <ClipboardList size={36} className="mx-auto mb-3 text-muted-foreground" />
-          <h1 className="text-[18px] font-semibold text-foreground">{closed ? "该问卷已停止收集" : "问卷不可访问"}</h1>
+          <h1 className="text-[18px] font-semibold text-foreground">{closed ? t("该问卷已停止收集") : t("问卷不可访问")}</h1>
           <p className="mt-2 text-[13px] text-muted-foreground">
-            {closed ? "创建者已关闭此问卷的答卷回收。" : "链接可能已失效或问卷尚未发布。"}
+            {closed ? t("创建者已关闭此问卷的答卷回收。") : t("链接可能已失效或问卷尚未发布。")}
           </p>
         </div>
       </div>
@@ -77,8 +79,8 @@ export function PublicSurveyPage({ token }: { token: string }) {
       <div className="grid min-h-full place-items-center bg-[#F5F6F7] p-6" data-survey-submitted>
         <div className="w-full max-w-md rounded-xl border bg-surface p-8 text-center shadow-xs">
           <CheckCircle2 size={44} className="mx-auto mb-3 text-emerald-600" />
-          <h1 className="text-[20px] font-semibold text-foreground">提交成功，感谢参与！</h1>
-          <p className="mt-2 text-[13px] text-muted-foreground">您的问卷答复已安全记录。</p>
+          <h1 className="text-[20px] font-semibold text-foreground">{t("提交成功，感谢参与！")}</h1>
+          <p className="mt-2 text-[13px] text-muted-foreground">{t("您的问卷答复已安全记录。")}</p>
         </div>
       </div>
     );
@@ -88,8 +90,8 @@ export function PublicSurveyPage({ token }: { token: string }) {
     return (
       <div className="grid min-h-full place-items-center bg-[#F5F6F7] p-6">
         <div className="max-w-md rounded-xl border bg-surface p-8 text-center shadow-xs">
-          <h1 className="text-[18px] font-semibold text-foreground">该问卷已达到回收上限</h1>
-          <p className="mt-2 text-[13px] text-muted-foreground">感谢您的关注！</p>
+          <h1 className="text-[18px] font-semibold text-foreground">{t("该问卷已达到回收上限")}</h1>
+          <p className="mt-2 text-[13px] text-muted-foreground">{t("感谢您的关注！")}</p>
         </div>
       </div>
     );
@@ -182,7 +184,7 @@ export function PublicSurveyPage({ token }: { token: string }) {
             <table className="w-full border-collapse text-[13px]">
               <thead>
                 <tr className="border-b bg-muted/40">
-                  <th className="p-2 text-left font-medium">评估维度</th>
+                  <th className="p-2 text-left font-medium">{t("评估维度")}</th>
                   {(q.matrixCols ?? []).map((col) => (
                     <th key={col} className="p-2 text-center font-medium">{col}</th>
                   ))}
@@ -243,7 +245,7 @@ export function PublicSurveyPage({ token }: { token: string }) {
             rows={3}
             value={typeof val === "string" ? val : ""}
             onChange={(e) => setAnswer(q.id, e.target.value)}
-            placeholder="请输入您的回答…"
+            placeholder={t("请输入您的回答…")}
             data-public-text={q.id}
             className="w-full resize-none rounded-lg border bg-background p-3 text-[14px] outline-none focus:border-violet-500"
           />
@@ -262,7 +264,7 @@ export function PublicSurveyPage({ token }: { token: string }) {
               type="text"
               value={respondentName}
               onChange={(e) => setRespondentName(e.target.value)}
-              placeholder="您的称呼（选填）"
+              placeholder={t("您的称呼（选填）")}
               data-public-respondent-name
               className="h-9 w-full max-w-xs rounded-md border bg-background px-3 text-[13px] outline-none focus:border-violet-500"
             />
@@ -290,7 +292,7 @@ export function PublicSurveyPage({ token }: { token: string }) {
             data-public-survey-submit
             className="h-11 w-full max-w-xs bg-violet-600 text-[15px] font-medium text-white hover:bg-violet-700"
           >
-            {submitting ? "正在提交…" : "提交问卷"}
+            {submitting ? t("正在提交…") : t("提交问卷")}
           </Button>
         </div>
       </form>

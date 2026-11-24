@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { MenuItem } from "./pinyin";
 import { MenuGlyph } from "./menu-icons";
@@ -84,6 +85,7 @@ export function SlashMenu({
   onColumnCountPick?: (count: number) => void;
   onColumnCountClose?: () => void;
 }) {
+  const { t } = useI18n();
   const listRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLButtonElement>(null);
   const columnRef = useRef<HTMLButtonElement>(null);
@@ -158,11 +160,11 @@ export function SlashMenu({
     <div className="absolute z-30 w-[232px] max-w-[calc(100vw-16px)]" style={{ left: x + placement.dx, top: y + placement.dy }} onMouseDown={(e) => e.preventDefault()} data-slash-menu>
       {/* 飞书实测：宽 232、#D9DBDF 描边、内边距 8、分组标题 40 高（含上内边距）、行高 32、图标 20 距行左 8、文字距图标 16、选中 #EDEDEE。 */}
       <div ref={listRef} style={{ maxHeight: placement.maxHeight }} className={cn("overflow-y-auto rounded-lg border border-[#D9DBDF] bg-surface px-2 pb-2 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", (tableSize || columnCount) && "max-sm:invisible")}>
-        {query && <div className="flex h-8 items-end px-1 pb-1 text-[12px] text-subtle">搜索：{query}</div>}
-        {items.length === 0 && <div className="px-2 py-3 text-[13px] text-subtle">没有匹配的块</div>}
+        {query && <div className="flex h-8 items-end px-1 pb-1 text-[12px] text-subtle">{t("搜索：{query}", { query })}</div>}
+        {items.length === 0 && <div className="px-2 py-3 text-[13px] text-subtle">{t("没有匹配的块")}</div>}
         {groups.map((g) => (
           <div key={g}>
-            <div className="flex h-10 items-center px-1 pt-1 text-[12px] text-subtle">{g}</div>
+            <div className="flex h-10 items-center px-1 pt-1 text-[12px] text-subtle">{t(g)}</div>
             {items
               .filter((i) => i.group === g)
               .map((it) => {
@@ -197,7 +199,7 @@ export function SlashMenu({
                     >
                       <MenuGlyph id={it.id} fallback={it.icon} size={18} />
                     </span>
-                    <span className="flex-1 truncate">{it.label}</span>
+                    <span className="flex-1 truncate">{it.id.startsWith("doc:") || it.id.startsWith("ref:") || it.id.startsWith("user:") ? it.label : t(it.label)}</span>
                     {(it.id === "table" && onTableOpen || it.id === "columns" && onColumnOpen) && <ChevronRight size={14} className="text-subtle" />}
                   </button>
                 );

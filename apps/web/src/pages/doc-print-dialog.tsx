@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { FileDown, Printer, RotateCcw, X } from "lucide-react";
 import type { Comment } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export type PrintPaperSize = "a4" | "letter";
@@ -126,6 +127,7 @@ export function DocPrintDialog({
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -142,16 +144,16 @@ export function DocPrintDialog({
       footerText: defaultFooterText,
     });
 
-  const displayTitle = title.trim() || "未命名文档";
+  const displayTitle = title.trim() || t("未命名文档");
   const effectiveHeader = settings.headerText.trim() || displayTitle;
-  const effectiveFooter = settings.footerText.trim() || "鉴格云文档";
+  const effectiveFooter = settings.footerText.trim() || t("鉴格云文档");
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 sm:p-4"
       role="dialog"
       aria-modal="true"
-      aria-label="打印与导出 PDF 设置"
+      aria-label={t("打印与导出 PDF 设置")}
       data-doc-print-dialog
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
@@ -161,12 +163,12 @@ export function DocPrintDialog({
         <div className="flex items-center justify-between border-b px-5 py-3.5">
           <div className="flex items-center gap-2">
             <Printer className="size-4 text-primary" />
-            <h2 className="text-[15px] font-semibold text-foreground">打印 / 导出 PDF 设置</h2>
+            <h2 className="text-[15px] font-semibold text-foreground">{t("打印 / 导出 PDF 设置")}</h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="关闭打印设置"
+            aria-label={t("关闭打印设置")}
             className="grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground"
             data-doc-print-close
           >
@@ -178,7 +180,7 @@ export function DocPrintDialog({
           {/* Left: print parameters */}
           <div className="space-y-4 border-b p-5 md:border-b-0 md:border-r">
             <div>
-              <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">纸张大小</div>
+              <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">{t("纸张大小")}</div>
               <div className="grid grid-cols-2 gap-2">
                 {([
                   { value: "a4", label: "A4", sub: "210×297 mm" },
@@ -205,11 +207,11 @@ export function DocPrintDialog({
             </div>
 
             <div>
-              <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">页面方向</div>
+              <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">{t("页面方向")}</div>
               <div className="grid grid-cols-2 gap-2">
                 {([
-                  { value: "portrait", label: "纵向" },
-                  { value: "landscape", label: "横向" },
+                  { value: "portrait", label: t("纵向") },
+                  { value: "landscape", label: t("横向") },
                 ] as const).map((item) => (
                   <button
                     key={item.value}
@@ -231,12 +233,12 @@ export function DocPrintDialog({
             </div>
 
             <div>
-              <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">页边距</div>
+              <div className="mb-1.5 text-[12px] font-medium text-muted-foreground">{t("页边距")}</div>
               <div className="grid grid-cols-3 gap-1.5">
                 {([
-                  { value: "narrow", label: "窄边距" },
-                  { value: "normal", label: "标准" },
-                  { value: "wide", label: "宽边距" },
+                  { value: "narrow", label: t("窄边距") },
+                  { value: "normal", label: t("标准") },
+                  { value: "wide", label: t("宽边距") },
                 ] as const).map((item) => (
                   <button
                     key={item.value}
@@ -271,7 +273,7 @@ export function DocPrintDialog({
                   className="size-4 rounded border-border accent-primary"
                   data-print-header-toggle
                 />
-                <span>显示页眉</span>
+                <span>{t("显示页眉")}</span>
               </label>
               {settings.showHeader && (
                 <input
@@ -280,7 +282,7 @@ export function DocPrintDialog({
                   onChange={(event) => update({ headerText: event.target.value })}
                   placeholder={displayTitle}
                   maxLength={120}
-                  aria-label="页眉文本"
+                  aria-label={t("页眉文本")}
                   data-print-header-input
                   className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none focus:border-primary"
                 />
@@ -299,16 +301,16 @@ export function DocPrintDialog({
                   className="size-4 rounded border-border accent-primary"
                   data-print-footer-toggle
                 />
-                <span>显示页脚</span>
+                <span>{t("显示页脚")}</span>
               </label>
               {settings.showFooter && (
                 <input
                   type="text"
                   value={settings.footerText}
                   onChange={(event) => update({ footerText: event.target.value })}
-                  placeholder="鉴格云文档"
+                  placeholder={t("鉴格云文档")}
                   maxLength={120}
-                  aria-label="页脚文本"
+                  aria-label={t("页脚文本")}
                   data-print-footer-input
                   className="w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[13px] outline-none focus:border-primary"
                 />
@@ -325,14 +327,14 @@ export function DocPrintDialog({
                     className="size-4 rounded border-border accent-primary"
                     data-print-comments-toggle
                   />
-                  <span>导出评论附录</span>
+                  <span>{t("导出评论附录")}</span>
                 </span>
                 <span className="rounded-full bg-hover px-2 py-0.5 text-[11px] text-muted-foreground">
-                  {commentCount} 条
+                  {t("{count} 条", { count: commentCount })}
                 </span>
               </label>
               <p className="mt-1 pl-6 text-[11px] text-muted-foreground">
-                将文档评论及回复汇总附在正文末尾，便于评审归档。
+                {t("将文档评论及回复汇总附在正文末尾，便于评审归档。")}
               </p>
             </div>
           </div>
@@ -340,10 +342,10 @@ export function DocPrintDialog({
           {/* Right: live scaled paper preview */}
           <div className="flex flex-col items-center justify-between gap-4 bg-[#F5F6F7] p-5 dark:bg-hover/30" data-print-preview>
             <div className="flex w-full items-center justify-between text-[12px] text-muted-foreground">
-              <span>版式预览</span>
+              <span>{t("版式预览")}</span>
               <span>
-                {PAPER_CSS[settings.paper]} · {settings.orientation === "landscape" ? "横向" : "纵向"} ·{" "}
-                {settings.margins === "narrow" ? "窄边距" : settings.margins === "wide" ? "宽边距" : "标准边距"}
+                {PAPER_CSS[settings.paper]} · {settings.orientation === "landscape" ? t("横向") : t("纵向")} ·{" "}
+                {settings.margins === "narrow" ? t("窄边距") : settings.margins === "wide" ? t("宽边距") : t("标准边距")}
               </span>
             </div>
 
@@ -365,7 +367,7 @@ export function DocPrintDialog({
                   {displayTitle}
                 </div>
                 <div className="mt-2 space-y-1.5">
-                  {(previewLines.length ? previewLines : [{ kind: "paragraph" as const, text: "文档正文内容将按所选纸张尺寸与边距自动分页排版…" }]).slice(0, settings.orientation === "landscape" ? (settings.includeComments ? 4 : 5) : 6).map((line, index) => (
+                  {(previewLines.length ? previewLines : [{ kind: "paragraph" as const, text: t("文档正文内容将按所选纸张尺寸与边距自动分页排版…") }]).slice(0, settings.orientation === "landscape" ? (settings.includeComments ? 4 : 5) : 6).map((line, index) => (
                     <div
                       key={index}
                       className={cn(
@@ -382,7 +384,7 @@ export function DocPrintDialog({
                 </div>
                 {settings.includeComments && (
                   <div className="mt-3 rounded border border-dashed border-[#C9CDD4] bg-[#F7F8FA] px-2 py-1 text-[8.5px] text-[#4E5969]" data-print-preview-comments>
-                    评论附录（{commentCount} 条线程）
+                    {t("评论附录（{n} 条线程）", { n: commentCount })}
                   </div>
                 )}
               </div>
@@ -396,7 +398,7 @@ export function DocPrintDialog({
             </div>
 
             <p className="w-full rounded-md bg-surface/80 px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-              提示：点击下方按钮打开系统打印窗口，将目标打印机选为「另存为 PDF」即可输出高清矢量分页 PDF；标题防孤行、表格跨页重复表头与媒体防截断已自动启用。
+              {t("提示：点击下方按钮打开系统打印窗口，将目标打印机选为「另存为 PDF」即可输出高清矢量分页 PDF；标题防孤行、表格跨页重复表头与媒体防截断已自动启用。")}
             </p>
           </div>
         </div>
@@ -409,7 +411,7 @@ export function DocPrintDialog({
             data-doc-print-reset
           >
             <RotateCcw className="size-3.5" />
-            重置默认
+            {t("重置默认")}
           </button>
           <div className="flex items-center gap-2">
             <button
@@ -417,7 +419,7 @@ export function DocPrintDialog({
               onClick={onClose}
               className="rounded-md border border-border px-3.5 py-1.5 text-[13px] text-foreground hover:bg-hover"
             >
-              取消
+              {t("取消")}
             </button>
             <button
               type="button"
@@ -426,7 +428,7 @@ export function DocPrintDialog({
               className="inline-flex items-center gap-1.5 rounded-md bg-[#1456F0] px-4 py-1.5 text-[13px] font-medium text-white hover:bg-[#0F4DD6]"
             >
               <FileDown className="size-4" />
-              打印 / 另存为 PDF
+              {t("打印 / 另存为 PDF")}
             </button>
           </div>
         </div>

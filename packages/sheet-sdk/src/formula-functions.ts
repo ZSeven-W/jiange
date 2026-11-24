@@ -695,8 +695,10 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
         : EMPTY_VAL;
       const tMat = tVal.kind === "array" ? tVal.value : [[tVal]];
       const fMat = fVal.kind === "array" ? fVal.value : [[fVal]];
+      const tCols = tMat[0]?.length ?? 1;
+      const fCols = fMat[0]?.length ?? 1;
       const rows = Math.max(cRows, anyTrue ? tMat.length : 1, anyFalse ? fMat.length : 1);
-      const cols = Math.max(cCols, anyTrue ? (tMat[0]?.length ?? 1) : 1, anyFalse ? (fMat[0]?.length ?? 1) : 1);
+      const cols = Math.max(cCols, anyTrue ? tCols : 1, anyFalse ? fCols : 1);
       const out: EvalValue[][] = [];
       for (let r = 0; r < rows; r++) {
         const line: EvalValue[] = [];
@@ -705,9 +707,9 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
           const b = bools[Math.min(r, cRows - 1)]?.[Math.min(c, cCols - 1)] ?? false;
           if (typeof b !== "boolean") { line.push(b); continue; }
           if (b) {
-            line.push(tMat[Math.min(r, tMat.length - 1)]?.[Math.min(c, (tMat[0]?.length ?? 1) - 1)] ?? EMPTY_VAL);
+            line.push(tMat[Math.min(r, tMat.length - 1)]?.[Math.min(c, tCols - 1)] ?? EMPTY_VAL);
           } else {
-            line.push(fMat[Math.min(r, fMat.length - 1)]?.[Math.min(c, (fMat[0]?.length ?? 1) - 1)] ?? boolVal(false));
+            line.push(fMat[Math.min(r, fMat.length - 1)]?.[Math.min(c, fCols - 1)] ?? boolVal(false));
           }
         }
         out.push(line);
@@ -748,11 +750,12 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
       if (!hasErr) return v;
       const fb = ctx.evalAst(args[1]);
       const fbMat = fb.kind === "array" ? fb.value : [[fb]];
+      const fbCols = fbMat[0]?.length ?? 1;
       return arrVal(
         v.value.map((row, r) =>
           row.map((cell, c) =>
             cell.kind === "error"
-              ? (fbMat[Math.min(r, fbMat.length - 1)]?.[Math.min(c, (fbMat[0]?.length ?? 1) - 1)] ?? EMPTY_VAL)
+              ? (fbMat[Math.min(r, fbMat.length - 1)]?.[Math.min(c, fbCols - 1)] ?? EMPTY_VAL)
               : cell,
           ),
         ),
@@ -768,11 +771,12 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
       if (!hasNa) return v;
       const fb = ctx.evalAst(args[1]);
       const fbMat = fb.kind === "array" ? fb.value : [[fb]];
+      const fbCols = fbMat[0]?.length ?? 1;
       return arrVal(
         v.value.map((row, r) =>
           row.map((cell, c) =>
             cell.kind === "error" && cell.error === "#N/A"
-              ? (fbMat[Math.min(r, fbMat.length - 1)]?.[Math.min(c, (fbMat[0]?.length ?? 1) - 1)] ?? EMPTY_VAL)
+              ? (fbMat[Math.min(r, fbMat.length - 1)]?.[Math.min(c, fbCols - 1)] ?? EMPTY_VAL)
               : cell,
           ),
         ),
@@ -1820,7 +1824,7 @@ export const BUILTIN_FUNCTIONS: Record<string, FormulaFunction> = {
     const baseEnv = ctx.getEnv ? ctx.getEnv() : new Map<string, EvalValue>();
     const localEnv = new Map<string, EvalValue>(baseEnv);
     const evalIn = (node: FormulaAst) =>
-      ctx.evalAstWithEnv ? ctx.evalAstWithEnv(node, localEnv, ctx.arrayMode) : ctx.evalAst(node);
+      ctx.evalAstWithEnv ? ctx.evalAstWithEnv(node, localEnv) : ctx.evalAst(node);
     for (let i = 0; i < args.length - 1; i += 2) {
       const nameNode = args[i];
       if (nameNode.kind !== "name" || !nameNode.name.trim()) return errVal("#VALUE!");

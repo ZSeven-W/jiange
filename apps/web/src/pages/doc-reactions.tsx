@@ -8,6 +8,7 @@ import {
   type DocReactionsResponse,
 } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** Closed Feishu document reaction emoji palette matching server store.DocReactionEmojis. */
@@ -131,6 +132,7 @@ export function DocReactionsBar({
   me: { id: number; name: string };
   readers: readonly DocReaderEntry[];
 }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [readersOpen, setReadersOpen] = useState(false);
@@ -184,7 +186,7 @@ export function DocReactionsBar({
 
   const uniqueReaders: DocReaderEntry[] = [];
   const seen = new Set<number>();
-  for (const r of [{ id: me.id, name: me.name, viewedAt: "刚刚" }, ...readers]) {
+  for (const r of [{ id: me.id, name: me.name, viewedAt: t("刚刚") }, ...readers]) {
     if (seen.has(r.id)) continue;
     seen.add(r.id);
     uniqueReaders.push(r);
@@ -204,7 +206,7 @@ export function DocReactionsBar({
           onClick={() => onToggle("👍")}
           aria-pressed={liked}
           data-doc-like-btn
-          title="点赞"
+          title={t("点赞")}
           className={cn(
             "inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-[12px] transition-colors",
             liked
@@ -214,7 +216,7 @@ export function DocReactionsBar({
         >
           <ThumbsUp size={13} strokeWidth={1.8} />
           <span className={thumbsCount > 0 ? "tabular-nums" : undefined}>
-            {thumbsCount > 0 ? thumbsCount : "赞"}
+            {thumbsCount > 0 ? thumbsCount : t("赞")}
           </span>
         </button>
 
@@ -242,8 +244,8 @@ export function DocReactionsBar({
           <button
             type="button"
             onClick={() => { setReadersOpen(false); setPickerOpen((v) => !v); }}
-            aria-label="添加表情回应"
-            title="添加表情回应"
+            aria-label={t("添加表情回应")}
+            title={t("添加表情回应")}
             aria-expanded={pickerOpen}
             data-doc-reaction-add
             className="grid size-7 place-items-center rounded-full border border-[#E5E6EB] bg-surface text-[#8F959E] transition-colors hover:border-[#D0D3D6] hover:bg-[#F5F6F7] hover:text-[#1F2329] dark:border-border dark:hover:bg-hover"
@@ -253,7 +255,7 @@ export function DocReactionsBar({
           {pickerOpen && (
             <div
               role="menu"
-              aria-label="选择表情回应"
+              aria-label={t("选择表情回应")}
               data-doc-reaction-picker
               className="absolute bottom-9 left-0 z-30 flex items-center gap-0.5 rounded-full border border-[#DEE0E3] bg-surface px-2 py-1 shadow-[0_6px_20px_rgba(31,35,41,0.14)] dark:border-border"
             >
@@ -294,18 +296,18 @@ export function DocReactionsBar({
             ))}
           </span>
           <Eye size={12} strokeWidth={1.7} />
-          <span className="tabular-nums">{viewerCount} 人看过</span>
+          <span className="tabular-nums">{t("{n} 人看过", { n: viewerCount })}</span>
         </button>
         {readersOpen && (
           <div
             role="dialog"
-            aria-label="文档阅读记录"
+            aria-label={t("文档阅读记录")}
             data-doc-readers-pop
             className="absolute bottom-9 right-0 z-30 w-56 rounded-lg border border-[#DEE0E3] bg-surface p-2.5 shadow-[0_6px_24px_rgba(31,35,41,0.14)] dark:border-border"
           >
             <div className="mb-2 flex items-center justify-between px-1 text-[12px] font-medium text-[#1F2329] dark:text-foreground">
-              <span>浏览记录</span>
-              <span className="text-[11px] font-normal text-[#8F959E]">{viewerCount} 人</span>
+              <span>{t("浏览记录")}</span>
+              <span className="text-[11px] font-normal text-[#8F959E]">{t("{n} 人", { n: viewerCount })}</span>
             </div>
             <div className="max-h-48 space-y-1 overflow-y-auto">
               {uniqueReaders.map((r) => (

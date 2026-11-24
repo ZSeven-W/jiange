@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2, X } from "lucide-react";
+import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export type StatusTone = "blue" | "green" | "orange" | "red" | "purple" | "gray";
@@ -29,7 +30,7 @@ const PRESETS: { text: string; color: StatusTone }[] = [
 ];
 
 export function parseStatusItems(raw: string | undefined): StatusTagItem[] {
-  if (!raw) return [{ id: "st-1", text: "进行中", color: "blue" }];
+  if (!raw) return [{ id: "st-1", text: t("进行中"), color: "blue" }];
   try {
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
@@ -37,12 +38,12 @@ export function parseStatusItems(raw: string | undefined): StatusTagItem[] {
         .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
         .map((x, idx) => ({
           id: typeof x.id === "string" && x.id ? x.id : `st-${idx + 1}`,
-          text: typeof x.text === "string" && x.text.trim() ? x.text.trim() : "状态",
+          text: typeof x.text === "string" && x.text.trim() ? x.text.trim() : t("状态"),
           color: (typeof x.color === "string" && x.color in STATUS_TONES ? x.color : "blue") as StatusTone,
         }));
     }
   } catch { /* fall back to default */ }
-  return [{ id: "st-1", text: "进行中", color: "blue" }];
+  return [{ id: "st-1", text: t("进行中"), color: "blue" }];
 }
 
 export function StatusBlockView({
@@ -56,6 +57,7 @@ export function StatusBlockView({
   onChange?: (nextRaw: string) => void;
   onDelete?: () => void;
 }) {
+  const { t } = useI18n();
   const items = parseStatusItems(raw);
   const [editingId, setEditingId] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -111,11 +113,11 @@ export function StatusBlockView({
       {!readOnly && onChange && (
         <button
           type="button"
-          title="添加状态标签"
-          aria-label="添加状态标签"
+          title={t("添加状态标签")}
+          aria-label={t("添加状态标签")}
           onClick={() => {
             const id = `st-${Date.now().toString(36)}`;
-            const next = [...items, { id, text: "待确认", color: "orange" as StatusTone }];
+            const next = [...items, { id, text: t("待确认"), color: "orange" as StatusTone }];
             commit(next);
             setEditingId(id);
           }}
@@ -127,8 +129,8 @@ export function StatusBlockView({
       {!readOnly && onDelete && (
         <button
           type="button"
-          title="删除状态栏"
-          aria-label="删除状态栏"
+          title={t("删除状态栏")}
+          aria-label={t("删除状态栏")}
           onClick={onDelete}
           className="grid size-6 place-items-center rounded-md text-[#8f959e] opacity-0 transition-opacity hover:bg-[#eff0f1] hover:text-destructive group-hover/status:opacity-100"
         >
@@ -139,12 +141,12 @@ export function StatusBlockView({
       {editingItem && !readOnly && onChange && (
         <div
           role="dialog"
-          aria-label="编辑状态标签"
+          aria-label={t("编辑状态标签")}
           className="absolute left-0 top-8 z-40 w-[236px] rounded-lg border border-[#dee0e3] bg-surface p-3 shadow-[0_6px_24px_rgba(31,35,41,0.14)] dark:border-border"
         >
           <div className="mb-2 flex items-center justify-between text-[12px] font-medium text-[#646a73]">
-            <span>状态标签</span>
-            <button type="button" onClick={() => setEditingId(null)} className="text-[#8f959e] hover:text-foreground" aria-label="关闭"><X size={13} /></button>
+            <span>{t("状态标签")}</span>
+            <button type="button" onClick={() => setEditingId(null)} className="text-[#8f959e] hover:text-foreground" aria-label={t("关闭")}><X size={13} /></button>
           </div>
           <input
             autoFocus
@@ -152,20 +154,20 @@ export function StatusBlockView({
             maxLength={24}
             onChange={(e) => commit(items.map((it) => (it.id === editingItem.id ? { ...it, text: e.target.value } : it)))}
             onKeyDown={(e) => { if (e.key === "Enter") setEditingId(null); }}
-            placeholder="输入状态文字"
+            placeholder={t("输入状态文字")}
             className="mb-2.5 h-8 w-full rounded-md border border-[#dee0e3] bg-surface px-2.5 text-[13px] text-foreground outline-none focus:border-[#3370ff]"
           />
           <div className="mb-2.5 flex items-center gap-1.5">
             {(Object.keys(STATUS_TONES) as StatusTone[]).map((toneKey) => {
-              const t = STATUS_TONES[toneKey];
+              const tone = STATUS_TONES[toneKey];
               return (
                 <button
                   key={toneKey}
                   type="button"
-                  title={t.label}
-                  aria-label={t.label}
+                  title={t(tone.label)}
+                  aria-label={t(tone.label)}
                   onClick={() => commit(items.map((it) => (it.id === editingItem.id ? { ...it, color: toneKey } : it)))}
-                  style={{ backgroundColor: t.bg, borderColor: t.fg }}
+                  style={{ backgroundColor: tone.bg, borderColor: tone.fg }}
                   className={cn("size-5 rounded-full border", editingItem.color === toneKey && "ring-2 ring-[#3370ff] ring-offset-1")}
                 />
               );
@@ -173,19 +175,20 @@ export function StatusBlockView({
           </div>
           <div className="mb-2 flex flex-wrap gap-1">
             {PRESETS.map((p) => {
-              const t = STATUS_TONES[p.color];
+              const tone = STATUS_TONES[p.color];
+              const presetLabel = t(p.text);
               return (
                 <button
                   key={p.text}
                   type="button"
                   onClick={() => {
-                    commit(items.map((it) => (it.id === editingItem.id ? { ...it, text: p.text, color: p.color } : it)));
+                    commit(items.map((it) => (it.id === editingItem.id ? { ...it, text: presetLabel, color: p.color } : it)));
                     setEditingId(null);
                   }}
-                  style={{ backgroundColor: t.bg, color: t.fg }}
+                  style={{ backgroundColor: tone.bg, color: tone.fg }}
                   className="rounded px-1.5 py-0.5 text-[11px] font-medium hover:opacity-85"
                 >
-                  {p.text}
+                  {presetLabel}
                 </button>
               );
             })}
@@ -200,7 +203,7 @@ export function StatusBlockView({
               }}
               className="text-[12px] text-[#d83931] hover:underline"
             >
-              移除标签
+              {t("移除标签")}
             </button>
           </div>
         </div>

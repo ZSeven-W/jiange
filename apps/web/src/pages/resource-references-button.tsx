@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Network, RefreshCw, X } from "lucide-react";
 import { navigateDocumentHash } from "@/editor/block-handle";
+import { useI18n } from "@/lib/i18n";
 import {
   fetchDocumentReferenceGraph,
   fetchDocumentReferences,
@@ -27,6 +28,7 @@ export function ResourceReferencesButton({
   docType?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [graphOpen, setGraphOpen] = useState(false);
   const [tab, setTab] = useState<"incoming" | "outgoing">("incoming");
@@ -60,8 +62,8 @@ export function ResourceReferencesButton({
       <button
         type="button"
         data-resource-references-btn
-        aria-label="双向链接与关系图"
-        title="双向链接与关系图"
+        aria-label={t("双向链接与关系图")}
+        title={t("双向链接与关系图")}
         onClick={() => setDrawerOpen(true)}
         className={
           className ??
@@ -69,7 +71,7 @@ export function ResourceReferencesButton({
         }
       >
         <Network size={15} />
-        <span className="hidden md:inline">引用</span>
+        <span className="hidden md:inline">{t("引用")}</span>
       </button>
 
       {drawerOpen && (
@@ -83,13 +85,13 @@ export function ResourceReferencesButton({
           <aside
             role="dialog"
             aria-modal="true"
-            aria-label="双向链接"
+            aria-label={t("双向链接")}
             data-resource-references-drawer
             className="flex h-full w-full max-w-[380px] flex-col bg-surface text-foreground shadow-2xl"
           >
             <div className="flex items-center gap-2 border-b border-border px-4 py-3">
               <Network size={16} className="text-[#3370FF]" />
-              <h2 className="text-[15px] font-medium">双向链接</h2>
+              <h2 className="text-[15px] font-medium">{t("双向链接")}</h2>
               <button
                 type="button"
                 data-open-reference-graph
@@ -100,11 +102,11 @@ export function ResourceReferencesButton({
                 className="ml-auto inline-flex h-7 items-center gap-1 rounded-md border border-border px-2 text-[12px] text-[#3370FF] hover:bg-hover"
               >
                 <Network size={13} />
-                关系图
+                {t("关系图")}
               </button>
               <button
                 type="button"
-                aria-label="刷新双向链接"
+                aria-label={t("刷新双向链接")}
                 disabled={query.isFetching}
                 onClick={() => void query.refetch()}
                 className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover disabled:opacity-40"
@@ -113,7 +115,7 @@ export function ResourceReferencesButton({
               </button>
               <button
                 type="button"
-                aria-label="关闭双向链接"
+                aria-label={t("关闭双向链接")}
                 onClick={() => setDrawerOpen(false)}
                 className="grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover"
               >
@@ -127,31 +129,31 @@ export function ResourceReferencesButton({
                 onClick={() => setTab("incoming")}
                 className={`relative py-2.5 pr-4 ${tab === "incoming" ? "font-medium text-[#3370FF] after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-[#3370FF]" : "text-muted-foreground"}`}
               >
-                反向引用{data ? ` (${data.incoming.length})` : ""}
+                {data ? t("反向引用 ({n})", { n: data.incoming.length }) : t("反向引用")}
               </button>
               <button
                 type="button"
                 onClick={() => setTab("outgoing")}
                 className={`relative px-4 py-2.5 ${tab === "outgoing" ? "font-medium text-[#3370FF] after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-[#3370FF]" : "text-muted-foreground"}`}
               >
-                本页引用{data ? ` (${data.outgoing.length})` : ""}
+                {data ? t("本页引用 ({n})", { n: data.outgoing.length }) : t("本页引用")}
               </button>
             </div>
 
             <div className="flex-1 overflow-auto p-3 text-[13px]">
               {(query.isFetching || query.isPending) && (
                 <p role="status" className="py-6 text-center text-muted-foreground">
-                  正在加载引用关系…
+                  {t("正在加载引用关系…")}
                 </p>
               )}
               {query.isError && !query.isFetching && (
                 <p role="alert" className="py-6 text-center text-muted-foreground">
-                  引用查询未完成，请点击刷新重试。
+                  {t("引用查询未完成，请点击刷新重试。")}
                 </p>
               )}
               {data && tab === "incoming" && (
                 data.incoming.length === 0 ? (
-                  <p className="py-6 text-center text-muted-foreground">暂无其他资源引用当前内容</p>
+                  <p className="py-6 text-center text-muted-foreground">{t("暂无其他资源引用当前内容")}</p>
                 ) : (
                   <div className="space-y-1">
                     {data.incoming.map((item) => {
@@ -174,14 +176,14 @@ export function ResourceReferencesButton({
                               onClick={(e) => openHash(e, href)}
                               className="min-w-0 flex-1 truncate pl-1.5 text-[#3370FF] hover:underline"
                             >
-                              {item.title.trim() || "未命名文档"}
+                              {item.title.trim() || t("未命名文档")}
                             </a>
                             <span className="shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-[11px] text-muted-foreground dark:bg-white/10">
                               {km.short}
                             </span>
                             {item.relationKind === "embed" && (
                               <span className="ml-1 shrink-0 rounded bg-[#EEF2FF] px-1.5 py-0.5 text-[11px] font-medium text-[#5B4CE6] dark:bg-indigo-500/20 dark:text-indigo-300">
-                                内嵌
+                                {t("内嵌")}
                               </span>
                             )}
                           </div>
@@ -196,7 +198,7 @@ export function ResourceReferencesButton({
                                     onClick={(e) => openHash(e, chref)}
                                     className="block truncate rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-[#E5EDFF] hover:text-[#1456F0]"
                                   >
-                                    • {ctx.text || "查看引用位置"}
+                                    • {ctx.text || t("查看引用位置")}
                                   </a>
                                 );
                               })}
@@ -210,7 +212,7 @@ export function ResourceReferencesButton({
               )}
               {data && tab === "outgoing" && (
                 data.outgoing.length === 0 ? (
-                  <p className="py-6 text-center text-muted-foreground">当前内容暂未引用其他资源</p>
+                  <p className="py-6 text-center text-muted-foreground">{t("当前内容暂未引用其他资源")}</p>
                 ) : (
                   <div className="space-y-1">
                     {data.outgoing.map((item) => {
@@ -220,7 +222,7 @@ export function ResourceReferencesButton({
                         <div key={item.id} className="flex items-center gap-1.5 rounded-md px-2 py-1.5 hover:bg-hover" data-reference-outgoing-item={item.id}>
                           <ReferenceKindIcon kind={item.kind} docType={item.docType} />
                           <a href={href} onClick={(e) => openHash(e, href)} className="min-w-0 flex-1 truncate text-[#3370FF] hover:underline">
-                            {item.title.trim() || "未命名文档"}
+                            {item.title.trim() || t("未命名文档")}
                           </a>
                           <span className="shrink-0 rounded bg-black/5 px-1.5 py-0.5 text-[11px] text-muted-foreground dark:bg-white/10">
                             {km.short}

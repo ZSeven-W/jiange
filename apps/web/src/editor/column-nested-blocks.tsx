@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { COLUMN_CHILD_BLOCK_CHOICES } from "./column-ops-commit";
 
@@ -41,6 +42,7 @@ export function ColumnNestedBlocks({
   onToggleTodo?: (blockId: string) => void;
   onDeleteBlock?: (blockId: string) => void;
 }) {
+  const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -80,7 +82,7 @@ export function ColumnNestedBlocks({
                     checked={checked}
                     disabled={!canEdit}
                     onChange={() => onToggleTodo?.(nb.id)}
-                    aria-label="切换待办状态"
+                    aria-label={t("切换待办状态")}
                     className="mt-2 size-3.5 shrink-0 accent-primary"
                   />
                 )}
@@ -118,8 +120,8 @@ export function ColumnNestedBlocks({
             {canEdit && onDeleteBlock && (
               <button
                 type="button"
-                aria-label="删除栏内内容块"
-                title="删除此块"
+                aria-label={t("删除栏内内容块")}
+                title={t("删除此块")}
                 data-delete-column-child={nb.id}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -145,12 +147,12 @@ export function ColumnNestedBlocks({
             className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[12px] text-subtle opacity-0 transition-opacity hover:bg-hover hover:text-primary group-hover/col:opacity-100 focus-visible:opacity-100 [@media(hover:none)]:opacity-100"
           >
             <Plus size={12} />
-            <span>添加块</span>
+            <span>{t("添加块")}</span>
           </button>
           {menuOpen && (
             <div
               role="menu"
-              aria-label="在分栏内添加内容块"
+              aria-label={t("在分栏内添加内容块")}
               data-add-column-block-menu={columnId}
               className="absolute left-0 top-7 z-30 grid w-44 grid-cols-2 gap-0.5 rounded-lg border border-[#dee0e3] bg-surface p-1 text-[12px] shadow-[0_6px_24px_rgba(31,35,41,0.14)]"
             >
@@ -167,7 +169,7 @@ export function ColumnNestedBlocks({
                   }}
                   className="flex h-7 items-center rounded px-2 text-left text-foreground hover:bg-hover"
                 >
-                  {item.label}
+                  {t(item.label)}
                 </button>
               ))}
             </div>

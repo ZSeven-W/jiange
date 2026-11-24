@@ -19,6 +19,13 @@ import {
   type OfflineSnapshotKind,
 } from "./offline-db";
 
+import {
+  flushAllOfflineCollab,
+  getOfflineCollabSummary,
+  type OfflineCollabConflict,
+  type OfflineCollabSummary,
+} from "./offline-collab";
+
 export const OFFLINE_SNAPSHOT_EVENT = "jiange:offline-snapshot";
 export const OFFLINE_ENQUEUE_EVENT = "jiange:offline-enqueue";
 
@@ -27,12 +34,19 @@ export interface OfflineSyncSummary {
   failed: number;
   remaining: number;
   completedAt: number;
+  collabFlushed?: number;
+  collabFailed?: number;
+  collabConflicts?: OfflineCollabConflict[];
 }
 
 export interface OfflineStateSnapshot {
   online: boolean;
   cachedSnapshots: OfflineSnapshot[];
   pendingQueue: OfflineMutation[];
+  /** Count of locally persisted offline CRDT replicas and Sheet/Slides offline deltas. */
+  offlineCollabCount: number;
+  /** Detailed breakdown of offline CRDT replicas and pending collab deltas. */
+  offlineCollabSummary?: OfflineCollabSummary;
   syncing: boolean;
   lastSyncSummary: OfflineSyncSummary | null;
 }
@@ -75,10 +89,22 @@ function readNavigatorOnline(nav?: { onLine?: boolean } | null): boolean {
   return true;
 }
 
+const EMPTY_COLLAB_SUMMARY: OfflineCollabSummary = {
+  totalCount: 0,
+  docReplicaCount: 0,
+  docPendingOpsCount: 0,
+  sheetDeltaCount: 0,
+  sheetEditCount: 0,
+  slidesDraftCount: 0,
+  pendingMergeCount: 0,
+};
+
 let state: OfflineStateSnapshot = {
   online: readNavigatorOnline(),
   cachedSnapshots: [],
   pendingQueue: [],
+  offlineCollabCount: 0,
+  offlineCollabSummary: { ...EMPTY_COLLAB_SUMMARY },
   syncing: false,
   lastSyncSummary: null,
 };
@@ -129,11 +155,17 @@ export function getOfflineStateSnapshot(): OfflineStateSnapshot {
  */
 export async function refreshOfflineState(): Promise<OfflineStateSnapshot> {
   const run = async () => {
-    const [cachedSnapshots, pendingQueue] = await Promise.all([
+    const [cachedSnapshots, pendingQueue, offlineCollabSummary] = await Promise.all([
       listOfflineSnapshots(),
       listOfflineQueue(),
+      getOfflineCollabSummary(),
     ]);
-    setState({ cachedSnapshots, pendingQueue });
+    setState({
+      cachedSnapshots,
+      pendingQueue,
+      offlineCollabCount: offlineCollabSummary.totalCount,
+      offlineCollabSummary,
+    });
     return state;
   };
   pendingRefreshPromise = run().finally(() => {
@@ -413,27 +445,46 @@ export async function flushOfflineQueue(
 
   const run = async (): Promise<OfflineSyncSummary> => {
     const online = options?.forceOnline ?? state.online;
-    const initialQueue = await listOfflineQueue();
+    const [initialQueue, initialCollab] = await Promise.all([
+      listOfflineQueue(),
+      getOfflineCollabSummary(),
+    ]);
+    const initialCollabDeltas = initialCollab.sheetDeltaCount + initialCollab.slidesDraftCount;
 
     if (!online) {
       const summary: OfflineSyncSummary = {
         synced: 0,
         failed: 0,
-        remaining: initialQueue.length,
+        remaining: initialQueue.length + initialCollabDeltas,
         completedAt: Date.now(),
+        collabFlushed: 0,
+        collabFailed: 0,
+        collabConflicts: [],
       };
-      setState({ pendingQueue: initialQueue });
+      setState({
+        pendingQueue: initialQueue,
+        offlineCollabCount: initialCollab.totalCount,
+        offlineCollabSummary: initialCollab,
+      });
       return summary;
     }
 
-    if (initialQueue.length === 0) {
+    if (initialQueue.length === 0 && initialCollabDeltas === 0) {
       const summary: OfflineSyncSummary = {
         synced: 0,
         failed: 0,
         remaining: 0,
         completedAt: Date.now(),
+        collabFlushed: 0,
+        collabFailed: 0,
+        collabConflicts: [],
       };
-      setState({ pendingQueue: [], lastSyncSummary: summary });
+      setState({
+        pendingQueue: [],
+        offlineCollabCount: initialCollab.totalCount,
+        offlineCollabSummary: initialCollab,
+        lastSyncSummary: summary,
+      });
       return summary;
     }
 
@@ -444,16 +495,28 @@ export async function flushOfflineQueue(
       const summary: OfflineSyncSummary = {
         synced: 0,
         failed: 0,
-        remaining: initialQueue.length,
+        remaining: initialQueue.length + initialCollabDeltas,
         completedAt: Date.now(),
+        collabFlushed: 0,
+        collabFailed: 0,
+        collabConflicts: [],
       };
       return summary;
     }
 
-    setState({ syncing: true, pendingQueue: initialQueue });
+    setState({
+      syncing: true,
+      pendingQueue: initialQueue,
+      offlineCollabCount: initialCollab.totalCount,
+      offlineCollabSummary: initialCollab,
+    });
 
     let synced = 0;
     let failed = 0;
+    let collabFlushed = 0;
+    let collabFailed = 0;
+    let collabConflicts: OfflineCollabConflict[] = [];
+    let networkAborted = false;
     const failedResourceKeys = new Set<string>();
 
     try {
@@ -490,43 +553,69 @@ export async function flushOfflineQueue(
             err instanceof Error && err.message ? err.message : "Network request failed";
           await updateOfflineMutationError(item.id, message);
           failed += 1;
+          networkAborted = true;
           // Stop replay immediately on first network failure to preserve strict FIFO order.
           break;
         }
       }
 
-      const [cachedSnapshots, pendingQueue] = await Promise.all([
+      if (!networkAborted && initialCollabDeltas > 0) {
+        const collabResult = await flushAllOfflineCollab(effectiveFetcher);
+        collabFlushed = collabResult.flushed;
+        collabFailed = collabResult.failed;
+        collabConflicts = collabResult.conflicts;
+        synced += collabFlushed;
+        failed += collabFailed;
+      }
+
+      const [cachedSnapshots, pendingQueue, offlineCollabSummary] = await Promise.all([
         listOfflineSnapshots(),
         listOfflineQueue(),
+        getOfflineCollabSummary(),
       ]);
+      const remainingCollab =
+        offlineCollabSummary.sheetDeltaCount + offlineCollabSummary.slidesDraftCount;
       const summary: OfflineSyncSummary = {
         synced,
         failed,
-        remaining: pendingQueue.length,
+        remaining: pendingQueue.length + remainingCollab,
         completedAt: Date.now(),
+        collabFlushed,
+        collabFailed,
+        collabConflicts,
       };
       setState({
         syncing: false,
         cachedSnapshots,
         pendingQueue,
+        offlineCollabCount: offlineCollabSummary.totalCount,
+        offlineCollabSummary,
         lastSyncSummary: summary,
       });
       return summary;
     } catch {
-      const [cachedSnapshots, pendingQueue] = await Promise.all([
+      const [cachedSnapshots, pendingQueue, offlineCollabSummary] = await Promise.all([
         listOfflineSnapshots(),
         listOfflineQueue(),
+        getOfflineCollabSummary(),
       ]);
+      const remainingCollab =
+        offlineCollabSummary.sheetDeltaCount + offlineCollabSummary.slidesDraftCount;
       const summary: OfflineSyncSummary = {
         synced,
         failed,
-        remaining: pendingQueue.length,
+        remaining: pendingQueue.length + remainingCollab,
         completedAt: Date.now(),
+        collabFlushed,
+        collabFailed,
+        collabConflicts,
       };
       setState({
         syncing: false,
         cachedSnapshots,
         pendingQueue,
+        offlineCollabCount: offlineCollabSummary.totalCount,
+        offlineCollabSummary,
         lastSyncSummary: summary,
       });
       return summary;
@@ -713,6 +802,8 @@ export function resetOfflineSyncStateForTesting(options?: { online?: boolean }):
     online: options?.online ?? readNavigatorOnline(),
     cachedSnapshots: [],
     pendingQueue: [],
+    offlineCollabCount: 0,
+    offlineCollabSummary: { ...EMPTY_COLLAB_SUMMARY },
     syncing: false,
     lastSyncSummary: null,
   };

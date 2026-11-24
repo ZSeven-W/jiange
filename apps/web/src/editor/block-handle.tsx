@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AlignCenter, AlignLeft, AlignRight, ArrowDownToLine, Check, ChevronRight, Columns3, Copy, IndentDecrease, IndentIncrease, Languages, LayoutTemplate, Link2, MessageSquarePlus, Palette, Rows3, Scissors, Share2, Sparkles, Trash2 } from "lucide-react";
 import { MENU_ICONS } from "./menu-icons";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 /** 纯文本类块：可显示“+”空行入口，也可在块菜单中互相转换、缩进和设置颜色。 */
@@ -89,6 +90,7 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
   tableHeaders?: { row: boolean; column: boolean; toggle: (axis: "row" | "column") => void; equalize?: () => void; equalizeDisabled?: boolean };
   keyShortcuts?: string;
 }) {
+  const { t } = useI18n();
   const root = useRef<HTMLSpanElement>(null);
   const [sub, setSub] = useState<"layout" | "colors" | "translate" | null>(null);
   useEffect(() => {
@@ -121,8 +123,8 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
       // preventDefault on mousedown cancels native drag start in Chromium/Firefox, so only keep focus when not draggable.
       onMouseDown={onDragStart ? undefined : keep}
       onClick={() => onOpenChange(!open)}
-      title={multi ? (onDragStart ? `已选择 ${count} 个块，点击打开菜单，拖动以整体移动` : `已选择 ${count} 个块`) : onDragStart ? "点击打开菜单，拖动以移动" : "块菜单"}
-      aria-label={multi ? `${count} 个块的菜单` : "块菜单"}
+      title={multi ? (onDragStart ? t("已选择 {count} 个块，点击打开菜单，拖动以整体移动", { count }) : t("已选择 {count} 个块", { count })) : onDragStart ? t("点击打开菜单，拖动以移动") : t("块菜单")}
+      aria-label={multi ? t("{count} 个块的菜单", { count }) : t("块菜单")}
       aria-haspopup="menu"
       aria-expanded={open}
       aria-keyshortcuts={keyShortcuts}
@@ -133,63 +135,63 @@ export function BlockHandle({ type, open, onOpenChange, onDragStart, onDragEnd, 
       <Grip />
     </button>
     {open && <div role="menu" className="absolute left-2 top-[31px] z-40 w-[232px] rounded-lg border border-[#D9DBDF] bg-surface text-[14px] font-normal leading-normal tracking-normal shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-block-menu>
-      {multi && <div className="px-3 pb-1 pt-2 text-[12px] text-subtle">已选择 {count} 个块</div>}
+      {multi && <div className="px-3 pb-1 pt-2 text-[12px] text-subtle">{t("已选择 {count} 个块", { count })}</div>}
       {can.ai && !multi && <div className={section}>
         <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "ai" })} data-block-ai><Sparkles size={16} strokeWidth={1.6} className="shrink-0 text-primary" />AI</button>
       </div>}
       {can.convert && <div className={cn(section, "px-[11px] pb-3 pt-1")}>
         <div className="grid gap-x-[12.5px] gap-y-3" style={{ gridTemplateColumns: "repeat(6, 24px)" }}>
-          {CONVERT_TARGETS.map((t) => <button key={t.type} type="button" role="menuitem" title={t.label} aria-label={`转换为${t.label}`} onMouseDown={keep} onClick={act({ kind: "convert", type: t.type })} className={cn("grid size-6 place-items-center rounded hover:bg-hover", t.type === type && !multi ? "bg-[#DBE5FE] text-primary dark:bg-primary/20" : "text-foreground")} data-convert-to={t.type}><TypeGlyph type={t.type} size={18} /></button>)}
+          {CONVERT_TARGETS.map((target) => <button key={target.type} type="button" role="menuitem" title={t(target.label)} aria-label={t("转换为{label}", { label: t(target.label) })} onMouseDown={keep} onClick={act({ kind: "convert", type: target.type })} className={cn("grid size-6 place-items-center rounded hover:bg-hover", target.type === type && !multi ? "bg-[#DBE5FE] text-primary dark:bg-primary/20" : "text-foreground")} data-convert-to={target.type}><TypeGlyph type={target.type} size={18} /></button>)}
         </div>
       </div>}
       {groupA && <div className={section}>
         {layout && <div className="relative" {...subMenu("layout")}>
-          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "layout"} className={cn(item, sub === "layout" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "layout" ? null : "layout"))} data-block-layout><AlignLeft size={16} strokeWidth={1.6} className={icon} />缩进和对齐<ChevronRight size={14} className="ml-auto text-subtle" /></button>
+          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "layout"} className={cn(item, sub === "layout" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "layout" ? null : "layout"))} data-block-layout><AlignLeft size={16} strokeWidth={1.6} className={icon} />{t("缩进和对齐")}<ChevronRight size={14} className="ml-auto text-subtle" /></button>
           <div role="menu" className={cn("absolute left-full top-0 z-50 ml-1 w-[200px] rounded-lg border border-[#D9DBDF] bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border", sub !== "layout" && "hidden")} data-block-layout-pop>
             {can.indent && <>
-              <button type="button" role="menuitem" className={item} disabled={!multi && indent >= MAX_INDENT} onMouseDown={keep} onClick={act({ kind: "indent", delta: 1 })} data-block-indent><IndentIncrease size={16} strokeWidth={1.6} className={icon} />增加缩进<span className="ml-auto text-[12px] text-subtle">Tab</span></button>
-              <button type="button" role="menuitem" className={item} disabled={!multi && indent <= 0} onMouseDown={keep} onClick={act({ kind: "indent", delta: -1 })} data-block-outdent><IndentDecrease size={16} strokeWidth={1.6} className={icon} />减少缩进<span className="ml-auto text-[12px] text-subtle">Shift+Tab</span></button>
+              <button type="button" role="menuitem" className={item} disabled={!multi && indent >= MAX_INDENT} onMouseDown={keep} onClick={act({ kind: "indent", delta: 1 })} data-block-indent><IndentIncrease size={16} strokeWidth={1.6} className={icon} />{t("增加缩进")}<span className="ml-auto text-[12px] text-subtle">Tab</span></button>
+              <button type="button" role="menuitem" className={item} disabled={!multi && indent <= 0} onMouseDown={keep} onClick={act({ kind: "indent", delta: -1 })} data-block-outdent><IndentDecrease size={16} strokeWidth={1.6} className={icon} />{t("减少缩进")}<span className="ml-auto text-[12px] text-subtle">Shift+Tab</span></button>
             </>}
             {can.indent && can.align && <div className="mx-1 my-1 h-px bg-[#D9DBDF] dark:bg-border" />}
-            {can.align && ([["left", "左对齐", AlignLeft], ["center", "居中对齐", AlignCenter], ["right", "右对齐", AlignRight]] as const).map(([value, label, Icon]) => <button key={value} type="button" role="menuitemradio" aria-checked={(align || "left") === value} className={cn(item, (align || "left") === value && !multi && "text-primary")} onMouseDown={keep} onClick={act({ kind: "align", value })} data-block-align={value}><Icon size={16} strokeWidth={1.6} className={icon} />{label}</button>)}
+            {can.align && ([["left", t("左对齐"), AlignLeft], ["center", t("居中对齐"), AlignCenter], ["right", t("右对齐"), AlignRight]] as const).map(([value, label, Icon]) => <button key={value} type="button" role="menuitemradio" aria-checked={(align || "left") === value} className={cn(item, (align || "left") === value && !multi && "text-primary")} onMouseDown={keep} onClick={act({ kind: "align", value })} data-block-align={value}><Icon size={16} strokeWidth={1.6} className={icon} />{label}</button>)}
           </div>
         </div>}
         {can.color && <div className="relative" {...subMenu("colors")}>
-          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "colors"} className={cn(item, sub === "colors" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "colors" ? null : "colors"))} data-block-colors><Palette size={16} strokeWidth={1.6} className={icon} />颜色<ChevronRight size={14} className="ml-auto text-subtle" /></button>
+          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "colors"} className={cn(item, sub === "colors" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "colors" ? null : "colors"))} data-block-colors><Palette size={16} strokeWidth={1.6} className={icon} />{t("颜色")}<ChevronRight size={14} className="ml-auto text-subtle" /></button>
           {sub === "colors" && <div role="menu" className="absolute left-full top-0 z-50 ml-1 w-[208px] rounded-lg border border-[#D9DBDF] bg-surface p-2 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border" data-block-color-pop>
-            <div className="mb-1 px-0.5 text-[12px] text-subtle">字体颜色</div>
+            <div className="mb-1 px-0.5 text-[12px] text-subtle">{t("字体颜色")}</div>
             <div className="grid grid-cols-8 gap-1">
-              {PALETTE.map((c) => <button key={c} type="button" title={`字体颜色 ${c}`} aria-label={`字体颜色 ${c}`} onMouseDown={keep} onClick={act({ kind: "color", key: "color", value: c })} className="grid size-[21px] place-items-center rounded border border-border text-[12px] font-semibold hover:ring-1 hover:ring-primary" style={{ color: c }} data-block-text-color={c}>A</button>)}
+              {PALETTE.map((c) => <button key={c} type="button" title={t("字体颜色 {color}", { color: c })} aria-label={t("字体颜色 {color}", { color: c })} onMouseDown={keep} onClick={act({ kind: "color", key: "color", value: c })} className="grid size-[21px] place-items-center rounded border border-border text-[12px] font-semibold hover:ring-1 hover:ring-primary" style={{ color: c }} data-block-text-color={c}>A</button>)}
             </div>
-            <div className="mb-1 mt-2 px-0.5 text-[12px] text-subtle">背景颜色</div>
+            <div className="mb-1 mt-2 px-0.5 text-[12px] text-subtle">{t("背景颜色")}</div>
             <div className="grid grid-cols-8 gap-1">
-              {PALETTE.map((c) => <button key={c} type="button" title={`背景颜色 ${c}`} aria-label={`背景颜色 ${c}`} onMouseDown={keep} onClick={act({ kind: "color", key: "bg", value: c })} className="size-[21px] rounded border border-transparent hover:ring-1 hover:ring-primary" style={{ background: `${c}33` }} data-block-bg-color={c} />)}
+              {PALETTE.map((c) => <button key={c} type="button" title={t("背景颜色 {color}", { color: c })} aria-label={t("背景颜色 {color}", { color: c })} onMouseDown={keep} onClick={act({ kind: "color", key: "bg", value: c })} className="size-[21px] rounded border border-transparent hover:ring-1 hover:ring-primary" style={{ background: `${c}33` }} data-block-bg-color={c} />)}
             </div>
-            <button type="button" onMouseDown={keep} onClick={() => { onOpenChange(false); onAction?.({ kind: "color", key: "color", value: null }); onAction?.({ kind: "color", key: "bg", value: null }); }} className="mt-2 block w-full rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-hover" data-block-color-reset>恢复默认</button>
+            <button type="button" onMouseDown={keep} onClick={() => { onOpenChange(false); onAction?.({ kind: "color", key: "color", value: null }); onAction?.({ kind: "color", key: "bg", value: null }); }} className="mt-2 block w-full rounded px-1.5 py-1 text-left text-[12px] text-muted-foreground hover:bg-hover" data-block-color-reset>{t("恢复默认")}</button>
           </div>}
         </div>}
       </div>}
       {type === "table" && !multi && tableHeaders && <div className={section}>
-        {([ ["row", "标题行", Rows3], ["column", "标题列", Columns3] ] as const).map(([axis, label, Icon]) => <button key={axis} type="button" role="menuitemcheckbox" aria-checked={tableHeaders[axis]} className={item} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.toggle(axis); }} data-block-table-header={axis}><Icon size={16} strokeWidth={1.6} className={icon} />{label}{tableHeaders[axis] && <Check size={15} className="ml-auto text-primary" />}</button>)}
-        {tableHeaders.equalize && <button type="button" role="menuitem" className={item} disabled={tableHeaders.equalizeDisabled} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.equalize?.(); }} data-block-table-equal-widths><Columns3 size={16} strokeWidth={1.6} className={icon} />均分列宽</button>}
+        {([ ["row", t("标题行"), Rows3], ["column", t("标题列"), Columns3] ] as const).map(([axis, label, Icon]) => <button key={axis} type="button" role="menuitemcheckbox" aria-checked={tableHeaders[axis]} className={item} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.toggle(axis); }} data-block-table-header={axis}><Icon size={16} strokeWidth={1.6} className={icon} />{label}{tableHeaders[axis] && <Check size={15} className="ml-auto text-primary" />}</button>)}
+        {tableHeaders.equalize && <button type="button" role="menuitem" className={item} disabled={tableHeaders.equalizeDisabled} onMouseDown={keep} onClick={() => { onOpenChange(false); tableHeaders.equalize?.(); }} data-block-table-equal-widths><Columns3 size={16} strokeWidth={1.6} className={icon} />{t("均分列宽")}</button>}
       </div>}
       {groupB && <div className={section}>
-        {can.comment && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "comment" })} data-block-comment><MessageSquarePlus size={16} strokeWidth={1.6} className={icon} />评论</button>}
-        {can.cut && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "cut" })} data-block-cut><Scissors size={16} strokeWidth={1.6} className={icon} />剪切</button>}
-        {can.copy && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "copy" })} data-block-copy><Copy size={16} strokeWidth={1.6} className={icon} />复制</button>}
+        {can.comment && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "comment" })} data-block-comment><MessageSquarePlus size={16} strokeWidth={1.6} className={icon} />{t("评论")}</button>}
+        {can.cut && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "cut" })} data-block-cut><Scissors size={16} strokeWidth={1.6} className={icon} />{t("剪切")}</button>}
+        {can.copy && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "copy" })} data-block-copy><Copy size={16} strokeWidth={1.6} className={icon} />{t("复制")}</button>}
         {can.ai && !multi && <div className="relative" {...subMenu("translate")}>
-          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "translate"} className={cn(item, sub === "translate" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "translate" ? null : "translate"))} data-block-translate><Languages size={16} strokeWidth={1.6} className={icon} />翻译<ChevronRight size={14} className="ml-auto text-subtle" /></button>
+          <button type="button" role="menuitem" aria-haspopup="menu" aria-expanded={sub === "translate"} className={cn(item, sub === "translate" && "bg-hover")} onMouseDown={keep} onClick={() => setSub((v) => (v === "translate" ? null : "translate"))} data-block-translate><Languages size={16} strokeWidth={1.6} className={icon} />{t("翻译")}<ChevronRight size={14} className="ml-auto text-subtle" /></button>
           {sub === "translate" && <div role="menu" className="absolute left-full top-0 z-50 ml-1 w-[160px] rounded-lg border border-[#D9DBDF] bg-surface p-1 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border">
-            {([["translate-zh", "中文"], ["translate-en", "英文"], ["translate-ja", "日文"]] as const).map(([lang, label]) => <button key={lang} type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "translate", lang })} data-block-translate-to={lang}>{`翻译为${label}`}</button>)}
+            {([["translate-zh", t("翻译为中文")], ["translate-en", t("翻译为英文")], ["translate-ja", t("翻译为日文")]] as const).map(([lang, label]) => <button key={lang} type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "translate", lang })} data-block-translate-to={lang}>{label}</button>)}
           </div>}
         </div>}
-        {can.delete && <button type="button" role="menuitem" className={cn(item, "hover:text-destructive")} onClick={act({ kind: "delete" })} data-delete-block><Trash2 size={16} strokeWidth={1.6} className={icon} />{multi ? `删除 ${count} 个块` : "删除"}</button>}
+        {can.delete && <button type="button" role="menuitem" className={cn(item, "hover:text-destructive")} onClick={act({ kind: "delete" })} data-delete-block><Trash2 size={16} strokeWidth={1.6} className={icon} />{multi ? t("删除 {count} 个块", { count }) : t("删除")}</button>}
       </div>}
       {groupC && <div className={section}>
-        {can.share && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "share" })} data-block-share><Share2 size={16} strokeWidth={1.6} className={icon} />分享</button>}
-        {can.template && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "template" })} data-block-template><LayoutTemplate size={16} strokeWidth={1.6} className={icon} />保存为模板</button>}
-        {can.link && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "link" })} data-block-link><Link2 size={16} strokeWidth={1.6} className={icon} />复制链接</button>}
-        {can.insertAfter && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "insertAfter" })} data-insert-after><ArrowDownToLine size={16} strokeWidth={1.6} className={icon} />在下方添加</button>}
+        {can.share && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "share" })} data-block-share><Share2 size={16} strokeWidth={1.6} className={icon} />{t("分享")}</button>}
+        {can.template && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "template" })} data-block-template><LayoutTemplate size={16} strokeWidth={1.6} className={icon} />{t("保存为模板")}</button>}
+        {can.link && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "link" })} data-block-link><Link2 size={16} strokeWidth={1.6} className={icon} />{t("复制链接")}</button>}
+        {can.insertAfter && !multi && <button type="button" role="menuitem" className={item} onMouseDown={keep} onClick={act({ kind: "insertAfter" })} data-insert-after><ArrowDownToLine size={16} strokeWidth={1.6} className={icon} />{t("在下方添加")}</button>}
       </div>}
     </div>}
   </span>;

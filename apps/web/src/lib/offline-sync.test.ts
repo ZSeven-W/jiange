@@ -9,6 +9,13 @@ import {
   resetOfflineDbForTesting,
 } from "./offline-db";
 import {
+  loadSheetOfflineCells,
+  loadSlidesOfflinePage,
+  queueSheetOfflineCells,
+  queueSlidesOfflinePage,
+  saveDocCollabReplica,
+} from "./offline-collab";
+import {
   OFFLINE_SNAPSHOT_EVENT,
   cacheQueryResponse,
   flushOfflineQueue,
@@ -407,5 +414,61 @@ describe("offline-sync controller", () => {
     expect(typeof captured!.removeQueuedItem).toBe("function");
     expect(Array.isArray(captured!.cachedSnapshots)).toBe(true);
     expect(Array.isArray(captured!.pendingQueue)).toBe(true);
+    expect(captured!.offlineCollabCount).toBe(0);
+  });
+
+  it("tracks offlineCollabCount and flushes queued sheet & slides collab deltas during flushOfflineQueue / online reconnect", async () => {
+    await saveDocCollabReplica(1, 42, {
+      snapshot: new Uint8Array([1, 2, 3]),
+      seq: 5,
+      historyEpoch: 1,
+      pendingOpsCount: 2,
+    });
+    await queueSheetOfflineCells(1, 7, {
+      worksheetId: 10,
+      baseRevision: 1,
+      edits: [{ row: 0, col: 0, raw: "离线数值", updatedAt: 1000 }],
+    });
+    await queueSlidesOfflinePage(1, 9, {
+      pageId: 101,
+      shapesJson: JSON.stringify([{ id: "s1", kind: "rectangle" }]),
+      baseRevision: 2,
+      updatedAt: 2000,
+    });
+
+    await refreshOfflineState();
+    const before = getOfflineStateSnapshot();
+    expect(before.offlineCollabCount).toBe(3);
+    expect(before.offlineCollabSummary).toEqual({
+      totalCount: 3,
+      docReplicaCount: 1,
+      docPendingOpsCount: 2,
+      sheetDeltaCount: 1,
+      sheetEditCount: 1,
+      slidesDraftCount: 1,
+      pendingMergeCount: 3,
+    });
+
+    const called: string[] = [];
+    const fetcher = vi.fn<OfflineMutationFetcher>(async (path, init) => {
+      called.push(`${init.method} ${path}`);
+      return { ok: true, status: 200, statusText: "OK" };
+    });
+
+    const summary = await flushOfflineQueue(fetcher);
+    expect(called).toEqual([
+      "POST /api/sheets/7/cells",
+      "PATCH /api/slides/9/pages/101/content",
+    ]);
+    expect(summary.synced).toBe(2);
+    expect(summary.collabFlushed).toBe(2);
+    expect(summary.collabFailed).toBe(0);
+    expect(summary.collabConflicts).toEqual([]);
+    expect(summary.remaining).toBe(0);
+
+    expect(await loadSheetOfflineCells(1, 7)).toBeNull();
+    expect(await loadSlidesOfflinePage(1, 9)).toBeNull();
+    // Doc CRDT replica remains cached for offline hydration
+    expect(getOfflineStateSnapshot().offlineCollabCount).toBe(1);
   });
 });

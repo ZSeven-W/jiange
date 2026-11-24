@@ -1,6 +1,7 @@
 import { useMemo, useReducer, useState } from "react";
 import { Doc, encodeOps, type Op, type OpId } from "@jiange/collab";
 import { diff } from "@/lib/textdiff";
+import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -14,13 +15,14 @@ interface Replica {
  * until you sync, so you can create genuinely concurrent edits and watch them converge.
  */
 export function Playground() {
+  const { t } = useI18n();
   const [, rerender] = useReducer((x: number) => x + 1, 0);
   const [bytes, setBytes] = useState(0);
   const { replicas, block } = useMemo(() => {
     const a = new Doc(1);
     const b = new Doc(2);
     const create = a.createBlock("paragraph");
-    const ins = a.insertText(create.id, 0, "你好，Jiange")!;
+    const ins = a.insertText(create.id, 0, t("你好，Jiange"))!;
     b.apply(create);
     b.apply(ins);
     return { replicas: [{ doc: a, outbox: [] }, { doc: b, outbox: [] }] as Replica[], block: create.id as OpId };
@@ -58,17 +60,17 @@ export function Playground() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <Button onClick={sync}>同步两个副本</Button>
+        <Button onClick={sync}>{t("同步两个副本")}</Button>
         <span className="text-sm text-muted-foreground">
-          上次同步 {bytes} 字节 · {converged ? "已收敛" : "未同步"}
+          {converged ? t("上次同步 {bytes} 字节 · 已收敛", { bytes }) : t("上次同步 {bytes} 字节 · 未同步", { bytes })}
         </span>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
         {replicas.map((r, i) => (
           <Card key={i}>
             <CardHeader>
-              <CardTitle>副本 {i + 1}（client {r.doc.client}）</CardTitle>
-              <CardDescription>待发送操作：{r.outbox.length}</CardDescription>
+              <CardTitle>{t("副本 {n}（client {client}）", { n: i + 1, client: r.doc.client })}</CardTitle>
+              <CardDescription>{t("待发送操作：{n}", { n: r.outbox.length })}</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <textarea
@@ -77,7 +79,7 @@ export function Playground() {
                 onChange={(e) => edit(r, e.target.value)}
               />
               <Button variant="outline" size="sm" onClick={() => bold(r)}>
-                前两个字加粗
+                {t("前两个字加粗")}
               </Button>
               <p className="text-sm">
                 {r.doc.view().blocks[0]?.spans.map((s, k) => (

@@ -887,6 +887,13 @@ export class IncrementalFormulaEngine {
                 ? null
                 : this.evalAstNode(a, sheetId, row, col, depth + 1, active, budget, env, arrayMode),
             );
+            const placeholderIndex = new Map<FormulaAst, number>();
+            const placeholders: FormulaAst[] = node.args.map((a, idx) => {
+              if (isMissingArg(a)) return a;
+              const p: FormulaAst = { kind: "name", name: `__ARG_${idx}__` };
+              placeholderIndex.set(p, idx);
+              return p;
+            });
             const hasArray = evald.some((v) => v !== null && v.kind === "array");
             if (hasArray) {
               let rows = 1;
@@ -897,9 +904,6 @@ export class IncrementalFormulaEngine {
                   cols = Math.max(cols, v.value[0]?.length ?? 1);
                 }
               }
-              const placeholders: FormulaAst[] = node.args.map((a, idx) =>
-                isMissingArg(a) ? a : { kind: "name", name: `__ARG_${idx}__` },
-              );
               const out: EvalValue[][] = [];
               for (let r = 0; r < rows; r++) {
                 const line: EvalValue[] = [];
@@ -916,12 +920,7 @@ export class IncrementalFormulaEngine {
                   const liftCtx: FormulaEvalContext = {
                     ...ctx,
                     arrayMode: false,
-                    evalAst: (child) => {
-                      if (child.kind === "name" && child.name.startsWith("__ARG_") && child.name.endsWith("__")) {
-                        return cellVals[Number(child.name.slice(6, -2))] ?? EMPTY_VAL;
-                      }
-                      return ctx.evalAst(child);
-                    },
+                    evalAst: (child) => cellVals[placeholderIndex.get(child)!],
                   };
                   line.push(builtin(placeholders, liftCtx));
                 }
@@ -929,17 +928,9 @@ export class IncrementalFormulaEngine {
               }
               return arrVal(out);
             }
-            const placeholders: FormulaAst[] = node.args.map((a, idx) =>
-              isMissingArg(a) ? a : { kind: "name", name: `__ARG_${idx}__` },
-            );
             const scalarCtx: FormulaEvalContext = {
               ...ctx,
-              evalAst: (child) => {
-                if (child.kind === "name" && child.name.startsWith("__ARG_") && child.name.endsWith("__")) {
-                  return evald[Number(child.name.slice(6, -2))] ?? EMPTY_VAL;
-                }
-                return ctx.evalAst(child);
-              },
+              evalAst: (child) => evald[placeholderIndex.get(child)!]!,
             };
             return builtin(placeholders, scalarCtx);
           }

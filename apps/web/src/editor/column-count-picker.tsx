@@ -1,5 +1,6 @@
 import { useId, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
+import { useI18n } from "@/lib/i18n";
 
 // The Feishu insertion picker displays five bars; additional columns can be
 // added later up to the document's separate ten-column limit.
@@ -16,6 +17,7 @@ export function nextColumnPickerCount(count: number, key: string): number | null
 }
 
 export function ColumnCountPicker({ anchor, count, onChange, onPick, onClose }: { anchor: RefObject<HTMLButtonElement | null>; count: number; onChange: (count: number) => void; onPick: (count: number) => void; onClose: () => void }) {
+  const { t } = useI18n();
   const root = useRef<HTMLDivElement>(null), id = useId();
   const [position, setPosition] = useState({ left: -1000, top: -1000, maxHeight: 240 });
   useLayoutEffect(() => {
@@ -39,15 +41,15 @@ export function ColumnCountPicker({ anchor, count, onChange, onPick, onClose }: 
     return () => { if (frame) cancelAnimationFrame(frame); window.removeEventListener("resize", schedule); window.removeEventListener("scroll", schedule, true); window.visualViewport?.removeEventListener("resize", schedule); window.visualViewport?.removeEventListener("scroll", schedule); };
   }, [anchor]);
   if (typeof document === "undefined") return null;
-  return createPortal(<div ref={root} data-column-count-picker role="listbox" tabIndex={0} aria-label="选择分栏数量" aria-activedescendant={`${id}-${count}`}
+  return createPortal(<div ref={root} data-column-count-picker role="listbox" tabIndex={0} aria-label={t("选择分栏数量")} aria-activedescendant={`${id}-${count}`}
     className="fixed z-[80] w-[228px] max-w-[calc(100vw-16px)] overflow-auto rounded-lg border border-[#D9DBDF] bg-surface p-[14px] text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.12)] outline-none dark:border-border"
     style={{ left: position.left, top: position.top, maxHeight: position.maxHeight }} onMouseDown={(event) => event.preventDefault()}
     onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; } if (event.target !== event.currentTarget) return; const next = nextColumnPickerCount(count, event.key); if (next !== null) { event.preventDefault(); event.stopPropagation(); onChange(next); } else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onPick(count); } }}>
-    <div className="mb-4 flex items-center justify-between text-subtle"><span><button type="button" className="mr-2 text-primary sm:hidden" onClick={onClose} aria-label="返回插入菜单">‹ 返回</button>选择栏数</span><span aria-live="polite" data-column-count-label>{count} 栏</span></div>
+    <div className="mb-4 flex items-center justify-between text-subtle"><span><button type="button" className="mr-2 text-primary sm:hidden" onClick={onClose} aria-label={t("返回插入菜单")}>‹ {t("返回")}</button>{t("选择栏数")}</span><span aria-live="polite" data-column-count-label>{t("{count} 栏", { count })}</span></div>
     <div className="flex gap-[7px] rounded-sm border border-[#DEE0E3] p-[14px] dark:border-border">
       {Array.from({ length: COLUMN_PICKER_MAX }, (_, index) => {
         const value = Math.max(COLUMN_PICKER_MIN, index + 1), active = index < count;
-        return <button key={index} id={index ? `${id}-${value}` : undefined} type="button" role="option" tabIndex={-1} aria-hidden={index === 0 ? true : undefined} aria-label={`${value} 栏`} aria-selected={index === 0 ? undefined : value === count} data-column-count={index + 1}
+        return <button key={index} id={index ? `${id}-${value}` : undefined} type="button" role="option" tabIndex={-1} aria-hidden={index === 0 ? true : undefined} aria-label={t("{count} 栏", { count: value })} aria-selected={index === 0 ? undefined : value === count} data-column-count={index + 1}
           className={`h-[94px] min-w-0 flex-1 border ${active ? "border-[#8AA9F8] bg-[#8AA9F8]" : "border-[#E8EAED] bg-[#F1F2F3] dark:border-border dark:bg-hover"}`}
           onMouseEnter={() => onChange(value)} onClick={() => onPick(value)} />;
       })}

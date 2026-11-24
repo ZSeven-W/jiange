@@ -2,19 +2,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_OFFLINE_SNAPSHOT_BYTES,
   MAX_OFFLINE_SNAPSHOTS,
+  OFFLINE_COLLAB_STORE,
   OFFLINE_DB_NAME,
+  OFFLINE_DB_VERSION,
   OFFLINE_QUEUE_STORE,
   OFFLINE_SNAPSHOTS_STORE,
   cacheOfflineSnapshot,
+  clearOfflineCollabRecords,
   clearOfflineQueue,
   clearOfflineSnapshots,
+  deleteOfflineCollabRecord,
   deleteOfflineSnapshot,
   enqueueOfflineMutation,
+  getOfflineCollabRecord,
   getOfflineSnapshot,
   isCacheableOfflinePath,
+  listOfflineCollabRecords,
   listOfflineQueue,
   listOfflineSnapshots,
   offlineStorageStats,
+  putOfflineCollabRecord,
   removeOfflineMutation,
   resetOfflineDbForTesting,
   subscribeOfflineDbChanges,
@@ -76,7 +83,7 @@ function createMockIdbFactory() {
             getAll: () =>
               makeRequest(() => Array.from(map.values(), (val) => structuredClone(val))),
             put: (value: Record<string, unknown>) => {
-              const keyField = storeName === OFFLINE_SNAPSHOTS_STORE ? "key" : "id";
+              const keyField = storeName === OFFLINE_QUEUE_STORE ? "id" : "key";
               const key = String(value[keyField]);
               return makeRequest(() => {
                 map.set(key, structuredClone(value));
@@ -430,6 +437,59 @@ describe("offline-db in-memory fallback (when indexedDB is unavailable)", () => 
     expect(stats.backend).toBe("memory");
     expect(stats.snapshotCount).toBe(1);
   });
+
+  it("supports collab_replicas CRUD, kind filtering, and security key guards in memory mode", async () => {
+    await putOfflineCollabRecord({
+      key: "doc:1:42",
+      kind: "doc",
+      userId: 1,
+      docId: 42,
+      snapshotBase64: "AQID",
+      seq: 7,
+      historyEpoch: 1,
+      role: "edit",
+      updatedAt: 1000,
+      pendingOpsCount: 2,
+    });
+    await putOfflineCollabRecord({
+      key: "sheet:1:9",
+      kind: "sheet",
+      userId: 1,
+      sheetId: 9,
+      worksheetId: 1,
+      edits: [{ row: 0, col: 0, raw: "42", updatedAt: 2000 }],
+      baseRevision: 3,
+      updatedAt: 2000,
+    });
+
+    // Sensitive key must be rejected
+    expect(
+      await putOfflineCollabRecord({
+        key: "auth:tokens:1",
+        kind: "doc",
+        userId: 1,
+        docId: 99,
+        snapshotBase64: "AA==",
+        seq: 0,
+        historyEpoch: null,
+        role: "edit",
+        updatedAt: 3000,
+        pendingOpsCount: 0,
+      }),
+    ).toBeNull();
+
+    const docRec = await getOfflineCollabRecord("doc:1:42");
+    expect(docRec?.kind).toBe("doc");
+    expect((await listOfflineCollabRecords()).map((r) => r.key)).toEqual(["sheet:1:9", "doc:1:42"]);
+    expect((await listOfflineCollabRecords("doc")).map((r) => r.key)).toEqual(["doc:1:42"]);
+    expect((await offlineStorageStats()).collabCount).toBe(2);
+
+    await deleteOfflineCollabRecord("doc:1:42");
+    expect(await getOfflineCollabRecord("doc:1:42")).toBeNull();
+
+    await clearOfflineCollabRecords("sheet");
+    expect(await listOfflineCollabRecords()).toEqual([]);
+  });
 });
 
 describe("offline-db IndexedDB backend integration", () => {
@@ -437,7 +497,7 @@ describe("offline-db IndexedDB backend integration", () => {
     await resetOfflineDbForTesting();
   });
 
-  it("opens jiange-offline-v1 with snapshots & queue stores and persists records end-to-end", async () => {
+  it("opens jiange-offline-v1 (v2) with snapshots, queue & collab_replicas stores and persists records end-to-end", async () => {
     const mock = createMockIdbFactory();
     await resetOfflineDbForTesting({ indexedDB: mock.factory });
 
@@ -457,14 +517,30 @@ describe("offline-db IndexedDB backend integration", () => {
       path: "/api/docs/101",
       body: { title: "离线架构设计 v2" },
     });
+    await putOfflineCollabRecord({
+      key: "doc:7:101",
+      kind: "doc",
+      userId: 7,
+      docId: 101,
+      snapshotBase64: "AQIDBA==",
+      seq: 12,
+      historyEpoch: 2,
+      role: "edit",
+      updatedAt: 6000,
+      pendingOpsCount: 1,
+    });
 
-    expect(mock.getOpenedMeta()).toEqual({ name: OFFLINE_DB_NAME, version: 1 });
+    expect(mock.getOpenedMeta()).toEqual({ name: OFFLINE_DB_NAME, version: OFFLINE_DB_VERSION });
     expect(mock.stores.has(OFFLINE_SNAPSHOTS_STORE)).toBe(true);
     expect(mock.stores.has(OFFLINE_QUEUE_STORE)).toBe(true);
+    expect(mock.stores.has(OFFLINE_COLLAB_STORE)).toBe(true);
     expect(mock.createdIndexes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ store: OFFLINE_SNAPSHOTS_STORE, name: "by_updatedAt" }),
         expect.objectContaining({ store: OFFLINE_QUEUE_STORE, name: "by_createdAt" }),
+        expect.objectContaining({ store: OFFLINE_COLLAB_STORE, name: "by_updatedAt" }),
+        expect.objectContaining({ store: OFFLINE_COLLAB_STORE, name: "by_kind" }),
+        expect.objectContaining({ store: OFFLINE_COLLAB_STORE, name: "by_userId" }),
       ]),
     );
 
@@ -472,16 +548,21 @@ describe("offline-db IndexedDB backend integration", () => {
     expect(stats.backend).toBe("indexeddb");
     expect(stats.snapshotCount).toBe(1);
     expect(stats.queueCount).toBe(1);
+    expect(stats.collabCount).toBe(1);
 
     expect((await getOfflineSnapshot("doc:101"))?.title).toBe("离线架构设计");
     expect((await listOfflineQueue()).map((item) => item.id)).toEqual([queued.id]);
+    expect((await getOfflineCollabRecord("doc:7:101"))?.key).toBe("doc:7:101");
+    expect((await listOfflineCollabRecords("doc")).map((item) => item.key)).toEqual(["doc:7:101"]);
 
     await updateOfflineMutationError(queued.id, "NetworkError");
     expect((await listOfflineQueue())[0].retries).toBe(1);
 
     await deleteOfflineSnapshot("doc:101");
     await removeOfflineMutation(queued.id);
+    await deleteOfflineCollabRecord("doc:7:101");
     expect(await listOfflineSnapshots()).toEqual([]);
     expect(await listOfflineQueue()).toEqual([]);
+    expect(await listOfflineCollabRecords()).toEqual([]);
   });
 });

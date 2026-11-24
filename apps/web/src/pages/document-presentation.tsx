@@ -4,6 +4,7 @@ import type { Comment, DocView } from "@/lib/api";
 import type { Doc } from "@jiange/collab";
 import { DocumentCover } from "@/components/document-cover";
 import { displayDocumentIcon } from "@/components/document-glyph";
+import { useI18n } from "@/lib/i18n";
 import { ReadOnlyDoc } from "./read-only-doc";
 import { AttachmentPreview } from "./attachment-preview";
 
@@ -14,6 +15,7 @@ export function DocumentPresentation({ id, userId, title, icon, view, synced, al
   onComments?: () => void; onRevalidate: () => void; onClose: () => void; children?: ReactNode;
   commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void; contentRef?: RefObject<HTMLDivElement | null>;
 }) {
+  const { t } = useI18n();
   const root = useRef<HTMLDivElement>(null);
   const back = useRef<HTMLButtonElement>(null);
   const mounted = useRef(false);
@@ -44,7 +46,7 @@ export function DocumentPresentation({ id, userId, title, icon, view, synced, al
         ownedFullscreen.current = true;
       }
       if (mounted.current) setNotice("");
-    } catch { if (mounted.current) setNotice("当前浏览器无法切换全屏，仍可在演示视图中阅读。"); }
+    } catch { if (mounted.current) setNotice(t("当前浏览器无法切换全屏，仍可在演示视图中阅读。")); }
   };
   const keyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.defaultPrevented || event.nativeEvent.isComposing) return;
@@ -62,20 +64,20 @@ export function DocumentPresentation({ id, userId, title, icon, view, synced, al
     if (i < 0 || event.shiftKey && i === 0 || !event.shiftKey && i === items.length - 1) { event.preventDefault(); items[event.shiftKey ? items.length - 1 : 0].focus(); }
   };
   const glyph = displayDocumentIcon(icon);
-  return <div ref={root} role="dialog" aria-modal="true" aria-label="文档演示模式" data-document-presentation data-document-print-restricted={!allowPrint ? "true" : undefined} onKeyDown={keyDown} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
+  return <div ref={root} role="dialog" aria-modal="true" aria-label={t("文档演示模式")} data-document-presentation data-document-print-restricted={!allowPrint ? "true" : undefined} onKeyDown={keyDown} className="fixed inset-0 z-40 flex min-h-0 flex-col bg-surface text-foreground">
     <header className="flex h-14 shrink-0 items-center border-b px-3 sm:h-16 sm:px-10">
-      <button ref={back} type="button" onClick={onClose} className="flex h-9 items-center gap-1 rounded px-2 text-[14px] hover:bg-hover"><ChevronLeft size={17}/><span>返回</span></button>
+      <button ref={back} type="button" onClick={onClose} className="flex h-9 items-center gap-1 rounded px-2 text-[14px] hover:bg-hover"><ChevronLeft size={17}/><span>{t("返回")}</span></button>
       <div className="ml-auto flex items-center gap-3">
-        {onComments && <button type="button" aria-label={commentsOpen ? "关闭评论" : "打开评论"} aria-pressed={commentsOpen} onClick={onComments} className="grid size-8 place-items-center rounded-full border text-muted-foreground hover:bg-hover"><MessageSquare size={15}/></button>}
-        {typeof document !== "undefined" && typeof document.documentElement.requestFullscreen === "function" && <button type="button" aria-label={fullscreen ? "退出全屏" : "进入全屏"} onClick={() => void toggleFullscreen()} className="grid size-8 place-items-center rounded-full border text-muted-foreground hover:bg-hover">{fullscreen ? <Minimize2 size={15}/> : <Maximize2 size={15}/>}</button>}
+        {onComments && <button type="button" aria-label={commentsOpen ? t("关闭评论") : t("打开评论")} aria-pressed={commentsOpen} onClick={onComments} className="grid size-8 place-items-center rounded-full border text-muted-foreground hover:bg-hover"><MessageSquare size={15}/></button>}
+        {typeof document !== "undefined" && typeof document.documentElement.requestFullscreen === "function" && <button type="button" aria-label={fullscreen ? t("退出全屏") : t("进入全屏")} onClick={() => void toggleFullscreen()} className="grid size-8 place-items-center rounded-full border text-muted-foreground hover:bg-hover">{fullscreen ? <Minimize2 size={15}/> : <Maximize2 size={15}/>}</button>}
       </div>
     </header>
-    {!synced && <div role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">文档尚未同步完成，演示内容可能包含未保存的修改。</div>}
+    {!synced && <div role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{t("文档尚未同步完成，演示内容可能包含未保存的修改。")}</div>}
     {notice && <div role="status" className="border-b px-5 py-2 text-[13px] text-muted-foreground">{notice}</div>}
     <main className={`min-h-0 flex-1 overflow-y-auto ${commentsOpen ? "sm:pr-[296px]" : ""}`} data-presentation-content data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }} onContextMenu={(event) => { if (!allowCopy || !allowPrint) event.preventDefault(); }}>
       <DocumentCover id={id} userId={userId} visible enabled={false} hasIcon={!!glyph} allowCopy={allowCopy} allowPrint={allowPrint} onRevalidate={onRevalidate}>{({ hasCover }) => <article className={`mx-auto w-full max-w-[960px] px-7 pb-32 sm:px-16 ${hasCover ? "pt-8" : "pt-12 sm:pt-14"}`}>
-        {glyph && <div aria-label="文档图标" className="mb-2 text-[32px] leading-none">{glyph}</div>}
-        <h1 className="mb-8 break-words text-[32px] font-medium leading-[1.3]">{title.trim() || "未命名文档"}</h1>
+        {glyph && <div aria-label={t("文档图标")} className="mb-2 text-[32px] leading-none">{glyph}</div>}
+        <h1 className="mb-8 break-words text-[32px] font-medium leading-[1.3]">{title.trim() || t("未命名文档")}</h1>
         <div ref={contentRef}><ReadOnlyDoc view={view} disableFileDownloads={!allowPrint} onPreviewImage={(src, name, mime) => setPreview({ src, name, mime })} commentDoc={commentDoc} comments={comments} activeThread={activeThread} onActivateComment={onActivateComment}/></div>
       </article>}</DocumentCover>
     </main>

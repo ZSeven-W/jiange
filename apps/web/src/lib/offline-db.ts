@@ -8,9 +8,10 @@
  */
 
 export const OFFLINE_DB_NAME = "jiange-offline-v1";
-export const OFFLINE_DB_VERSION = 1;
+export const OFFLINE_DB_VERSION = 2;
 export const OFFLINE_SNAPSHOTS_STORE = "snapshots";
 export const OFFLINE_QUEUE_STORE = "queue";
+export const OFFLINE_COLLAB_STORE = "collab_replicas";
 
 export const MAX_OFFLINE_SNAPSHOTS = 50;
 export const MAX_OFFLINE_SNAPSHOT_BYTES = 16 * 1024 * 1024; // 16 MB
@@ -69,10 +70,79 @@ export interface EnqueueOfflineMutationInput {
   lastError?: string;
 }
 
+export interface DocCollabReplica {
+  key: string;
+  kind: "doc";
+  userId: number;
+  docId: number;
+  snapshotBase64: string;
+  seq: number;
+  historyEpoch: number | null;
+  role: "view" | "edit" | "manage";
+  clientId?: number;
+  updatedAt: number;
+  pendingOpsCount: number;
+}
+
+export interface SheetOfflineCellEdit {
+  worksheetId?: number;
+  row: number;
+  col: number;
+  rowId?: number;
+  columnId?: number;
+  raw: string;
+  expectedRevision?: number;
+  updatedAt: number;
+}
+
+export interface SheetOfflineDelta {
+  key: string;
+  kind: "sheet";
+  userId: number;
+  sheetId: number;
+  worksheetId: number;
+  edits: SheetOfflineCellEdit[];
+  baseRevision: number;
+  updatedAt: number;
+}
+
+export interface SlidesOfflinePageEntry {
+  pageId: number;
+  shapesJson: string;
+  baseRevision: number;
+  title?: string;
+  body?: string;
+  background?: string;
+  layout?: string;
+  notes?: string;
+  updatedAt: number;
+}
+
+export interface SlidesOfflineDraft {
+  key: string;
+  kind: "slides";
+  userId: number;
+  deckId: number;
+  pageId: number;
+  shapesJson: string;
+  baseRevision: number;
+  title?: string;
+  body?: string;
+  background?: string;
+  layout?: string;
+  notes?: string;
+  pages?: Record<string, SlidesOfflinePageEntry>;
+  updatedAt: number;
+}
+
+export type OfflineCollabRecord = DocCollabReplica | SheetOfflineDelta | SlidesOfflineDraft;
+export type OfflineCollabRecordKind = OfflineCollabRecord["kind"];
+
 export interface OfflineStorageStats {
   snapshotCount: number;
   totalBytes: number;
   queueCount: number;
+  collabCount: number;
   maxSnapshots: number;
   maxBytes: number;
   backend: "indexeddb" | "memory";
@@ -254,12 +324,18 @@ interface OfflineDbBackend {
   putMutation(mutation: OfflineMutation): Promise<void>;
   deleteMutation(id: string): Promise<void>;
   clearMutations(): Promise<void>;
+  getCollabRecord(key: string): Promise<OfflineCollabRecord | null>;
+  getAllCollabRecords(): Promise<OfflineCollabRecord[]>;
+  putCollabRecord(record: OfflineCollabRecord): Promise<void>;
+  deleteCollabRecord(key: string): Promise<void>;
+  clearCollabRecords(): Promise<void>;
   close(): void;
 }
 
 function createMemoryBackend(): OfflineDbBackend {
   const snapshots = new Map<string, OfflineSnapshot>();
   const queue = new Map<string, OfflineMutation>();
+  const collab = new Map<string, OfflineCollabRecord>();
 
   return {
     kind: "memory",
@@ -298,9 +374,26 @@ function createMemoryBackend(): OfflineDbBackend {
     async clearMutations() {
       queue.clear();
     },
+    async getCollabRecord(key) {
+      const item = collab.get(key);
+      return item ? cloneValue(item) : null;
+    },
+    async getAllCollabRecords() {
+      return Array.from(collab.values(), (item) => cloneValue(item));
+    },
+    async putCollabRecord(record) {
+      collab.set(record.key, cloneValue(record));
+    },
+    async deleteCollabRecord(key) {
+      collab.delete(key);
+    },
+    async clearCollabRecords() {
+      collab.clear();
+    },
     close() {
       snapshots.clear();
       queue.clear();
+      collab.clear();
     },
   };
 }
@@ -390,6 +483,35 @@ function createIndexedDbBackend(db: IDBDatabase): OfflineDbBackend {
       tx.objectStore(OFFLINE_QUEUE_STORE).clear();
       await idbTransactionComplete(tx);
     },
+    async getCollabRecord(key) {
+      const tx = db.transaction(OFFLINE_COLLAB_STORE, "readonly");
+      const result = await idbRequestToPromise(
+        tx.objectStore(OFFLINE_COLLAB_STORE).get(key) as IDBRequest<OfflineCollabRecord | undefined>,
+      );
+      return result ?? null;
+    },
+    async getAllCollabRecords() {
+      const tx = db.transaction(OFFLINE_COLLAB_STORE, "readonly");
+      const result = await idbRequestToPromise(
+        tx.objectStore(OFFLINE_COLLAB_STORE).getAll() as IDBRequest<OfflineCollabRecord[]>,
+      );
+      return Array.isArray(result) ? result : [];
+    },
+    async putCollabRecord(record) {
+      const tx = db.transaction(OFFLINE_COLLAB_STORE, "readwrite");
+      tx.objectStore(OFFLINE_COLLAB_STORE).put(record);
+      await idbTransactionComplete(tx);
+    },
+    async deleteCollabRecord(key) {
+      const tx = db.transaction(OFFLINE_COLLAB_STORE, "readwrite");
+      tx.objectStore(OFFLINE_COLLAB_STORE).delete(key);
+      await idbTransactionComplete(tx);
+    },
+    async clearCollabRecords() {
+      const tx = db.transaction(OFFLINE_COLLAB_STORE, "readwrite");
+      tx.objectStore(OFFLINE_COLLAB_STORE).clear();
+      await idbTransactionComplete(tx);
+    },
     close() {
       try {
         db.close();
@@ -423,6 +545,14 @@ function openIndexedDb(factory: IDBFactory): Promise<IDBDatabase> {
         const queueStore = db.createObjectStore(OFFLINE_QUEUE_STORE, { keyPath: "id" });
         if (typeof queueStore.createIndex === "function") {
           queueStore.createIndex("by_createdAt", "createdAt", { unique: false });
+        }
+      }
+      if (!db.objectStoreNames.contains(OFFLINE_COLLAB_STORE)) {
+        const collabStore = db.createObjectStore(OFFLINE_COLLAB_STORE, { keyPath: "key" });
+        if (typeof collabStore.createIndex === "function") {
+          collabStore.createIndex("by_updatedAt", "updatedAt", { unique: false });
+          collabStore.createIndex("by_kind", "kind", { unique: false });
+          collabStore.createIndex("by_userId", "userId", { unique: false });
         }
       }
     };
@@ -629,15 +759,17 @@ export async function clearOfflineSnapshots(): Promise<void> {
 
 export async function offlineStorageStats(): Promise<OfflineStorageStats> {
   const backend = await getBackend();
-  const [snapshots, queue] = await Promise.all([
+  const [snapshots, queue, collab] = await Promise.all([
     backend.getAllSnapshots(),
     backend.getAllMutations(),
+    backend.getAllCollabRecords(),
   ]);
   const totalBytes = snapshots.reduce((sum, item) => sum + Math.max(0, item.sizeBytes), 0);
   return {
     snapshotCount: snapshots.length,
     totalBytes,
     queueCount: queue.length,
+    collabCount: collab.length,
     maxSnapshots: MAX_OFFLINE_SNAPSHOTS,
     maxBytes: MAX_OFFLINE_SNAPSHOT_BYTES,
     backend: backend.kind,
@@ -739,5 +871,71 @@ export async function updateOfflineMutationError(
 export async function clearOfflineQueue(): Promise<void> {
   const backend = await getBackend();
   await backend.clearMutations();
+  emitDbChange();
+}
+
+/**
+ * Persist a CRDT document replica or offline Sheet/Slides delta in `collab_replicas`.
+ * Enforces key safety and the 16 MB per-record size cap.
+ */
+export async function putOfflineCollabRecord<T extends OfflineCollabRecord>(
+  record: T,
+): Promise<T | null> {
+  if (!isSafeSnapshotKey(record.key)) {
+    return null;
+  }
+  const cloned = cloneValue(record);
+  const sizeBytes = estimateOfflineBytes(cloned);
+  if (sizeBytes > MAX_OFFLINE_SNAPSHOT_BYTES) {
+    return null;
+  }
+  const backend = await getBackend();
+  await backend.putCollabRecord(cloned);
+  emitDbChange();
+  return cloned;
+}
+
+export async function getOfflineCollabRecord<
+  T extends OfflineCollabRecord = OfflineCollabRecord,
+>(key: string): Promise<T | null> {
+  if (!key) return null;
+  const backend = await getBackend();
+  const record = await backend.getCollabRecord(key);
+  return (record as T | null) ?? null;
+}
+
+/**
+ * List persisted CRDT replicas and offline deltas ordered most-recently-updated first.
+ */
+export async function listOfflineCollabRecords<
+  T extends OfflineCollabRecord = OfflineCollabRecord,
+>(kind?: OfflineCollabRecordKind): Promise<T[]> {
+  const backend = await getBackend();
+  const all = await backend.getAllCollabRecords();
+  const filtered = kind ? all.filter((item) => item.kind === kind) : all;
+  return filtered
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.key.localeCompare(b.key)) as T[];
+}
+
+export async function deleteOfflineCollabRecord(key: string): Promise<void> {
+  if (!key) return;
+  const backend = await getBackend();
+  await backend.deleteCollabRecord(key);
+  emitDbChange();
+}
+
+export async function clearOfflineCollabRecords(kind?: OfflineCollabRecordKind): Promise<void> {
+  const backend = await getBackend();
+  if (!kind) {
+    await backend.clearCollabRecords();
+    emitDbChange();
+    return;
+  }
+  const all = await backend.getAllCollabRecords();
+  for (const item of all) {
+    if (item.kind === kind) {
+      await backend.deleteCollabRecord(item.key);
+    }
+  }
   emitDbChange();
 }

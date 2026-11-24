@@ -1,30 +1,6 @@
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { DocFontFamily, DocFontSize, DocPagePrefs, DocPaperBg, DocWidth } from "@/lib/doc-width";
-
-const WIDTH_OPTIONS: { value: DocWidth; label: string; lines: number }[] = [
-  { value: "default", label: "默认", lines: 16 },
-  { value: "wider", label: "较宽", lines: 22 },
-  { value: "full", label: "全宽", lines: 28 },
-];
-
-const FONT_SIZES: { value: DocFontSize; label: string }[] = [
-  { value: "sm", label: "小" },
-  { value: "md", label: "标准" },
-  { value: "lg", label: "大" },
-];
-
-const FONT_FAMILIES: { value: DocFontFamily; label: string; sample: string }[] = [
-  { value: "default", label: "默认", sample: "font-sans" },
-  { value: "serif", label: "衬线", sample: "font-serif" },
-  { value: "mono", label: "等宽", sample: "font-mono" },
-];
-
-const PAPER_TINTS: { value: DocPaperBg; label: string; swatch: string }[] = [
-  { value: "white", label: "纯净白", swatch: "#FFFFFF" },
-  { value: "warm", label: "暖米黄", swatch: "#FAF6EE" },
-  { value: "green", label: "护眼绿", swatch: "#EFF7F0" },
-  { value: "gray", label: "淡雅灰", swatch: "#F5F6F7" },
-];
 
 export function DocWidthOptions({
   width,
@@ -37,17 +13,40 @@ export function DocWidthOptions({
   prefs?: DocPagePrefs;
   onPrefsChange?: (patch: Partial<DocPagePrefs>) => void;
 }) {
+  const { t } = useI18n();
+  const widthOptions: { value: DocWidth; label: string; lines: number }[] = [
+    { value: "default", label: t("默认"), lines: 16 },
+    { value: "wider", label: t("较宽"), lines: 22 },
+    { value: "full", label: t("全宽"), lines: 28 },
+  ];
+  const fontSizes: { value: DocFontSize; label: string }[] = [
+    { value: "sm", label: t("小") },
+    { value: "md", label: t("标准") },
+    { value: "lg", label: t("大") },
+  ];
+  const fontFamilies: { value: DocFontFamily; label: string; sample: string }[] = [
+    { value: "default", label: t("默认"), sample: "font-sans" },
+    { value: "serif", label: t("衬线"), sample: "font-serif" },
+    { value: "mono", label: t("等宽"), sample: "font-mono" },
+  ];
+  const paperTints: { value: DocPaperBg; label: string; swatch: string }[] = [
+    { value: "white", label: t("纯净白"), swatch: "#FFFFFF" },
+    { value: "warm", label: t("暖米黄"), swatch: "#FAF6EE" },
+    { value: "green", label: t("护眼绿"), swatch: "#EFF7F0" },
+    { value: "gray", label: t("淡雅灰"), swatch: "#F5F6F7" },
+  ];
+
   return (
     <div
       className="w-full space-y-3.5 rounded-lg border border-[#DEE0E3] bg-surface p-3.5 shadow-[0_6px_24px_rgba(31,35,41,0.12)] dark:border-border sm:w-[264px]"
       role="radiogroup"
-      aria-label="页面设置"
+      aria-label={t("页面设置")}
       data-doc-width-options
     >
       <div>
-        <div className="mb-2 text-[12px] text-[#8F959E]">为当前窗口选择合适页宽</div>
+        <div className="mb-2 text-[12px] text-[#8F959E]">{t("为当前窗口选择合适页宽")}</div>
         <div className="flex items-center justify-between gap-2">
-          {WIDTH_OPTIONS.map(({ value, label, lines }) => (
+          {widthOptions.map(({ value, label, lines }) => (
             <button
               key={value}
               type="button"
@@ -74,9 +73,9 @@ export function DocWidthOptions({
       {prefs && onPrefsChange && (
         <>
           <div className="border-t border-[#EFF0F1] pt-3 dark:border-border">
-            <div className="mb-2 text-[12px] text-[#8F959E]">字号</div>
+            <div className="mb-2 text-[12px] text-[#8F959E]">{t("字号")}</div>
             <div className="grid grid-cols-3 gap-1 rounded-md bg-[#F5F6F7] p-0.5 dark:bg-sidebar">
-              {FONT_SIZES.map((item) => (
+              {fontSizes.map((item) => (
                 <button
                   key={item.value}
                   type="button"
@@ -94,9 +93,9 @@ export function DocWidthOptions({
           </div>
 
           <div>
-            <div className="mb-2 text-[12px] text-[#8F959E]">字体</div>
+            <div className="mb-2 text-[12px] text-[#8F959E]">{t("字体")}</div>
             <div className="grid grid-cols-3 gap-1 rounded-md bg-[#F5F6F7] p-0.5 dark:bg-sidebar">
-              {FONT_FAMILIES.map((item) => (
+              {fontFamilies.map((item) => (
                 <button
                   key={item.value}
                   type="button"
@@ -115,9 +114,9 @@ export function DocWidthOptions({
           </div>
 
           <div>
-            <div className="mb-2 text-[12px] text-[#8F959E]">页面背景</div>
+            <div className="mb-2 text-[12px] text-[#8F959E]">{t("页面背景")}</div>
             <div className="flex items-center gap-2.5">
-              {PAPER_TINTS.map((item) => (
+              {paperTints.map((item) => (
                 <button
                   key={item.value}
                   type="button"
@@ -136,12 +135,12 @@ export function DocWidthOptions({
           </div>
 
           <div className="flex items-center justify-between border-t border-[#EFF0F1] pt-3 dark:border-border">
-            <span className="text-[13px] text-foreground">标题自动编号</span>
+            <span className="text-[13px] text-foreground">{t("标题自动编号")}</span>
             <button
               type="button"
               role="switch"
               aria-checked={prefs.autoNumberHeadings}
-              aria-label="标题自动编号"
+              aria-label={t("标题自动编号")}
               data-doc-autonumber-toggle
               onClick={() => onPrefsChange({ autoNumberHeadings: !prefs.autoNumberHeadings })}
               className={cn(

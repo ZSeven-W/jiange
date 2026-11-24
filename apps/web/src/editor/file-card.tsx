@@ -1,4 +1,5 @@
 import { Download, Eye } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 // 飞书附件卡片：按类型着色的图标、文件名、大小 · 类型，悬停出现「预览 / 下载」。
@@ -25,9 +26,10 @@ export function fmtSize(n: number) {
 }
 
 export function FileCard({ fileId, name, size, canDownload, onPreview, href: hrefOverride }: { fileId?: string; name?: string; size?: string; canDownload: boolean; onPreview?: () => void; href?: string }) {
+  const { t } = useI18n();
   const kind = fileKind(name);
   const href = hrefOverride ?? `/api/files/${fileId}`;
-  const meta = [canDownload ? fmtSize(Number(size ?? 0)) : "下载已关闭", kind.ext ? kind.ext.toUpperCase() : ""].filter(Boolean).join(" · ");
+  const meta = [canDownload ? fmtSize(Number(size ?? 0)) : t("下载已关闭"), kind.ext ? kind.ext.toUpperCase() : ""].filter(Boolean).join(" · ");
   const btn = "grid size-7 place-items-center rounded-md text-muted-foreground hover:bg-hover hover:text-foreground";
   return (
     <div
@@ -43,8 +45,8 @@ export function FileCard({ fileId, name, size, canDownload, onPreview, href: hre
         <span className="block text-[12px] text-subtle" data-file-meta>{meta}</span>
       </span>
       <span className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover/file:opacity-100" data-file-actions>
-        {onPreview && <button type="button" title="预览" aria-label="预览" className={btn} onClick={(e) => { e.stopPropagation(); onPreview(); }} data-file-preview><Eye size={15} /></button>}
-        {canDownload && <a href={href} download={name} title="下载" aria-label="下载" className={btn} onClick={(e) => e.stopPropagation()} data-file-download><Download size={15} /></a>}
+        {onPreview && <button type="button" title={t("预览")} aria-label={t("预览")} className={btn} onClick={(e) => { e.stopPropagation(); onPreview(); }} data-file-preview><Eye size={15} /></button>}
+        {canDownload && <a href={href} download={name} title={t("下载")} aria-label={t("下载")} className={btn} onClick={(e) => e.stopPropagation()} data-file-download><Download size={15} /></a>}
       </span>
     </div>
   );

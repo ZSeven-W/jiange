@@ -1,4 +1,5 @@
 import type { DocView } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 export interface DiffRow {
   kind: "same" | "added" | "removed" | "changed";
@@ -20,14 +21,14 @@ type Projected = { type: string; text: string; signature: string; identity?: num
 function project(block: DocView["blocks"][number]): Projected {
   const raw = block.spans.map((span) => span.text).join("");
   const text =
-    block.type === "math" ? "[公式]"
-    : block.type === "diagram" ? "[Mermaid 图表]"
-    : block.type === "toc" ? "[目录]"
-    : block.type === "status" ? "[状态]"
-    : block.type === "embed" ? "[嵌入视图]"
-    : block.type === "image" ? "[图片]"
-    : block.type === "divider" ? "[分割线]"
-    : block.spans.map((span) => span.marks.math ? "[公式]" : span.text).join("");
+    block.type === "math" ? t("[公式]")
+    : block.type === "diagram" ? t("[Mermaid 图表]")
+    : block.type === "toc" ? t("[目录]")
+    : block.type === "status" ? t("[状态]")
+    : block.type === "embed" ? t("[嵌入视图]")
+    : block.type === "image" ? t("[图片]")
+    : block.type === "divider" ? t("[分割线]")
+    : block.spans.map((span) => span.marks.math ? t("[公式]") : span.text).join("");
   return { type: block.type, text, signature: raw };
 }
 

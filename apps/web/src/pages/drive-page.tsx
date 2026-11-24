@@ -7,6 +7,7 @@ import { BaseIcon, docTitle, hrefOf, isBoardDoc } from "@/components/sidebar";
 import { nodeHref } from "@/lib/route";
 import { DocumentGlyph } from "@/components/document-glyph";
 import { ask, askText } from "@/components/ui/ask";
+import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { parseMarkdown } from "@/lib/markdown";
 import { extractMarkdownImages, importMarkdownBlocksWithImages } from "@/lib/markdown-image-import";
@@ -19,7 +20,7 @@ import { TemplateLibrary } from "./template-library";
 import { DirectoryPickerGate, type DriveUploadManager } from "./drive-upload";
 import type { DriveDirectoryHandle } from "./drive-upload-plan";
 import { formatDriveTime, ownRootFolders, sortDriveDocuments, sortDriveFolders, type FolderSortDirection, type FolderSortField } from "./drive-sort";
-import { batchMessage, pruneSelection, runDriveBatch, toggleId } from "./drive-batch";
+import { pruneSelection, runDriveBatch, toggleId } from "./drive-batch";
 import { moveDriveColumn, readDriveColumns, writeDriveColumns, type DriveColumn, type DriveColumnPreferences } from "./drive-columns";
 import { DriveDocGlyph, NewDocGlyph, UploadGlyph, TemplateGlyph } from "@/components/drive-action-icons";
 import { SheetColorIcon, WhiteboardIcon } from "@/components/feishu-icons";
@@ -31,6 +32,7 @@ function driveColumnStorage(): Storage | undefined {
 
 /** Cloud drive: folder navigation and file operations use the guarded drive API. */
 export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderId: number | null; personalRoot: boolean; userId: number; uploads: DriveUploadManager }) {
+  const { t, locale } = useI18n();
   const uploadState = useSyncExternalStore(uploads.subscribe, uploads.snapshot, uploads.snapshot);
   const currentUser = useRef(userId); currentUser.current = userId;
   const pickerGate = useRef(new DirectoryPickerGate());
@@ -46,14 +48,14 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       pickerPending.current = false;
       if (error instanceof DOMException && error.name === "AbortError") return;
       setUseFallbackPicker(fallbackPickerSupported);
-      uploads.selectionError(fallbackPickerSupported ? "无法打开目录选择器，请重新选择“上传文件夹”；兼容模式不会上传空文件夹。" : "无法打开目录选择器，请检查浏览器权限后重试。");
+      uploads.selectionError(fallbackPickerSupported ? t("无法打开目录选择器，请重新选择“上传文件夹”；兼容模式不会上传空文件夹。") : t("无法打开目录选择器，请检查浏览器权限后重试。"));
     });
     setUploadMenu(false);
   };
   const qc = useQueryClient();
   useEffect(() => {
-    document.title = "云盘 - Jiange";
-  }, []);
+    document.title = t("云盘 - Jiange");
+  }, [locale, t]);
   const list = useQuery({ queryKey: ["drive", folderId, personalRoot], queryFn: () => driveApi.children(folderId, personalRoot), refetchInterval: 15000, refetchIntervalInBackground: false });
   const shortcutsQuery = useQuery({ queryKey: ["drive-shortcuts", folderId, personalRoot], queryFn: () => driveApi.shortcuts(folderId, personalRoot), refetchInterval: 15000, refetchIntervalInBackground: false });
   const crumbs = useQuery({ queryKey: ["drive-ancestors", folderId], queryFn: () => driveApi.ancestors(folderId!), enabled: folderId !== null });
@@ -101,7 +103,7 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   const importGeneration = useRef(0);
   useEffect(() => { importGeneration.current++; return () => { importGeneration.current++; }; }, [userId, folderId, personalRoot]);
   const invalidate = () => { void qc.invalidateQueries({ queryKey: ["drive"] }); void qc.invalidateQueries({ queryKey: ["drive-shortcuts"] }); void qc.invalidateQueries({ queryKey: ["drive-nav"] }); void qc.invalidateQueries({ queryKey: ["drive-ancestors"] }); };
-  const failure = () => { setError("操作结果未能确认，请刷新后检查。"); invalidate(); };
+  const failure = () => { setError(t("操作结果未能确认，请刷新后检查。")); invalidate(); };
   const rename = useMutation({ mutationFn: ({ id, title, expected }: { id: number; title: string; expected: number }) => driveApi.rename(id, title, expected), onSuccess: () => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); }, onError: failure });
   const createFolder = useMutation({ mutationFn: (title: string) => driveApi.create(title, folderId, scope), onSuccess: invalidate, onError: failure });
   const createNode = useMutation({ mutationFn: ({ kind, title }: { kind: "doc" | "base" | "slides" | "sheet" | "survey"; title: string }) => driveApi.createNode(kind, title, folderId, scope), onSuccess: (entry) => { invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); location.hash = hrefOf({ id: entry.id, kind: entry.kind }); }, onError: failure });
@@ -121,9 +123,28 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   }, [shortcutsQuery.data, filter]);
   useEffect(() => { setSelected((prev) => pruneSelection(prev, files.map((entry) => entry.id))); }, [files]);
   const chosen = files.filter((entry) => selected.has(entry.id));
-  const finishBatch = (verb: string, result: { done: number[]; failed: number[] }) => {
-    const { notice: n, error: e } = batchMessage(verb, result);
-    setNotice(n); setError(e);
+  const finishBatch = (action: "move" | "delete" | "star", result: { done: number[]; failed: number[] }) => {
+    if (!result.failed.length) {
+      setNotice(
+        action === "move"
+          ? t("已移动 {n} 项。", { n: result.done.length })
+          : action === "delete"
+            ? t("已删除 {n} 项。", { n: result.done.length })
+            : t("已收藏 {n} 项。", { n: result.done.length }),
+      );
+      setError("");
+    } else {
+      setNotice("");
+      setError(
+        result.done.length
+          ? action === "move"
+            ? t("已移动 {done} 项，{failed} 项未完成（可能已被他人修改或没有权限），已保留选中，请刷新后重试。", { done: result.done.length, failed: result.failed.length })
+            : action === "delete"
+              ? t("已删除 {done} 项，{failed} 项未完成（可能已被他人修改或没有权限），已保留选中，请刷新后重试。", { done: result.done.length, failed: result.failed.length })
+              : t("已收藏 {done} 项，{failed} 项未完成（可能已被他人修改或没有权限），已保留选中，请刷新后重试。", { done: result.done.length, failed: result.failed.length })
+          : t("{failed} 项未完成（可能已被他人修改或没有权限），已保留选中，请刷新后重试。", { failed: result.failed.length }),
+      );
+    }
     setSelected(new Set(result.failed));
     invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
   };
@@ -146,23 +167,23 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
     draggingRef.current = [];
     if (!items.length || batchPending) return;
     if (items.some((item) => !!item.personal !== targetPersonal)) {
-      setError("仅支持在同一空间范围（我的文件夹 / 共享文件夹）内拖拽移动。");
+      setError(t("仅支持在同一空间范围（我的文件夹 / 共享文件夹）内拖拽移动。"));
       return;
     }
     setBatchPending(true); setNotice(""); setError("");
     try {
       const result = await runDriveBatch(items, (item) => driveApi.moveForAccount(item.id, targetParentId, item.revision, userId));
-      finishBatch("移动", result);
+      finishBatch("move", result);
     } finally {
       setBatchPending(false);
     }
   };
   const removeShortcut = async (sc: DriveShortcut) => {
-    if (!(await ask(`移除快捷方式「${sc.targetTitle || sc.title || "快捷方式"}」？`, "仅移除快捷方式，不会删除原文档。"))) return;
+    if (!(await ask(t("移除快捷方式「{name}」？", { name: sc.targetTitle || sc.title || t("快捷方式") }), t("仅移除快捷方式，不会删除原文档。")))) return;
     setError(""); setNotice("");
     try {
       await driveApi.deleteShortcut(sc.id, userId);
-      setNotice("已移除快捷方式。");
+      setNotice(t("已移除快捷方式。"));
       invalidate();
     } catch {
       failure();
@@ -181,26 +202,26 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
   };
   const batchTrash = async () => {
     if (!chosen.length || batchPending) return;
-    if (!(await ask(`删除选中的 ${chosen.length} 项？`, "会移到回收站，可恢复。"))) return;
+    if (!(await ask(t("删除选中的 {n} 项？", { n: chosen.length }), t("会移到回收站，可恢复。")))) return;
     setBatchPending(true); setNotice(""); setError("");
-    try { finishBatch("删除", await runDriveBatch(chosen, (entry) => driveApi.trash(entry.id, entry.revision))); void qc.invalidateQueries({ queryKey: ["trash"] }); }
+    try { finishBatch("delete", await runDriveBatch(chosen, (entry) => driveApi.trash(entry.id, entry.revision))); void qc.invalidateQueries({ queryKey: ["trash"] }); }
     finally { setBatchPending(false); }
   };
   const batchStar = async () => {
     if (!chosen.length || batchPending) return;
     const starredIds = new Set((favorites.data ?? []).map((item) => item.id));
     setBatchPending(true); setNotice(""); setError("");
-    try { finishBatch("收藏", await runDriveBatch(chosen, (entry) => starredIds.has(entry.id) ? Promise.resolve() : extrasApi.star(entry.id))); void favorites.refetch(); }
+    try { finishBatch("star", await runDriveBatch(chosen, (entry) => starredIds.has(entry.id) ? Promise.resolve() : extrasApi.star(entry.id))); void favorites.refetch(); }
     finally { setBatchPending(false); }
   };
   const newItem = async (kind: "doc" | "base" | "slides" | "sheet" | "survey" | "board" | "mindmap" | "folder") => {
     setCreating(false); setError("");
-    const label = kind === "doc" ? "文档" : kind === "sheet" ? "表格" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "survey" ? "问卷" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹";
-    const title = await askText(`新建${label}`, `${label}名称`);
+    const label = kind === "doc" ? t("文档") : kind === "sheet" ? t("表格") : kind === "base" ? t("多维表格") : kind === "slides" ? t("幻灯片") : kind === "survey" ? t("问卷") : kind === "board" ? t("画板") : kind === "mindmap" ? t("思维导图") : t("文件夹");
+    const title = await askText(t("新建{label}", { label }), t("{label}名称", { label }));
     if (!title?.trim()) return;
     if (kind === "board" || kind === "mindmap") {
       // 与飞书一致：画板是一篇只含画板的文档，打开后直接进入画板。
-      try { const entry = kind === "mindmap" ? await driveApi.createWordImportNode(title.trim(), folderId, scope, userId) : await driveApi.createWordImportNode(title.trim(), folderId, scope, userId, "board"); if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || entry.kind !== "doc" || (kind === "board" && entry.docType !== "board") || (entry.creatorId !== undefined && entry.creatorId !== userId)) throw new Error("invalid document response"); stageBoard(userId, entry.id, kind); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === userId) location.hash = hrefOf({ id: entry.id, kind: "doc" }); else setError("创建结果未确认，请检查文档库。"); }
+      try { const entry = kind === "mindmap" ? await driveApi.createWordImportNode(title.trim(), folderId, scope, userId) : await driveApi.createWordImportNode(title.trim(), folderId, scope, userId, "board"); if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || entry.kind !== "doc" || (kind === "board" && entry.docType !== "board") || (entry.creatorId !== undefined && entry.creatorId !== userId)) throw new Error("invalid document response"); stageBoard(userId, entry.id, kind); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); if (currentUser.current === userId) location.hash = hrefOf({ id: entry.id, kind: "doc" }); else setError(t("创建结果未确认，请检查文档库。")); }
       catch { failure(); }
       return;
     }
@@ -215,9 +236,9 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       if (isDocxFile(file)) {
         // Parse the whole file before creating anything: a broken .docx leaves no empty document behind.
         const result = await readDocxFile(file, { images: true });
-        if (result.warnings.length && !await ask("Word 导入可能丢失内容", `${result.warnings.join("；")}。仍要导入其余内容吗？`, false)) return;
+        if (result.warnings.length && !await ask(t("Word 导入可能丢失内容"), t("{warnings}。仍要导入其余内容吗？", { warnings: result.warnings.join(t("；")) }), false)) return;
         if (!stillHere()) return;
-        const title = file.name.replace(/\.docx$/i, "").trim() || result.title || "导入文档";
+        const title = file.name.replace(/\.docx$/i, "").trim() || result.title || t("导入文档");
         const doc = await driveApi.createWordImportNode(title, folderId, scope, userId);
         await stagePendingWord(userId, doc.id, file);
         if (!stillHere()) return;
@@ -225,25 +246,25 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
         location.hash = hrefOf({ id: doc.id, kind: "doc" });
         return;
       }
-      if (file.size > 5 * 1024 * 1024) throw new Error("Markdown 文件不能超过 5 MB。");
+      if (file.size > 5 * 1024 * 1024) throw new Error(t("Markdown 文件不能超过 5 MB。"));
       const markdown = await file.text();
       const extractedImages = extractMarkdownImages(markdown);
       if (!parseMarkdown(markdown).some((b) => b.type !== "image") && !extractedImages.some((img) => img.safe)) {
-        throw new Error("文件没有可导入的内容。");
+        throw new Error(t("文件没有可导入的内容。"));
       }
       if (!stillHere()) return;
-      const title = file.name.replace(/\.(md|markdown)$/i, "") || "导入文档";
+      const title = file.name.replace(/\.(md|markdown)$/i, "") || t("导入文档");
       const doc = await driveApi.createNode("doc", title, folderId, scope);
       const imported = await importMarkdownBlocksWithImages(markdown, {
         uploadImage: (imgFile) => docsApi.upload(doc.id, imgFile),
         canContinue: stillHere,
       });
       if (!stillHere()) return;
-      if (!imported.blocks.length) throw new Error("文件没有可导入的内容。");
+      if (!imported.blocks.length) throw new Error(t("文件没有可导入的内容。"));
       stageStarter(userId, doc.id, markdown, imported.blocks);
       invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
       location.hash = hrefOf({ id: doc.id, kind: "doc" });
-    } catch (err) { if (stillHere()) setError(err instanceof DocxImportError || (err instanceof Error && !isDocxFile(file)) ? err.message : "导入未完成，请检查目录后重试。"); }
+    } catch (err) { if (stillHere()) setError(err instanceof DocxImportError || (err instanceof Error && !isDocxFile(file)) ? err.message : t("导入未完成，请检查目录后重试。")); }
     finally { importLock.current = false; setImporting(false); }
   };
   const chooseTemplate = async (template: StarterTemplate) => {
@@ -254,81 +275,81 @@ export function DrivePage({ folderId, personalRoot, userId, uploads }: { folderI
       stageStarter(userId, doc.id, template.body);
       invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] });
       setLibraryOpen(false); location.hash = hrefOf({ id: doc.id, kind: "doc" });
-    } catch { setError("创建模板文档未完成，请检查目录后重试。"); }
+    } catch { setError(t("创建模板文档未完成，请检查目录后重试。")); }
     finally { templateLock.current = false; setTemplatePending(false); }
   };
   const actions = (entry: DriveEntry) => ({
     onOpen: () => { location.hash = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind }); },
-    onRename: async () => { const title = await askText("重命名", "名称", entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
+    onRename: async () => { const title = await askText(t("重命名"), t("名称"), entry.title); if (title?.trim() && title.trim() !== entry.title) rename.mutate({ id: entry.id, title: title.trim(), expected: entry.revision }); },
     onMove: () => setMoving({ entries: [entry], batch: false }),
     onCopyTo: ["doc", "sheet", "base", "slides", "survey"].includes(entry.kind) ? () => { setCopiedDoc(null); setCopying(entry); } : undefined,
-    onCopyLink: async () => { const route = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind }); try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}${route}`); setNotice("链接已复制，访问者仍需具备权限。"); } catch { setError("复制失败，请检查浏览器剪贴板权限。"); } },
-    onTrash: () => { void ask(`删除「${entry.title}」？`, entry.kind === "folder" ? "整个文件夹会移到回收站，可恢复。" : "会移到回收站，可恢复。").then((ok) => { if (ok) trash.mutate(entry); }); },
+    onCopyLink: async () => { const route = entry.kind === "folder" ? `#/drive/${entry.id}` : hrefOf({ id: entry.id, kind: entry.kind }); try { await navigator.clipboard.writeText(`${location.origin}${location.pathname}${route}`); setNotice(t("链接已复制，访问者仍需具备权限。")); } catch { setError(t("复制失败，请检查浏览器剪贴板权限。")); } },
+    onTrash: () => { void ask(t("删除「{title}」？", { title: entry.title }), entry.kind === "folder" ? t("整个文件夹会移到回收站，可恢复。") : t("会移到回收站，可恢复。")).then((ok) => { if (ok) trash.mutate(entry); }); },
     onStar: (next: boolean) => { void (next ? extrasApi.star(entry.id) : extrasApi.unstar(entry.id)).then(() => favorites.refetch()).catch(failure); },
   });
   return <main className="flex min-w-0 flex-1 flex-col bg-white" data-drive-page>
-    <header className="flex h-16 shrink-0 items-center gap-2 pl-14 pr-4 sm:pr-5 md:px-7 xl:px-6"><h1 className="min-w-0 truncate text-[20px] font-semibold text-[#1f2329]">云盘</h1><button type="button" aria-label="全局搜索" onClick={() => document.querySelector<HTMLElement>("[data-search]")?.click()} className="ml-auto grid size-9 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:size-8"><Search size={18}/></button></header>
+    <header className="flex h-16 shrink-0 items-center gap-2 pl-14 pr-4 sm:pr-5 md:px-7 xl:px-6"><h1 className="min-w-0 truncate text-[20px] font-semibold text-[#1f2329]">{t("云盘")}</h1><button type="button" aria-label={t("全局搜索")} onClick={() => document.querySelector<HTMLElement>("[data-search]")?.click()} className="ml-auto grid size-9 shrink-0 place-items-center rounded-md text-[#646a73] hover:bg-[#f2f3f5] sm:size-8"><Search size={18}/></button></header>
     <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-8 sm:px-7 xl:px-6">
       <div className="grid max-w-[1256px] grid-cols-2 gap-2 pt-2 md:grid-cols-4 md:gap-3">
         <div className="relative min-w-0">
-          <button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] sm:px-4", creating && "bg-[#f2f3f5]")}><NewDocGlyph/><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium text-[#1f2329]">新建</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">新建文档开始协作</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", creating && "rotate-180")}/></button>
-          {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div role="menu" aria-label="新建" className="absolute left-0 top-[68px] z-40 w-full min-w-48 max-w-[calc(100vw-32px)] rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" data-drive-new-menu>{(["doc", "sheet", "slides", "base", "survey", "board", "mindmap", "folder"] as const).map((kind) => <button key={kind} type="button" role="menuitem" onClick={() => void newItem(kind)} className={cn("flex h-10 w-full", kind === "folder" && "mt-1 border-t border-[#dee0e3] pt-1 h-11")} data-new-kind={kind}><span className="mx-1 flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DriveDocGlyph/> : kind === "sheet" ? <SheetColorIcon className="size-5 shrink-0"/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : kind === "survey" ? <span className="grid size-5 place-items-center rounded bg-violet-600 text-white"><ClipboardList size={13}/></span> : kind === "board" ? <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]"/> : kind === "mindmap" ? <ListTree size={20} className="text-[#1caff0]"/> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? "文档" : kind === "sheet" ? "表格" : kind === "base" ? "多维表格" : kind === "slides" ? "幻灯片" : kind === "survey" ? "问卷" : kind === "board" ? "画板" : kind === "mindmap" ? "思维导图" : "文件夹"}</span></button>)}</div></>}
+          <button type="button" onClick={() => setCreating((value) => !value)} aria-expanded={creating} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] sm:px-4", creating && "bg-[#f2f3f5]")}><NewDocGlyph/><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium text-[#1f2329]">{t("新建")}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">{t("新建文档开始协作")}</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", creating && "rotate-180")}/></button>
+          {creating && <><div className="fixed inset-0 z-30" onClick={() => setCreating(false)}/><div role="menu" aria-label={t("新建")} className="absolute left-0 top-[68px] z-40 w-full min-w-48 max-w-[calc(100vw-32px)] rounded-lg border border-[#dee0e3] bg-white py-1 shadow-[0_6px_24px_rgba(31,35,41,0.16)]" data-drive-new-menu>{(["doc", "sheet", "slides", "base", "survey", "board", "mindmap", "folder"] as const).map((kind) => <button key={kind} type="button" role="menuitem" onClick={() => void newItem(kind)} className={cn("flex h-10 w-full", kind === "folder" && "mt-1 border-t border-[#dee0e3] pt-1 h-11")} data-new-kind={kind}><span className="mx-1 flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-[14px] text-[#1f2329] hover:bg-[#f2f3f5]">{kind === "doc" ? <DriveDocGlyph/> : kind === "sheet" ? <SheetColorIcon className="size-5 shrink-0"/> : kind === "base" ? <BaseIcon/> : kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : kind === "survey" ? <span className="grid size-5 place-items-center rounded bg-violet-600 text-white"><ClipboardList size={13}/></span> : kind === "board" ? <WhiteboardIcon className="size-5 shrink-0 text-[#34c759]"/> : kind === "mindmap" ? <ListTree size={20} className="text-[#1caff0]"/> : <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/>}{kind === "doc" ? t("文档") : kind === "sheet" ? t("表格") : kind === "base" ? t("多维表格") : kind === "slides" ? t("幻灯片") : kind === "survey" ? t("问卷") : kind === "board" ? t("画板") : kind === "mindmap" ? t("思维导图") : t("文件夹")}</span></button>)}</div></>}
         </div>
         <div className="relative min-w-0">
-          <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading" || uploadState.phase === "scanning"} onKeyDown={(event) => { if (event.key === "Escape" && uploadMenu) { event.stopPropagation(); setUploadMenu(false); } }} onClick={() => { if (pickerPending.current && fallbackPickerSupported) { setUseFallbackPicker(true); uploads.selectionError("目录选择器未返回，请重新选择“上传文件夹”；兼容模式不会上传空文件夹。"); } pickerPending.current = false; pickerGate.current.invalidate(); setUploadMenu((open) => !open); }} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] disabled:opacity-50 sm:px-4", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" || uploadState.phase === "scanning" ? "上传中" : "上传"}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">上传本地文件</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", uploadMenu && "rotate-180")}/></button>
+          <button ref={uploadTrigger} type="button" aria-expanded={uploadMenu} disabled={importing || uploadState.phase === "uploading" || uploadState.phase === "scanning"} onKeyDown={(event) => { if (event.key === "Escape" && uploadMenu) { event.stopPropagation(); setUploadMenu(false); } }} onClick={() => { if (pickerPending.current && fallbackPickerSupported) { setUseFallbackPicker(true); uploads.selectionError(t("目录选择器未返回，请重新选择“上传文件夹”；兼容模式不会上传空文件夹。")); } pickerPending.current = false; pickerGate.current.invalidate(); setUploadMenu((open) => !open); }} className={cn("flex h-16 w-full items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] disabled:opacity-50 sm:px-4", uploadMenu && "bg-[#f2f3f5]")}><UploadGlyph/><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium text-[#1f2329]">{importing || uploadState.phase === "uploading" || uploadState.phase === "scanning" ? t("上传中") : t("上传")}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">{t("上传本地文件")}</span></span><ChevronDown size={15} className={cn("shrink-0 text-[#646a73]", uploadMenu && "rotate-180")}/></button>
           {uploadMenu && <><div className="fixed inset-0 z-30" onClick={() => setUploadMenu(false)}/><div role="menu" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setUploadMenu(false); uploadTrigger.current?.focus(); } }} className="absolute right-0 top-[70px] z-40 w-48 max-w-[calc(100vw-32px)] rounded-lg border border-[#dee0e3] bg-white py-1.5 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)] sm:left-0 sm:right-auto">
-            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#f79557] text-white"><FileUp size={14}/></span>上传文件<input type="file" aria-label="上传云盘文件" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); if (files.length) void uploads.start(files, "files", folderId, scope); }}/></label>
-            {nativePicker && !useFallbackPicker ? <button type="button" role="menuitem" onClick={openNativeDirectory} className="flex h-10 w-full items-center gap-3 px-4 text-left hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹</button> : fallbackPickerSupported ? <label role="menuitem" tabIndex={0} title="浏览器选择器不包含空文件夹" onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>上传文件夹<input ref={(input) => input?.setAttribute("webkitdirectory", "")} type="file" aria-label="选择上传文件夹" tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); setUseFallbackPicker(false); if (files.length) void uploads.start(files, "folder", folderId, scope); }}/></label> : <button type="button" role="menuitem" disabled title="当前浏览器不支持选择文件夹" className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>上传文件夹</button>}
-            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#6665ed] text-white"><FileInput size={14}/></span>导入为在线文档<input type="file" aria-label="导入 Markdown 或 Word 文件" tabIndex={-1} accept={`.md,.markdown,text/markdown,.docx,${DOCX_MIME}`} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void importMarkdown(file); }}/></label>
+            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#f79557] text-white"><FileUp size={14}/></span>{t("上传文件")}<input type="file" aria-label={t("上传云盘文件")} tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); if (files.length) void uploads.start(files, "files", folderId, scope); }}/></label>
+            {nativePicker && !useFallbackPicker ? <button type="button" role="menuitem" onClick={openNativeDirectory} className="flex h-10 w-full items-center gap-3 px-4 text-left hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>{t("上传文件夹")}</button> : fallbackPickerSupported ? <label role="menuitem" tabIndex={0} title={t("浏览器选择器不包含空文件夹")} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white"><FolderUp size={14}/></span>{t("上传文件夹")}<input ref={(input) => input?.setAttribute("webkitdirectory", "")} type="file" aria-label={t("选择上传文件夹")} tabIndex={-1} multiple className="sr-only" onChange={(event) => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; setUploadMenu(false); setUseFallbackPicker(false); if (files.length) void uploads.start(files, "folder", folderId, scope); }}/></label> : <button type="button" role="menuitem" disabled title={t("当前浏览器不支持选择文件夹")} className="flex h-10 w-full items-center gap-3 px-4 text-left text-[#bbbfc4]"><span className="grid size-5 place-items-center rounded bg-[#ffca53] text-white opacity-60"><FolderUp size={14}/></span>{t("上传文件夹")}</button>}
+            <label role="menuitem" tabIndex={0} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.currentTarget.querySelector("input")?.click(); } }} className="flex h-10 cursor-pointer items-center gap-3 px-4 hover:bg-[#f2f3f5] focus:bg-[#f2f3f5]"><span className="grid size-5 place-items-center rounded bg-[#6665ed] text-white"><FileInput size={14}/></span>{t("导入为在线文档")}<input type="file" aria-label={t("导入 Markdown 或 Word 文件")} tabIndex={-1} accept={`.md,.markdown,text/markdown,.docx,${DOCX_MIME}`} className="sr-only" onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; setUploadMenu(false); if (file) void importMarkdown(file); }}/></label>
           </div></>}
         </div>
-        <button type="button" data-drive-add-shortcut onClick={() => setShortcutDialogOpen(true)} className="flex h-16 min-w-0 items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] sm:px-4"><span className="grid size-6 shrink-0 place-items-center text-[#7652ed]"><Link2 size={21}/></span><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium text-[#1f2329]">添加</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">添加云文档的快捷方式</span></span><ChevronDown size={15} className="shrink-0 text-[#646a73]"/></button>
-        <button type="button" onClick={() => setLibraryOpen(true)} className="flex h-16 min-w-0 items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] sm:px-4"><TemplateGlyph/><span className="min-w-0"><span className="block truncate text-[14px] font-medium">模板库</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">选择模板快速新建</span></span></button>
+        <button type="button" data-drive-add-shortcut onClick={() => setShortcutDialogOpen(true)} className="flex h-16 min-w-0 items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] sm:px-4"><span className="grid size-6 shrink-0 place-items-center text-[#7652ed]"><Link2 size={21}/></span><span className="min-w-0 flex-1"><span className="block truncate text-[14px] font-medium text-[#1f2329]">{t("添加")}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">{t("添加云文档的快捷方式")}</span></span><ChevronDown size={15} className="shrink-0 text-[#646a73]"/></button>
+        <button type="button" onClick={() => setLibraryOpen(true)} className="flex h-16 min-w-0 items-center gap-2 rounded-lg border border-[#dee0e3] px-3 text-left hover:bg-[#f2f3f5] sm:px-4"><TemplateGlyph/><span className="min-w-0"><span className="block truncate text-[14px] font-medium">{t("模板库")}</span><span className="hidden truncate text-[12px] text-[#8f959e] xl:block">{t("选择模板快速新建")}</span></span></button>
       </div>
-      {folderId !== null && <nav aria-label="文件夹路径" className="mobile-scroll-x mt-5 flex items-center gap-1 whitespace-nowrap text-[13px] text-[#646a73] sm:flex-wrap sm:whitespace-normal">
-        <a href={scope ? "#/drive/mine" : "#/drive"} onDragOver={(e) => { if (draggingRef.current.length || e.dataTransfer.types.includes("application/x-jiange-drive-ids")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTarget("root"); } }} onDragLeave={() => { if (dragOverTarget === "root") setDragOverTarget(null); }} onDrop={(e) => { e.preventDefault(); void dropOntoFolder(null, scope, e); }} className={cn("shrink-0 rounded px-1.5 py-0.5 hover:text-[#3370ff]", dragOverTarget === "root" && "bg-[#edf2ff] text-[#3370ff] ring-1 ring-[#3370ff]")}>{scope ? "我的文件夹" : "共享文件夹"}</a>
-        {crumbsOrdered.map((item) => <span key={item.id} className="flex shrink-0 items-center gap-1"><ChevronRight size={13}/><a href={item.kind === "folder" ? `#/drive/${item.id}` : hrefOf(item)} onDragOver={(e) => { if (item.kind === "folder" && (draggingRef.current.length || e.dataTransfer.types.includes("application/x-jiange-drive-ids")) && item.id !== folderId && !draggingRef.current.some((d) => d.id === item.id)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTarget(item.id); } }} onDragLeave={() => { if (dragOverTarget === item.id) setDragOverTarget(null); }} onDrop={(e) => { if (item.kind === "folder" && item.id !== folderId) { e.preventDefault(); void dropOntoFolder(item.id, scope, e); } }} className={cn("rounded px-1.5 py-0.5 hover:text-[#3370ff]", dragOverTarget === item.id && "bg-[#edf2ff] text-[#3370ff] ring-1 ring-[#3370ff]")}>{item.title || "未命名"}</a></span>)}
+      {folderId !== null && <nav aria-label={t("文件夹路径")} className="mobile-scroll-x mt-5 flex items-center gap-1 whitespace-nowrap text-[13px] text-[#646a73] sm:flex-wrap sm:whitespace-normal">
+        <a href={scope ? "#/drive/mine" : "#/drive"} onDragOver={(e) => { if (draggingRef.current.length || e.dataTransfer.types.includes("application/x-jiange-drive-ids")) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTarget("root"); } }} onDragLeave={() => { if (dragOverTarget === "root") setDragOverTarget(null); }} onDrop={(e) => { e.preventDefault(); void dropOntoFolder(null, scope, e); }} className={cn("shrink-0 rounded px-1.5 py-0.5 hover:text-[#3370ff]", dragOverTarget === "root" && "bg-[#edf2ff] text-[#3370ff] ring-1 ring-[#3370ff]")}>{scope ? t("我的文件夹") : t("共享文件夹")}</a>
+        {crumbsOrdered.map((item) => <span key={item.id} className="flex shrink-0 items-center gap-1"><ChevronRight size={13}/><a href={item.kind === "folder" ? `#/drive/${item.id}` : hrefOf(item)} onDragOver={(e) => { if (item.kind === "folder" && (draggingRef.current.length || e.dataTransfer.types.includes("application/x-jiange-drive-ids")) && item.id !== folderId && !draggingRef.current.some((d) => d.id === item.id)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTarget(item.id); } }} onDragLeave={() => { if (dragOverTarget === item.id) setDragOverTarget(null); }} onDrop={(e) => { if (item.kind === "folder" && item.id !== folderId) { e.preventDefault(); void dropOntoFolder(item.id, scope, e); } }} className={cn("rounded px-1.5 py-0.5 hover:text-[#3370ff]", dragOverTarget === item.id && "bg-[#edf2ff] text-[#3370ff] ring-1 ring-[#3370ff]")}>{item.title || t("未命名")}</a></span>)}
       </nav>}
-      <div className="mt-6 flex items-center gap-2 text-[14px] sm:mt-8 sm:gap-5"><nav aria-label="文件夹分类" className="mobile-scroll-x flex min-w-0 items-center gap-4 whitespace-nowrap sm:gap-5"><a href="#/drive/mine" className={cn("shrink-0 pb-1", scope ? "font-medium text-[#3370ff]" : "text-[#646a73]")}>我的文件夹</a><a href="#/drive" className={cn("shrink-0 pb-1", !scope ? "font-medium text-[#3370ff]" : "text-[#646a73]")}>共享文件夹</a></nav><div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-        <div className="relative"><button ref={sortTrigger} type="button" aria-expanded={sortMenu} aria-haspopup="menu" onClick={() => { setFolderDisplayMenu(false); setSortMenu((open) => !open); }} onKeyDown={(event) => { if (event.key === "Escape") setSortMenu(false); }} className={cn("flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5]", sortMenu && "bg-[#edf2ff] text-[#3370ff]")}><ArrowDownUp size={14}/>排序<ChevronDown size={12}/></button>
-          {sortMenu && <><button type="button" aria-label="关闭排序菜单" className="fixed inset-0 z-20 cursor-default" onClick={() => setSortMenu(false)}/><div role="menu" aria-label="文件夹排序" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSortMenu(false); sortTrigger.current?.focus(); } }} className="absolute right-0 top-9 z-30 w-[120px] rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">
-            <div className="px-3 py-1.5 text-[12px] text-[#8f959e]">排序依据</div>{([ ["created", "创建时间"], ["updated", "修改时间"], ["name", "名称"] ] as const).map(([value, label]) => <button key={value} type="button" role="menuitemradio" aria-checked={folderSort === value} onClick={() => { setFolderSort(value); setSortMenu(false); }} className={cn("flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]", folderSort === value && "text-[#3370ff]")}>{label}</button>)}
-            <div className="mt-1 border-t border-[#dee0e3] px-3 pb-1.5 pt-2 text-[12px] text-[#8f959e]">排序</div>{([ ["asc", folderSort === "name" ? "升序" : "由远到近"], ["desc", folderSort === "name" ? "降序" : "由近到远"] ] as const).map(([value, label]) => <button key={value} type="button" role="menuitemradio" aria-checked={folderDirection === value} onClick={() => { setFolderDirection(value); setSortMenu(false); }} className={cn("flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]", folderDirection === value && "text-[#3370ff]")}>{label}</button>)}
+      <div className="mt-6 flex items-center gap-2 text-[14px] sm:mt-8 sm:gap-5"><nav aria-label={t("文件夹分类")} className="mobile-scroll-x flex min-w-0 items-center gap-4 whitespace-nowrap sm:gap-5"><a href="#/drive/mine" className={cn("shrink-0 pb-1", scope ? "font-medium text-[#3370ff]" : "text-[#646a73]")}>{t("我的文件夹")}</a><a href="#/drive" className={cn("shrink-0 pb-1", !scope ? "font-medium text-[#3370ff]" : "text-[#646a73]")}>{t("共享文件夹")}</a></nav><div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+        <div className="relative"><button ref={sortTrigger} type="button" aria-expanded={sortMenu} aria-haspopup="menu" onClick={() => { setFolderDisplayMenu(false); setSortMenu((open) => !open); }} onKeyDown={(event) => { if (event.key === "Escape") setSortMenu(false); }} className={cn("flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5]", sortMenu && "bg-[#edf2ff] text-[#3370ff]")}><ArrowDownUp size={14}/>{t("排序")}<ChevronDown size={12}/></button>
+          {sortMenu && <><button type="button" aria-label={t("关闭排序菜单")} className="fixed inset-0 z-20 cursor-default" onClick={() => setSortMenu(false)}/><div role="menu" aria-label={t("文件夹排序")} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSortMenu(false); sortTrigger.current?.focus(); } }} className="absolute right-0 top-9 z-30 w-[120px] rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">
+            <div className="px-3 py-1.5 text-[12px] text-[#8f959e]">{t("排序依据")}</div>{([ ["created", t("创建时间")], ["updated", t("修改时间")], ["name", t("名称")] ] as const).map(([value, label]) => <button key={value} type="button" role="menuitemradio" aria-checked={folderSort === value} onClick={() => { setFolderSort(value); setSortMenu(false); }} className={cn("flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]", folderSort === value && "text-[#3370ff]")}>{label}</button>)}
+            <div className="mt-1 border-t border-[#dee0e3] px-3 pb-1.5 pt-2 text-[12px] text-[#8f959e]">{t("排序")}</div>{([ ["asc", folderSort === "name" ? t("升序") : t("由远到近")], ["desc", folderSort === "name" ? t("降序") : t("由近到远")] ] as const).map(([value, label]) => <button key={value} type="button" role="menuitemradio" aria-checked={folderDirection === value} onClick={() => { setFolderDirection(value); setSortMenu(false); }} className={cn("flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]", folderDirection === value && "text-[#3370ff]")}>{label}</button>)}
           </div></>}
         </div>
-        <div className="relative"><button ref={displayTrigger} type="button" disabled={folderId !== null || !personalRoot} title={folderId !== null || !personalRoot ? "此处暂不支持文件夹展示规则" : undefined} aria-haspopup="menu" aria-expanded={folderDisplayMenu} onClick={() => { setSortMenu(false); setFolderDisplayMenu((open) => !open); }} onKeyDown={(event) => { if (event.key === "Escape") setFolderDisplayMenu(false); }} className={cn("flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-50", folderDisplayMenu && "bg-[#edf2ff] text-[#3370ff]")}>展示<ChevronDown size={12}/></button>
-          {folderDisplayMenu && <><button type="button" aria-label="关闭展示菜单" className="fixed inset-0 z-20 cursor-default" onClick={() => setFolderDisplayMenu(false)}/><div role="menu" aria-label="我的文件夹展示规则" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setFolderDisplayMenu(false); displayTrigger.current?.focus(); } }} className="absolute right-0 top-9 z-30 w-60 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><div className="px-3 py-2 text-[12px] text-[#8f959e]">我的文件夹展示规则</div>{([ [true, "全部文件夹", "展示属于我的全部文件夹"], [false, "个人文件夹", "不展示共享文件夹"] ] as const).map(([value, label, description]) => <button key={label} type="button" role="menuitemradio" aria-checked={showAllFolders === value} onClick={() => { setShowAllFolders(value); setFolderDisplayMenu(false); }} className="flex w-full items-center px-3 py-2 text-left hover:bg-[#f2f3f5]"><span className="min-w-0 flex-1"><span className={cn("block", showAllFolders === value && "text-[#3370ff]")}>{label}</span><span className="mt-1 block text-[12px] text-[#8f959e]">{description}</span></span>{showAllFolders === value && <Check size={14} className="text-[#3370ff]"/>}</button>)}</div></>}
+        <div className="relative"><button ref={displayTrigger} type="button" disabled={folderId !== null || !personalRoot} title={folderId !== null || !personalRoot ? t("此处暂不支持文件夹展示规则") : undefined} aria-haspopup="menu" aria-expanded={folderDisplayMenu} onClick={() => { setSortMenu(false); setFolderDisplayMenu((open) => !open); }} onKeyDown={(event) => { if (event.key === "Escape") setFolderDisplayMenu(false); }} className={cn("flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-50", folderDisplayMenu && "bg-[#edf2ff] text-[#3370ff]")}>{t("展示")}<ChevronDown size={12}/></button>
+          {folderDisplayMenu && <><button type="button" aria-label={t("关闭展示菜单")} className="fixed inset-0 z-20 cursor-default" onClick={() => setFolderDisplayMenu(false)}/><div role="menu" aria-label={t("我的文件夹展示规则")} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setFolderDisplayMenu(false); displayTrigger.current?.focus(); } }} className="absolute right-0 top-9 z-30 w-60 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><div className="px-3 py-2 text-[12px] text-[#8f959e]">{t("我的文件夹展示规则")}</div>{([ [true, t("全部文件夹"), t("展示属于我的全部文件夹")], [false, t("个人文件夹"), t("不展示共享文件夹")] ] as const).map(([value, label, description]) => <button key={String(value)} type="button" role="menuitemradio" aria-checked={showAllFolders === value} onClick={() => { setShowAllFolders(value); setFolderDisplayMenu(false); }} className="flex w-full items-center px-3 py-2 text-left hover:bg-[#f2f3f5]"><span className="min-w-0 flex-1"><span className={cn("block", showAllFolders === value && "text-[#3370ff]")}>{label}</span><span className="mt-1 block text-[12px] text-[#8f959e]">{description}</span></span>{showAllFolders === value && <Check size={14} className="text-[#3370ff]"/>}</button>)}</div></>}
         </div>
       </div></div>
-      {list.isError ? <p role="alert" className="py-10 text-center text-[13px] text-[#8f959e]">无法访问该目录，请确认权限后重试。</p> : <>
-        <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">{folders.map((entry) => <FolderCard key={entry.id} entry={entry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} dragOver={dragOverTarget === entry.id} onDragStart={(e) => startDragEntry(entry, e)} onDragEnd={endDragEntry} onDragOver={(e) => { if ((draggingRef.current.length || e.dataTransfer.types.includes("application/x-jiange-drive-ids")) && !draggingRef.current.some((d) => d.id === entry.id)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTarget(entry.id); } }} onDragLeave={() => { if (dragOverTarget === entry.id) setDragOverTarget(null); }} onDrop={(e) => { e.preventDefault(); void dropOntoFolder(entry.id, !!entry.personal, e); }} {...actions(entry)}/>)}{folders.length === 0 && !sharedRoots.isFetching && <p className="py-3 text-[13px] text-[#8f959e]">{filter ? "没有匹配的文件夹" : "暂无文件夹"}</p>}</div>
-        {folderId === null && personalRoot && showAllFolders && sharedRoots.isError && <p role="alert" className="mt-2 text-[12px] text-destructive">无法加载属于我的共享文件夹，请重试。</p>}
-        {shortcuts.length > 0 && <section aria-label="快捷方式" className="mt-6" data-drive-shortcuts>
-          <div className="flex items-center gap-2"><h2 className="text-[14px] font-semibold text-[#1f2329]">快捷方式</h2><span className="text-[12px] text-[#8f959e]">{shortcuts.length}</span></div>
+      {list.isError ? <p role="alert" className="py-10 text-center text-[13px] text-[#8f959e]">{t("无法访问该目录，请确认权限后重试。")}</p> : <>
+        <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-3">{folders.map((entry) => <FolderCard key={entry.id} entry={entry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} dragOver={dragOverTarget === entry.id} onDragStart={(e) => startDragEntry(entry, e)} onDragEnd={endDragEntry} onDragOver={(e) => { if ((draggingRef.current.length || e.dataTransfer.types.includes("application/x-jiange-drive-ids")) && !draggingRef.current.some((d) => d.id === entry.id)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setDragOverTarget(entry.id); } }} onDragLeave={() => { if (dragOverTarget === entry.id) setDragOverTarget(null); }} onDrop={(e) => { e.preventDefault(); void dropOntoFolder(entry.id, !!entry.personal, e); }} {...actions(entry)}/>)}{folders.length === 0 && !sharedRoots.isFetching && <p className="py-3 text-[13px] text-[#8f959e]">{filter ? t("没有匹配的文件夹") : t("暂无文件夹")}</p>}</div>
+        {folderId === null && personalRoot && showAllFolders && sharedRoots.isError && <p role="alert" className="mt-2 text-[12px] text-destructive">{t("无法加载属于我的共享文件夹，请重试。")}</p>}
+        {shortcuts.length > 0 && <section aria-label={t("快捷方式")} className="mt-6" data-drive-shortcuts>
+          <div className="flex items-center gap-2"><h2 className="text-[14px] font-semibold text-[#1f2329]">{t("快捷方式")}</h2><span className="text-[12px] text-[#8f959e]">{shortcuts.length}</span></div>
           <div className="mt-2.5 grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-3">
             {shortcuts.map((sc) => <ShortcutCard key={sc.id} shortcut={sc} onRemove={() => void removeShortcut(sc)}/>)}
           </div>
         </section>}
-        <div className="mt-8 flex h-9 items-center"><h2 className="text-[15px] font-semibold text-[#1f2329]">文档</h2><div className="ml-auto flex items-center gap-1">{!grid && <div className="relative"><button type="button" aria-label="显示设置" aria-expanded={displaySettings} onKeyDown={(event) => { if (event.key === "Escape") setDisplaySettings(false); }} onClick={() => setDisplaySettings((open) => !open)} className={cn("flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5]", displaySettings && "bg-[#f2f3f5]")}><ListFilter size={14}/><span className="hidden sm:inline">显示设置</span></button>{displaySettings && <><button type="button" aria-label="关闭显示设置" onClick={() => setDisplaySettings(false)} className="fixed inset-0 z-20 cursor-default"/><div role="group" aria-label="显示设置" onKeyDown={(event) => { if (event.key === "Escape") setDisplaySettings(false); }} className="absolute right-0 top-9 z-30 w-60 rounded-md border border-[#dee0e3] bg-white py-2 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><div className="px-3 pb-2 font-medium text-[#1f2329]">显示设置</div><DriveColumnOptions preferences={columnPreferences} onChange={setColumnPreferences}/></div></>}</div>}<button type="button" onClick={() => setShowFilter((value) => !value)} aria-label="搜索当前目录" className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Search size={15}/></button><button type="button" onClick={() => setGrid(false)} aria-label="列表视图" className={cn("grid size-8 place-items-center rounded", !grid ? "bg-[#edf2ff] text-[#3370ff]" : "text-[#8f959e]")}><List size={16}/></button><button type="button" onClick={() => setGrid(true)} aria-label="网格视图" className={cn("grid size-8 place-items-center rounded", grid ? "bg-[#edf2ff] text-[#3370ff]" : "text-[#8f959e]")}><LayoutGrid size={16}/></button></div></div>
-        {showFilter && <input autoFocus value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="搜索当前目录" className="my-2 h-8 w-full max-w-full rounded-md border px-2 text-[13px] outline-none focus:border-[#3370ff] sm:w-56"/>}
-        {chosen.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1 rounded-md border border-[#3370ff]/25 bg-[#f0f4ff] px-2.5 py-1.5 text-[13px] text-[#1f2329]" role="toolbar" aria-label="批量操作" data-drive-batch><SelectBox checked={chosen.length === files.length ? true : "mixed"} label={chosen.length === files.length ? "取消全选" : "全选"} onToggle={() => setSelected(chosen.length === files.length ? new Set() : new Set(files.map((entry) => entry.id)))}/><span className="ml-2 mr-3 font-medium">已选择 {chosen.length} 项</span><button type="button" disabled={batchPending} onClick={() => void batchStar()} className="h-7 rounded px-2 hover:bg-white/80 disabled:opacity-40">收藏</button><button type="button" disabled={batchPending || new Set(chosen.map((entry) => !!entry.personal)).size > 1} onClick={() => setMoving({ entries: chosen, batch: true })} className="h-7 rounded px-2 hover:bg-white/80 disabled:opacity-40">移动到…</button><button type="button" disabled={batchPending} onClick={() => void batchTrash()} className="h-7 rounded px-2 text-[#d83931] hover:bg-white/80 disabled:opacity-40">删除</button><button type="button" onClick={() => setSelected(new Set())} className="ml-auto h-7 rounded px-2 text-[#646a73] hover:bg-white/80">取消选择</button></div>}
-        {grid ? <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3" data-drive-grid>{files.map((entry) => <FileCard key={entry.id} entry={entry} selected={selected.has(entry.id)} selecting={chosen.length > 0} onSelect={() => setSelected((prev) => toggleId(prev, entry.id))} onDragStart={(e) => startDragEntry(entry, e)} onDragEnd={endDragEntry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} {...actions(entry)}/>)}</div> : <div className="group/list mt-2">{chosen.length === 0 && <div className="flex h-10 items-center border-b border-[#dee0e3] px-2 text-[12px] text-[#646a73]">{files.length > 0 && <SelectBox checked={false} label="全选" onToggle={() => setSelected(new Set(files.map((entry) => entry.id)))} hoverOnly/>}<div className="min-w-0 flex-1"><DocumentSortHeader label="标题" field="name" selected={documentSort} direction={documentDirection} open={documentSortMenu} setOpen={setDocumentSortMenu} onSelect={(direction) => { setDocumentSort("name"); setDocumentDirection(direction); }}/></div>{columnPreferences.order.map((column) => columnPreferences.visible[column] && <div key={column} className={cn("hidden w-32", column === "owner" || column === "modifier" ? "xl:block" : column === "updated" ? "sm:block" : "md:block")}>{column === "owner" || column === "modifier" ? <span className="px-1 text-[13px]">{driveColumnNames[column]}</span> : <DocumentSortHeader label={driveColumnNames[column]} field={column} selected={documentSort} direction={documentDirection} open={documentSortMenu} setOpen={setDocumentSortMenu} onSelect={(direction) => { setDocumentSort(column); setDocumentDirection(direction); }}/>}</div>)}<span className="w-9"/></div>}{files.map((entry) => <DriveRow key={entry.id} columns={columnPreferences} selected={selected.has(entry.id)} selecting={chosen.length > 0} onSelect={() => setSelected((prev) => toggleId(prev, entry.id))} onDragStart={(e) => startDragEntry(entry, e)} onDragEnd={endDragEntry} entry={entry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} {...actions(entry)}/>)}</div>}
-        {files.length === 0 && list.isSuccess && <p className="py-8 text-center text-[13px] text-[#8f959e]">{filter ? "没有匹配的文档" : "暂无文档"}</p>}
+        <div className="mt-8 flex h-9 items-center"><h2 className="text-[15px] font-semibold text-[#1f2329]">{t("文档")}</h2><div className="ml-auto flex items-center gap-1">{!grid && <div className="relative"><button type="button" aria-label={t("显示设置")} aria-expanded={displaySettings} onKeyDown={(event) => { if (event.key === "Escape") setDisplaySettings(false); }} onClick={() => setDisplaySettings((open) => !open)} className={cn("flex h-8 items-center gap-1 rounded px-2 text-[12px] text-[#646a73] hover:bg-[#f2f3f5]", displaySettings && "bg-[#f2f3f5]")}><ListFilter size={14}/><span className="hidden sm:inline">{t("显示设置")}</span></button>{displaySettings && <><button type="button" aria-label={t("关闭显示设置")} onClick={() => setDisplaySettings(false)} className="fixed inset-0 z-20 cursor-default"/><div role="group" aria-label={t("显示设置")} onKeyDown={(event) => { if (event.key === "Escape") setDisplaySettings(false); }} className="absolute right-0 top-9 z-30 w-60 rounded-md border border-[#dee0e3] bg-white py-2 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]"><div className="px-3 pb-2 font-medium text-[#1f2329]">{t("显示设置")}</div><DriveColumnOptions preferences={columnPreferences} onChange={setColumnPreferences}/></div></>}</div>}<button type="button" onClick={() => setShowFilter((value) => !value)} aria-label={t("搜索当前目录")} className="grid size-8 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Search size={15}/></button><button type="button" onClick={() => setGrid(false)} aria-label={t("列表视图")} className={cn("grid size-8 place-items-center rounded", !grid ? "bg-[#edf2ff] text-[#3370ff]" : "text-[#8f959e]")}><List size={16}/></button><button type="button" onClick={() => setGrid(true)} aria-label={t("网格视图")} className={cn("grid size-8 place-items-center rounded", grid ? "bg-[#edf2ff] text-[#3370ff]" : "text-[#8f959e]")}><LayoutGrid size={16}/></button></div></div>
+        {showFilter && <input autoFocus value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={t("搜索当前目录")} className="my-2 h-8 w-full max-w-full rounded-md border px-2 text-[13px] outline-none focus:border-[#3370ff] sm:w-56"/>}
+        {chosen.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1 rounded-md border border-[#3370ff]/25 bg-[#f0f4ff] px-2.5 py-1.5 text-[13px] text-[#1f2329]" role="toolbar" aria-label={t("批量操作")} data-drive-batch><SelectBox checked={chosen.length === files.length ? true : "mixed"} label={chosen.length === files.length ? t("取消全选") : t("全选")} onToggle={() => setSelected(chosen.length === files.length ? new Set() : new Set(files.map((entry) => entry.id)))}/><span className="ml-2 mr-3 font-medium">{t("已选择 {n} 项", { n: chosen.length })}</span><button type="button" disabled={batchPending} onClick={() => void batchStar()} className="h-7 rounded px-2 hover:bg-white/80 disabled:opacity-40">{t("收藏")}</button><button type="button" disabled={batchPending || new Set(chosen.map((entry) => !!entry.personal)).size > 1} onClick={() => setMoving({ entries: chosen, batch: true })} className="h-7 rounded px-2 hover:bg-white/80 disabled:opacity-40">{t("移动到…")}</button><button type="button" disabled={batchPending} onClick={() => void batchTrash()} className="h-7 rounded px-2 text-[#d83931] hover:bg-white/80 disabled:opacity-40">{t("删除")}</button><button type="button" onClick={() => setSelected(new Set())} className="ml-auto h-7 rounded px-2 text-[#646a73] hover:bg-white/80">{t("取消选择")}</button></div>}
+        {grid ? <div className="mt-3 grid grid-cols-[repeat(auto-fill,minmax(160px,1fr))] gap-3" data-drive-grid>{files.map((entry) => <FileCard key={entry.id} entry={entry} selected={selected.has(entry.id)} selecting={chosen.length > 0} onSelect={() => setSelected((prev) => toggleId(prev, entry.id))} onDragStart={(e) => startDragEntry(entry, e)} onDragEnd={endDragEntry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} {...actions(entry)}/>)}</div> : <div className="group/list mt-2">{chosen.length === 0 && <div className="flex h-10 items-center border-b border-[#dee0e3] px-2 text-[12px] text-[#646a73]">{files.length > 0 && <SelectBox checked={false} label={t("全选")} onToggle={() => setSelected(new Set(files.map((entry) => entry.id)))} hoverOnly/>}<div className="min-w-0 flex-1"><DocumentSortHeader label={t("标题")} field="name" selected={documentSort} direction={documentDirection} open={documentSortMenu} setOpen={setDocumentSortMenu} onSelect={(direction) => { setDocumentSort("name"); setDocumentDirection(direction); }}/></div>{columnPreferences.order.map((column) => columnPreferences.visible[column] && <div key={column} className={cn("hidden w-32", column === "owner" || column === "modifier" ? "xl:block" : column === "updated" ? "sm:block" : "md:block")}>{column === "owner" || column === "modifier" ? <span className="px-1 text-[13px]">{driveColumnName(column)}</span> : <DocumentSortHeader label={driveColumnName(column)} field={column} selected={documentSort} direction={documentDirection} open={documentSortMenu} setOpen={setDocumentSortMenu} onSelect={(direction) => { setDocumentSort(column); setDocumentDirection(direction); }}/>}</div>)}<span className="w-9"/></div>}{files.map((entry) => <DriveRow key={entry.id} columns={columnPreferences} selected={selected.has(entry.id)} selecting={chosen.length > 0} onSelect={() => setSelected((prev) => toggleId(prev, entry.id))} onDragStart={(e) => startDragEntry(entry, e)} onDragEnd={endDragEntry} entry={entry} starred={favorites.data?.some((item) => item.id === entry.id) ?? false} {...actions(entry)}/>)}</div>}
+        {files.length === 0 && list.isSuccess && <p className="py-8 text-center text-[13px] text-[#8f959e]">{filter ? t("没有匹配的文档") : t("暂无文档")}</p>}
       </>}
-      {columnStorageError && <p role="status" className="mt-4 text-[12px] text-[#8f959e]">浏览器无法保存显示设置，刷新后将恢复默认。</p>}
-      {copiedDoc && <div role="status" className="fixed bottom-5 left-1/2 z-[110] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg"><span>已创建副本「{copiedDoc.title}」</span><button type="button" className="whitespace-nowrap text-[#9ab8ff] underline" onClick={() => { location.hash = hrefOf(copiedDoc); setCopiedDoc(null); }}>打开副本</button><button type="button" aria-label="关闭" onClick={() => setCopiedDoc(null)} className="text-white/70 hover:text-white">×</button></div>}
+      {columnStorageError && <p role="status" className="mt-4 text-[12px] text-[#8f959e]">{t("浏览器无法保存显示设置，刷新后将恢复默认。")}</p>}
+      {copiedDoc && <div role="status" className="fixed bottom-5 left-1/2 z-[110] flex max-w-[calc(100vw-32px)] -translate-x-1/2 items-center gap-3 rounded-lg bg-[#30343b] px-4 py-2 text-[13px] text-white shadow-lg"><span>{t("已创建副本「{title}」", { title: copiedDoc.title })}</span><button type="button" className="whitespace-nowrap text-[#9ab8ff] underline" onClick={() => { location.hash = hrefOf(copiedDoc); setCopiedDoc(null); }}>{t("打开副本")}</button><button type="button" aria-label={t("关闭")} onClick={() => setCopiedDoc(null)} className="text-white/70 hover:text-white">×</button></div>}
       {notice && <p role="status" className="mt-4 text-[12px] text-[#3370ff]">{notice}</p>}
       {error && <p role="alert" className="mt-4 text-[12px] text-destructive">{error}</p>}
     </div>
-    {moving && <MoveDialog entries={moving.entries} userId={userId} onDone={(result) => { const batch = moving.batch; setMoving(null); if (result && batch) finishBatch("移动", result); }}/>}
+    {moving && <MoveDialog entries={moving.entries} userId={userId} onDone={(result) => { const batch = moving.batch; setMoving(null); if (result && batch) finishBatch("move", result); }}/>}
     {copying && <CopyToDialog entry={copying} userId={userId} onDone={(created) => { setCopying(null); if (created) { setCopiedDoc(created); invalidate(); void qc.invalidateQueries({ queryKey: ["docs"] }); } }}/>}
-    {shortcutDialogOpen && <AddShortcutDialog folderId={folderId} scope={scope} userId={userId} onDone={(created) => { setShortcutDialogOpen(false); if (created) { setNotice(`已添加快捷方式「${created.targetTitle || created.title}」`); invalidate(); } }}/>}
+    {shortcutDialogOpen && <AddShortcutDialog folderId={folderId} scope={scope} userId={userId} onDone={(created) => { setShortcutDialogOpen(false); if (created) { setNotice(t("已添加快捷方式「{name}」", { name: created.targetTitle || created.title })); invalidate(); } }}/>}
     {libraryOpen && <TemplateLibrary disabled={templatePending} onChoose={(template) => void chooseTemplate(template)} onClose={() => setLibraryOpen(false)}/>}
   </main>;
 }
 
 function driveEntryLabel(entry: Pick<DriveEntry, "title" | "kind" | "docType">): string {
-  return entry.title || (entry.kind === "sheet" ? "未命名表格" : entry.kind === "survey" ? "未命名问卷" : isBoardDoc(entry) ? "未命名画板" : "未命名");
+  return entry.title || (entry.kind === "sheet" ? t("未命名表格") : entry.kind === "survey" ? t("未命名问卷") : isBoardDoc(entry) ? t("未命名画板") : t("未命名"));
 }
 
 function DriveIcon({ entry }: { entry: Pick<DriveEntry, "kind" | "docType" | "icon"> }) { return entry.kind === "folder" ? <Folder size={18} fill="#ffcc4d" stroke="#f5a623"/> : entry.kind === "sheet" ? <SheetColorIcon className="size-5 shrink-0"/> : entry.kind === "base" ? <BaseIcon/> : entry.kind === "slides" ? <span className="grid size-5 place-items-center rounded bg-[#ff8800] text-white"><Presentation size={13}/></span> : entry.kind === "survey" ? <span className="grid size-5 place-items-center rounded bg-violet-600 text-white"><ClipboardList size={13}/></span> : entry.kind === "file" ? <span className="grid size-5 place-items-center rounded bg-[#e8efff] text-[#3370ff]"><FileText size={15}/></span> : isBoardDoc(entry) ? <DocumentGlyph icon={entry.icon} fallback={<WhiteboardIcon className="size-5 shrink-0 text-[#34c759]"/>}/> : <DocumentGlyph icon={entry.icon} fallback={<DriveDocGlyph/>}/>; }
@@ -343,7 +364,8 @@ function FolderCard(props: EntryActions & {
   onDragLeave: () => void;
   onDrop: (e: React.DragEvent) => void;
 }) {
-  return <div draggable onDragStart={props.onDragStart} onDragEnd={props.onDragEnd} onDragOver={props.onDragOver} onDragLeave={props.onDragLeave} onDrop={props.onDrop} data-drive-folder={props.entry.id} className={cn("relative flex h-16 min-w-0 items-center gap-2 rounded-md border px-3 transition-colors hover:bg-[#f7f8fa]", props.dragOver ? "border-[#3370ff] bg-[#edf2ff] ring-2 ring-[#3370ff]/30" : "border-[#e5e6eb]")}><button type="button" onClick={props.onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><Folder size={24} fill="#ffcc4d" stroke="#f5a623"/><span className="truncate text-[13px] text-[#1f2329]">{props.entry.title || "未命名文件夹"}</span></button><EntryMenu {...props}/></div>;
+  const { t } = useI18n();
+  return <div draggable onDragStart={props.onDragStart} onDragEnd={props.onDragEnd} onDragOver={props.onDragOver} onDragLeave={props.onDragLeave} onDrop={props.onDrop} data-drive-folder={props.entry.id} className={cn("relative flex h-16 min-w-0 items-center gap-2 rounded-md border px-3 transition-colors hover:bg-[#f7f8fa]", props.dragOver ? "border-[#3370ff] bg-[#edf2ff] ring-2 ring-[#3370ff]/30" : "border-[#e5e6eb]")}><button type="button" onClick={props.onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><Folder size={24} fill="#ffcc4d" stroke="#f5a623"/><span className="truncate text-[13px] text-[#1f2329]">{props.entry.title || t("未命名文件夹")}</span></button><EntryMenu {...props}/></div>;
 }
 
 function FileCard(props: EntryActions & {
@@ -353,10 +375,11 @@ function FileCard(props: EntryActions & {
   onDragStart: (e: React.DragEvent) => void;
   onDragEnd: () => void;
 }) {
+  const { t } = useI18n();
   const { entry, onOpen, selected, selecting, onSelect, onDragStart, onDragEnd } = props;
   return <div draggable onDragStart={onDragStart} onDragEnd={onDragEnd} data-drive-card={entry.id} aria-selected={selected} className={cn("group relative flex min-h-24 flex-col rounded-lg border p-3 transition-colors", selected ? "border-[#3370ff] bg-[#f0f4ff] ring-1 ring-[#3370ff]/25" : "border-[#e5e6eb] bg-white hover:bg-[#f7f8fa]")}>
     <div className="flex items-start gap-2">
-      <span className={cn("shrink-0 pt-0.5", !selected && !selecting && "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100")}><SelectBox checked={selected} label={`选择「${driveEntryLabel(entry)}」`} onToggle={onSelect}/></span>
+      <span className={cn("shrink-0 pt-0.5", !selected && !selecting && "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100")}><SelectBox checked={selected} label={t("选择「{name}」", { name: driveEntryLabel(entry) })} onToggle={onSelect}/></span>
       <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 flex-col items-start gap-2 text-left"><DriveIcon entry={entry}/><span className="w-full truncate text-[13px] text-[#1f2329]">{driveEntryLabel(entry)}</span><span className="w-full truncate text-[11px] text-[#8f959e]">{formatDriveTime(entry.updatedAt)}</span></button>
       <EntryMenu {...props}/>
     </div>
@@ -364,9 +387,10 @@ function FileCard(props: EntryActions & {
 }
 
 function ShortcutCard({ shortcut, onRemove }: { shortcut: DriveShortcut; onRemove: () => void }) {
+  const { t } = useI18n();
   const label = shortcut.targetAccessible
-    ? (shortcut.targetTitle || shortcut.title || "未命名")
-    : (shortcut.title || "快捷方式");
+    ? (shortcut.targetTitle || shortcut.title || t("未命名"))
+    : (shortcut.title || t("快捷方式"));
   const openTarget = () => {
     if (!shortcut.targetAccessible) return;
     location.hash = nodeHref({
@@ -383,30 +407,37 @@ function ShortcutCard({ shortcut, onRemove }: { shortcut: DriveShortcut; onRemov
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-medium text-[#1f2329]">{label}</span>
-        <span className="block truncate text-[11px] text-[#8f959e]">{shortcut.targetAccessible ? "快捷方式" : "原文档已删除或无权访问"}</span>
+        <span className="block truncate text-[11px] text-[#8f959e]">{shortcut.targetAccessible ? t("快捷方式") : t("原文档已删除或无权访问")}</span>
       </span>
     </button>
-    <button type="button" title="移除快捷方式" aria-label={`移除快捷方式「${label}」`} onClick={onRemove} className="grid size-7 shrink-0 place-items-center rounded text-[#8f959e] opacity-100 hover:bg-[#e9eaec] hover:text-[#d83931] sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"><Trash2 size={14}/></button>
+    <button type="button" title={t("移除快捷方式")} aria-label={t("移除快捷方式「{name}」", { name: label })} onClick={onRemove} className="grid size-7 shrink-0 place-items-center rounded text-[#8f959e] opacity-100 hover:bg-[#e9eaec] hover:text-[#d83931] sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"><Trash2 size={14}/></button>
   </div>;
 }
 
-const driveColumnNames: Record<DriveColumn, string> = { owner: "所有者", modifier: "修改者", updated: "修改时间", created: "创建时间" };
+function driveColumnName(column: DriveColumn): string {
+  if (column === "owner") return t("所有者");
+  if (column === "modifier") return t("修改者");
+  if (column === "updated") return t("修改时间");
+  return t("创建时间");
+}
 
 function DriveColumnOptions({ preferences, onChange }: { preferences: DriveColumnPreferences; onChange: (value: DriveColumnPreferences | ((previous: DriveColumnPreferences) => DriveColumnPreferences)) => void }) {
+  const { t } = useI18n();
   const dragging = useRef<DriveColumn | null>(null);
   const move = (from: DriveColumn, to: DriveColumn) => onChange((previous) => moveDriveColumn(previous, from, to));
   return <>{preferences.order.map((column, index) => <div key={column}><div onDragOver={(event) => { if (dragging.current && dragging.current !== column) { event.preventDefault(); event.dataTransfer.dropEffect = "move"; } }} onDrop={(event) => { if (dragging.current) { event.preventDefault(); move(dragging.current, column); dragging.current = null; } }} className="flex h-9 items-center gap-1 px-2 text-[#646a73] hover:bg-[#f2f3f5]">
-    <button type="button" draggable aria-label={`调整${driveColumnNames[column]}列顺序`} title="拖动、点击或使用上下方向键调整顺序" onClick={() => move(column, preferences.order[index > 0 ? index - 1 : 1])} onKeyDown={(event) => { const target = event.key === "ArrowUp" ? index - 1 : event.key === "ArrowDown" ? index + 1 : -1; if (target >= 0 && target < preferences.order.length) { event.preventDefault(); move(column, preferences.order[target]); } }} onDragStart={(event) => { dragging.current = column; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column); }} onDragEnd={() => { dragging.current = null; }} className="grid size-6 shrink-0 cursor-grab place-items-center rounded text-[#bbbfc4] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3370ff] active:cursor-grabbing"><GripVertical size={14}/></button>
-    <button type="button" role="checkbox" aria-checked={preferences.visible[column]} onClick={() => onChange((previous) => ({ ...previous, visible: { ...previous.visible, [column]: !previous.visible[column] } }))} className="flex h-full min-w-0 flex-1 items-center text-left"><span className="flex-1">{driveColumnNames[column]}</span>{preferences.visible[column] ? <Eye size={14}/> : <EyeOff size={14}/>}</button>
+    <button type="button" draggable aria-label={t("调整{name}列顺序", { name: driveColumnName(column) })} title={t("拖动、点击或使用上下方向键调整顺序")} onClick={() => move(column, preferences.order[index > 0 ? index - 1 : 1])} onKeyDown={(event) => { const target = event.key === "ArrowUp" ? index - 1 : event.key === "ArrowDown" ? index + 1 : -1; if (target >= 0 && target < preferences.order.length) { event.preventDefault(); move(column, preferences.order[target]); } }} onDragStart={(event) => { dragging.current = column; event.dataTransfer.effectAllowed = "move"; event.dataTransfer.setData("text/plain", column); }} onDragEnd={() => { dragging.current = null; }} className="grid size-6 shrink-0 cursor-grab place-items-center rounded text-[#bbbfc4] focus-visible:outline focus-visible:outline-2 focus-visible:outline-[#3370ff] active:cursor-grabbing"><GripVertical size={14}/></button>
+    <button type="button" role="checkbox" aria-checked={preferences.visible[column]} onClick={() => onChange((previous) => ({ ...previous, visible: { ...previous.visible, [column]: !previous.visible[column] } }))} className="flex h-full min-w-0 flex-1 items-center text-left"><span className="flex-1">{driveColumnName(column)}</span>{preferences.visible[column] ? <Eye size={14}/> : <EyeOff size={14}/>}</button>
   </div></div>)}</>;
 }
 
 function DocumentSortHeader({ label, field, selected, direction, open, setOpen, onSelect }: { label: string; field: FolderSortField; selected: FolderSortField; direction: FolderSortDirection; open: FolderSortField | null; setOpen: (field: FolderSortField | null) => void; onSelect: (direction: FolderSortDirection) => void }) {
+  const { t } = useI18n();
   const trigger = useRef<HTMLButtonElement>(null);
   const expanded = open === field;
-  const choices: [FolderSortDirection, string][] = field === "name" ? [["asc", "升序 A→Z"], ["desc", "降序 Z→A"]] : [["asc", "由远到近"], ["desc", "由近到远"]];
+  const choices: [FolderSortDirection, string][] = field === "name" ? [["asc", t("升序 A→Z")], ["desc", t("降序 Z→A")]] : [["asc", t("由远到近")], ["desc", t("由近到远")]];
   return <div className="relative inline-block"><button ref={trigger} type="button" aria-haspopup="menu" aria-expanded={expanded} onClick={() => setOpen(expanded ? null : field)} onKeyDown={(event) => { if (event.key === "Escape") setOpen(null); }} className={cn("flex h-7 items-center gap-0.5 rounded px-1 text-[13px] hover:bg-[#f2f3f5]", expanded && "bg-[#edf2ff] text-[#3370ff]")}>{label}<ChevronDown size={13} className={cn(expanded && "rotate-180")}/></button>
-    {expanded && <><button type="button" aria-label={`关闭${label}排序`} className="fixed inset-0 z-20 cursor-default" onClick={() => setOpen(null)}/><div role="menu" aria-label={`${label}排序`} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(null); trigger.current?.focus(); } }} className="absolute left-0 top-8 z-30 w-40 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">{choices.map(([value, text]) => <button key={value} type="button" role="menuitemradio" aria-checked={selected === field && direction === value} onClick={() => { onSelect(value); setOpen(null); }} className={cn("flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]", selected === field && direction === value && "text-[#3370ff]")}>{text}</button>)}</div></>}
+    {expanded && <><button type="button" aria-label={t("关闭{label}排序", { label })} className="fixed inset-0 z-20 cursor-default" onClick={() => setOpen(null)}/><div role="menu" aria-label={t("{label}排序", { label })} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(null); trigger.current?.focus(); } }} className="absolute left-0 top-8 z-30 w-40 rounded-md border border-[#dee0e3] bg-white py-1 text-[13px] shadow-[0_6px_24px_rgba(31,35,41,0.16)]">{choices.map(([value, text]) => <button key={value} type="button" role="menuitemradio" aria-checked={selected === field && direction === value} onClick={() => { onSelect(value); setOpen(null); }} className={cn("flex h-8 w-full items-center px-3 text-left hover:bg-[#f2f3f5]", selected === field && direction === value && "text-[#3370ff]")}>{text}</button>)}</div></>}
   </div>;
 }
 
@@ -418,33 +449,36 @@ function SelectBox({ checked, label, onToggle, hoverOnly = false }: { checked: b
 }
 
 function DriveRow(props: EntryActions & { columns: DriveColumnPreferences; selected: boolean; selecting: boolean; onSelect: () => void; onDragStart: (e: React.DragEvent) => void; onDragEnd: () => void }) {
+  const { t } = useI18n();
   const { entry, onOpen, columns, selected, selecting, onSelect, onDragStart, onDragEnd } = props;
   return <div draggable onDragStart={onDragStart} onDragEnd={onDragEnd} className={cn("group relative flex min-h-14 items-center gap-2.5 border-b border-[#eef0f2] px-2 py-1 sm:gap-3", selected ? "bg-[#f0f4ff]" : "hover:bg-[#f7f8fa]")} data-drive-row={entry.id} aria-selected={selected}>
-    <span className={cn("shrink-0", !selected && !selecting && "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100")}><SelectBox checked={selected} label={`选择「${driveEntryLabel(entry)}」`} onToggle={onSelect}/></span>
-    <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><DriveIcon entry={entry}/><span className="min-w-0"><span className="block truncate text-[13px] text-[#1f2329]">{driveEntryLabel(entry)}</span>{columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("truncate text-[11px] leading-4 text-[#8f959e]", column === "owner" || column === "modifier" ? "hidden sm:block xl:hidden" : column === "updated" ? "block sm:hidden" : "hidden sm:block md:hidden")}>{column === "owner" ? `所有者 ${entry.creatorName || "—"}` : column === "modifier" ? `修改者 ${entry.lastModifierName || "—"}` : `${column === "updated" ? "修改于" : "创建于"} ${formatDriveTime(column === "updated" ? entry.updatedAt : entry.createdAt)}`}</span>)}</span></button>
-    {columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("hidden w-32 text-[12px] text-[#8f959e]", column === "owner" || column === "modifier" ? "xl:block" : column === "updated" ? "sm:block" : "md:block")}>{column === "owner" || column === "modifier" ? <span className="flex items-center gap-2 pr-2" title={column === "owner" ? "当前版本的所有者为创建者" : "未记录或无法确认时显示空值"}>{(column === "owner" ? entry.creatorName : entry.lastModifierName) && <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center rounded-full bg-[#e8efff] text-[10px] text-[#3370ff]">{[...(column === "owner" ? entry.creatorName! : entry.lastModifierName!)][0]}</span>}<span className="truncate">{(column === "owner" ? entry.creatorName : entry.lastModifierName) || "—"}</span></span> : formatDriveTime(column === "updated" ? entry.updatedAt : entry.createdAt)}</span>)}
+    <span className={cn("shrink-0", !selected && !selecting && "opacity-0 focus-within:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100")}><SelectBox checked={selected} label={t("选择「{name}」", { name: driveEntryLabel(entry) })} onToggle={onSelect}/></span>
+    <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left"><DriveIcon entry={entry}/><span className="min-w-0"><span className="block truncate text-[13px] text-[#1f2329]">{driveEntryLabel(entry)}</span>{columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("truncate text-[11px] leading-4 text-[#8f959e]", column === "owner" || column === "modifier" ? "hidden sm:block xl:hidden" : column === "updated" ? "block sm:hidden" : "hidden sm:block md:hidden")}>{column === "owner" ? t("所有者 {name}", { name: entry.creatorName || "—" }) : column === "modifier" ? t("修改者 {name}", { name: entry.lastModifierName || "—" }) : column === "updated" ? t("修改于 {time}", { time: formatDriveTime(entry.updatedAt) }) : t("创建于 {time}", { time: formatDriveTime(entry.createdAt) })}</span>)}</span></button>
+    {columns.order.map((column) => columns.visible[column] && <span key={column} className={cn("hidden w-32 text-[12px] text-[#8f959e]", column === "owner" || column === "modifier" ? "xl:block" : column === "updated" ? "sm:block" : "md:block")}>{column === "owner" || column === "modifier" ? <span className="flex items-center gap-2 pr-2" title={column === "owner" ? t("当前版本的所有者为创建者") : t("未记录或无法确认时显示空值")}>{(column === "owner" ? entry.creatorName : entry.lastModifierName) && <span aria-hidden="true" className="grid size-5 shrink-0 place-items-center rounded-full bg-[#e8efff] text-[10px] text-[#3370ff]">{[...(column === "owner" ? entry.creatorName! : entry.lastModifierName!)][0]}</span>}<span className="truncate">{(column === "owner" ? entry.creatorName : entry.lastModifierName) || "—"}</span></span> : formatDriveTime(column === "updated" ? entry.updatedAt : entry.createdAt)}</span>)}
     <EntryMenu {...props}/>
   </div>;
 }
 
 function EntryMenu({ entry, starred, onStar, onMove, onCopyTo, onCopyLink, onRename, onTrash }: EntryActions) {
+  const { t } = useI18n();
   const [menu, setMenu] = useState(false);
   const menuItems: [string, () => void][] = [
-    [starred ? "取消收藏" : "收藏", () => onStar(!starred)],
-    ["复制链接", onCopyLink],
-    ["重命名", onRename],
-    ["移动到…", onMove],
-    ...(onCopyTo ? [["复制到…", onCopyTo] as [string, () => void]] : []),
-    ["移到回收站", onTrash],
+    [starred ? t("取消收藏") : t("收藏"), () => onStar(!starred)],
+    [t("复制链接"), onCopyLink],
+    [t("重命名"), onRename],
+    [t("移动到…"), onMove],
+    ...(onCopyTo ? [[t("复制到…"), onCopyTo] as [string, () => void]] : []),
+    [t("移到回收站"), onTrash],
   ];
   return <>
-    <button type="button" aria-label={`${entry.title || "文档"}更多操作`} aria-expanded={menu} onClick={() => setMenu((value) => !value)} className="grid size-9 shrink-0 place-items-center rounded text-[#8f959e] hover:bg-[#e9eaec] sm:size-8"><Ellipsis size={17}/></button>
-    {menu && <><button type="button" aria-label="关闭菜单" className="fixed inset-0 z-20 cursor-default" onClick={() => setMenu(false)}/><div className="absolute right-0 top-11 z-30 w-36 max-w-[calc(100vw-24px)] rounded-md border bg-white py-1 text-[13px] shadow-lg">{menuItems.map(([label, action]) => <button type="button" key={label} onClick={() => { setMenu(false); action(); }} className="block w-full px-4 py-2 text-left hover:bg-[#f2f3f5]">{label}</button>)}</div></>}
+    <button type="button" aria-label={t("{title}更多操作", { title: entry.title || t("文档") })} aria-expanded={menu} onClick={() => setMenu((value) => !value)} className="grid size-9 shrink-0 place-items-center rounded text-[#8f959e] hover:bg-[#e9eaec] sm:size-8"><Ellipsis size={17}/></button>
+    {menu && <><button type="button" aria-label={t("关闭菜单")} className="fixed inset-0 z-20 cursor-default" onClick={() => setMenu(false)}/><div className="absolute right-0 top-11 z-30 w-36 max-w-[calc(100vw-24px)] rounded-md border bg-white py-1 text-[13px] shadow-lg">{menuItems.map(([label, action]) => <button type="button" key={label} onClick={() => { setMenu(false); action(); }} className="block w-full px-4 py-2 text-left hover:bg-[#f2f3f5]">{label}</button>)}</div></>}
   </>;
 }
 
 /** Move within the same scope or explicitly across personal/shared scopes and workspaces. */
 function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId: number; onDone: (result?: { done: number[]; failed: number[] }) => void }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const entry = entries[0];
   const movingIds = new Set(entries.map((item) => item.id));
@@ -488,18 +522,18 @@ function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId
       void qc.invalidateQueries({ queryKey: ["docs"] });
       onDone(result);
     },
-    onError: (err) => setError(err instanceof Error && err.message ? err.message : "移动未完成，请检查权限或目录后重试。"),
+    onError: (err) => setError(err instanceof Error && err.message ? err.message : t("移动未完成，请检查权限或目录后重试。")),
   });
   return (
     <div className="fixed inset-0 z-[60] grid place-items-center bg-black/30 px-4" onMouseDown={() => { if (!move.isPending) onDone(); }}>
-      <div role="dialog" aria-modal="true" aria-label="移动文件" className="w-full max-w-[460px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
-        <h3 className="text-[16px] font-semibold">{entries.length > 1 ? `移动 ${entries.length} 项` : `移动「${entry.title}」`}</h3>
+      <div role="dialog" aria-modal="true" aria-label={t("移动文件")} className="w-full max-w-[460px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+        <h3 className="text-[16px] font-semibold">{entries.length > 1 ? t("移动 {n} 项", { n: entries.length }) : t("移动「{title}」", { title: entry.title })}</h3>
         {workspaces.length > 0 && (
           <div className="mt-3 flex items-center gap-2">
-            <span className="shrink-0 text-[12px] text-[#646a73]">目标空间</span>
+            <span className="shrink-0 text-[12px] text-[#646a73]">{t("目标空间")}</span>
             <div className="min-w-0 flex-1" data-move-workspace-select>
               <FeishuSelect
-                ariaLabel="目标空间"
+                ariaLabel={t("目标空间")}
                 value={String(effectiveWorkspaceId)}
                 onChange={(val) => {
                   const nextWs = Number(val);
@@ -511,16 +545,16 @@ function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId
                 }}
                 options={workspaces.map((ws) => ({
                   value: String(ws.id),
-                  label: ws.id === entry.workspaceId ? `${ws.name}（当前空间）` : ws.name,
+                  label: ws.id === entry.workspaceId ? t("{name}（当前空间）", { name: ws.name }) : ws.name,
                 }))}
               />
             </div>
           </div>
         )}
-        <div className="mt-3 flex items-center gap-1.5 rounded-md bg-[#f5f6f7] p-1" role="tablist" aria-label="目标目录范围">
+        <div className="mt-3 flex items-center gap-1.5 rounded-md bg-[#f5f6f7] p-1" role="tablist" aria-label={t("目标目录范围")}>
           {([
-            [true, "我的文件夹"],
-            [false, "共享文件夹"],
+            [true, t("我的文件夹")],
+            [false, t("共享文件夹")],
           ] as const).map(([personal, label]) => (
             <button
               key={String(personal)}
@@ -544,11 +578,11 @@ function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId
             data-cross-space-notice
             className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] leading-5 text-amber-800"
           >
-            跨空间移动将同步更新该条目及子目录的所属空间与可见范围
+            {t("跨空间移动将同步更新该条目及子目录的所属空间与可见范围")}
           </p>
         )}
         <div className="mt-3 flex items-center gap-1 text-[13px] text-[#646a73]">
-          <button type="button" onClick={() => setPath([])} className="hover:text-[#3370ff]">{targetPersonal ? "我的文件夹" : "共享文件夹"}</button>
+          <button type="button" onClick={() => setPath([])} className="hover:text-[#3370ff]">{targetPersonal ? t("我的文件夹") : t("共享文件夹")}</button>
           {path.map((folder, i) => (
             <span key={folder.id} className="flex items-center gap-1">
               <ChevronRight size={12} />
@@ -564,12 +598,12 @@ function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId
               <ChevronRight size={13} className="ml-auto text-[#8f959e]" />
             </button>
           ))}
-          {dirs.isError && <p className="p-3 text-xs text-destructive">无法加载文件夹</p>}
+          {dirs.isError && <p className="p-3 text-xs text-destructive">{t("无法加载文件夹")}</p>}
         </div>
         {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
         <div className="mt-5 flex justify-end gap-2">
-          <button type="button" disabled={move.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">取消</button>
-          <button type="button" disabled={move.isPending || dirs.isError} onClick={() => move.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">移动到这里</button>
+          <button type="button" disabled={move.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">{t("取消")}</button>
+          <button type="button" disabled={move.isPending || dirs.isError} onClick={() => move.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">{t("移动到这里")}</button>
         </div>
       </div>
     </div>
@@ -578,6 +612,7 @@ function MoveDialog({ entries, userId, onDone }: { entries: DriveEntry[]; userId
 
 /** Duplicate any supported Drive entry into a chosen Drive folder or root. */
 function CopyToDialog({ entry, userId, onDone }: { entry: DriveEntry; userId: number; onDone: (created?: DocMeta) => void }) {
+  const { t } = useI18n();
   const [targetPersonal, setTargetPersonal] = useState(!!entry.personal);
   const [path, setPath] = useState<DriveEntry[]>([]);
   const [error, setError] = useState("");
@@ -586,31 +621,31 @@ function CopyToDialog({ entry, userId, onDone }: { entry: DriveEntry; userId: nu
   const copy = useMutation({
     mutationFn: () => docsApi.duplicateForAccount(entry.id, userId, { parentId: parent, personal: targetPersonal }),
     onSuccess: (created) => onDone(created),
-    onError: (err) => setError(err instanceof Error ? err.message : "复制未完成，请检查权限或目录后重试。"),
+    onError: (err) => setError(err instanceof Error ? err.message : t("复制未完成，请检查权限或目录后重试。")),
   });
   return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/30 px-4" onMouseDown={() => { if (!copy.isPending) onDone(); }}>
-    <div role="dialog" aria-modal="true" aria-label="复制到指定目录" className="w-full max-w-[440px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-label={t("复制到指定目录")} className="w-full max-w-[440px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
       <div className="flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-[16px] font-semibold"><Copy size={16} className="text-[#3370ff]"/>复制到…（{driveEntryLabel(entry)}）</h3>
-        <button type="button" aria-label="关闭" onClick={() => { if (!copy.isPending) onDone(); }} className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><X size={16}/></button>
+        <h3 className="flex items-center gap-2 text-[16px] font-semibold"><Copy size={16} className="text-[#3370ff]"/>{t("复制到…（{name}）", { name: driveEntryLabel(entry) })}</h3>
+        <button type="button" aria-label={t("关闭")} onClick={() => { if (!copy.isPending) onDone(); }} className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><X size={16}/></button>
       </div>
       <div className="mt-3 flex gap-2 text-[12px]">
-        <button type="button" onClick={() => { setTargetPersonal(true); setPath([]); }} className={cn("h-7 rounded-md px-2.5", targetPersonal ? "bg-[#edf2ff] font-medium text-[#3370ff]" : "text-[#646a73] hover:bg-[#f2f3f5]")}>我的文件夹</button>
-        <button type="button" onClick={() => { setTargetPersonal(false); setPath([]); }} className={cn("h-7 rounded-md px-2.5", !targetPersonal ? "bg-[#edf2ff] font-medium text-[#3370ff]" : "text-[#646a73] hover:bg-[#f2f3f5]")}>共享文件夹</button>
+        <button type="button" onClick={() => { setTargetPersonal(true); setPath([]); }} className={cn("h-7 rounded-md px-2.5", targetPersonal ? "bg-[#edf2ff] font-medium text-[#3370ff]" : "text-[#646a73] hover:bg-[#f2f3f5]")}>{t("我的文件夹")}</button>
+        <button type="button" onClick={() => { setTargetPersonal(false); setPath([]); }} className={cn("h-7 rounded-md px-2.5", !targetPersonal ? "bg-[#edf2ff] font-medium text-[#3370ff]" : "text-[#646a73] hover:bg-[#f2f3f5]")}>{t("共享文件夹")}</button>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-1 text-[13px] text-[#646a73]">
-        <button type="button" onClick={() => setPath([])} className="hover:text-[#3370ff]">{targetPersonal ? "我的文件夹" : "共享文件夹"}</button>
+        <button type="button" onClick={() => setPath([])} className="hover:text-[#3370ff]">{targetPersonal ? t("我的文件夹") : t("共享文件夹")}</button>
         {path.map((folder, i) => <span key={folder.id} className="flex items-center gap-1"><ChevronRight size={12}/><button type="button" onClick={() => setPath(path.slice(0, i + 1))} className="hover:text-[#3370ff]">{folder.title}</button></span>)}
       </div>
       <div className="mt-3 h-44 overflow-y-auto rounded-md border">
         {(dirs.data ?? []).filter((item) => item.kind === "folder").map((folder) => <button type="button" key={folder.id} onClick={() => setPath([...path, folder])} className="flex h-9 w-full items-center gap-2 px-3 text-left text-[13px] hover:bg-[#f2f3f5]"><Folder size={16} fill="#ffcc4d" stroke="#f5a623"/><span className="truncate">{folder.title}</span><ChevronRight size={13} className="ml-auto shrink-0 text-[#8f959e]"/></button>)}
-        {dirs.isSuccess && (dirs.data ?? []).filter((item) => item.kind === "folder").length === 0 && <p className="p-4 text-center text-[12px] text-[#8f959e]">当前目录下无子文件夹</p>}
-        {dirs.isError && <p className="p-3 text-xs text-destructive">无法加载文件夹</p>}
+        {dirs.isSuccess && (dirs.data ?? []).filter((item) => item.kind === "folder").length === 0 && <p className="p-4 text-center text-[12px] text-[#8f959e]">{t("当前目录下无子文件夹")}</p>}
+        {dirs.isError && <p className="p-3 text-xs text-destructive">{t("无法加载文件夹")}</p>}
       </div>
       {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
       <div className="mt-5 flex justify-end gap-2">
-        <button type="button" disabled={copy.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">取消</button>
-        <button type="button" disabled={copy.isPending || dirs.isError} onClick={() => copy.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">{copy.isPending ? "复制中…" : "复制到这里"}</button>
+        <button type="button" disabled={copy.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">{t("取消")}</button>
+        <button type="button" disabled={copy.isPending || dirs.isError} onClick={() => copy.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">{copy.isPending ? t("复制中…") : t("复制到这里")}</button>
       </div>
     </div>
   </div>;
@@ -618,6 +653,7 @@ function CopyToDialog({ entry, userId, onDone }: { entry: DriveEntry; userId: nu
 
 /** Add a shortcut in the current Drive directory pointing to any accessible node. */
 function AddShortcutDialog({ folderId, scope, userId, onDone }: { folderId: number | null; scope: boolean; userId: number; onDone: (created?: DriveShortcut) => void }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [error, setError] = useState("");
@@ -636,25 +672,25 @@ function AddShortcutDialog({ folderId, scope, userId, onDone }: { folderId: numb
   }, [ownDocs.data, sharedDocs.data, folderId, query]);
   const create = useMutation({
     mutationFn: () => {
-      if (!selectedId) throw new Error("请选择要添加快捷方式的云文档");
+      if (!selectedId) throw new Error(t("请选择要添加快捷方式的云文档"));
       return driveApi.createShortcut(selectedId, folderId, scope, userId);
     },
     onSuccess: (created) => onDone(created),
-    onError: (err) => setError(err instanceof Error ? err.message : "添加快捷方式失败，请检查权限后重试。"),
+    onError: (err) => setError(err instanceof Error ? err.message : t("添加快捷方式失败，请检查权限后重试。")),
   });
   return <div className="fixed inset-0 z-[60] grid place-items-center bg-black/30 px-4" onMouseDown={() => { if (!create.isPending) onDone(); }}>
-    <div role="dialog" aria-modal="true" aria-label="添加快捷方式" className="w-full max-w-[460px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-label={t("添加快捷方式")} className="w-full max-w-[460px] rounded-lg bg-white p-5 shadow-2xl" onMouseDown={(event) => event.stopPropagation()}>
       <div className="flex items-center justify-between">
-        <h3 className="flex items-center gap-2 text-[16px] font-semibold"><Link2 size={17} className="text-[#7652ed]"/>添加快捷方式</h3>
-        <button type="button" aria-label="关闭" onClick={() => { if (!create.isPending) onDone(); }} className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><X size={16}/></button>
+        <h3 className="flex items-center gap-2 text-[16px] font-semibold"><Link2 size={17} className="text-[#7652ed]"/>{t("添加快捷方式")}</h3>
+        <button type="button" aria-label={t("关闭")} onClick={() => { if (!create.isPending) onDone(); }} className="grid size-7 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><X size={16}/></button>
       </div>
-      <p className="mt-1 text-[12px] text-[#8f959e]">为任意有权访问的云文档在当前目录创建快捷方式；删除快捷方式不会影响原文档。</p>
+      <p className="mt-1 text-[12px] text-[#8f959e]">{t("为任意有权访问的云文档在当前目录创建快捷方式；删除快捷方式不会影响原文档。")}</p>
       <div className="mt-3 flex h-9 items-center gap-2 rounded-md border border-[#dee0e3] px-2.5 focus-within:border-[#3370ff]">
         <Search size={15} className="text-[#8f959e]"/>
-        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索云文档名称…" className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"/>
+        <input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("搜索云文档名称…")} className="min-w-0 flex-1 bg-transparent text-[13px] outline-none"/>
       </div>
       <div className="mt-3 h-56 overflow-y-auto rounded-md border border-[#e5e6eb]">
-        {ownDocs.isPending ? <p className="p-6 text-center text-[12px] text-[#8f959e]">加载中…</p> : candidates.length === 0 ? <p className="p-6 text-center text-[12px] text-[#8f959e]">没有可选的云文档</p> : candidates.map((doc) => <button key={doc.id} type="button" onClick={() => setSelectedId(doc.id)} className={cn("flex h-10 w-full items-center gap-2.5 px-3 text-left text-[13px]", selectedId === doc.id ? "bg-[#edf2ff] text-[#3370ff]" : "hover:bg-[#f2f3f5]")}>
+        {ownDocs.isPending ? <p className="p-6 text-center text-[12px] text-[#8f959e]">{t("加载中…")}</p> : candidates.length === 0 ? <p className="p-6 text-center text-[12px] text-[#8f959e]">{t("没有可选的云文档")}</p> : candidates.map((doc) => <button key={doc.id} type="button" onClick={() => setSelectedId(doc.id)} className={cn("flex h-10 w-full items-center gap-2.5 px-3 text-left text-[13px]", selectedId === doc.id ? "bg-[#edf2ff] text-[#3370ff]" : "hover:bg-[#f2f3f5]")}>
           <DriveIcon entry={{ kind: doc.kind ?? "doc", docType: doc.docType, icon: doc.icon }}/>
           <span className="min-w-0 flex-1 truncate">{docTitle(doc)}</span>
           {selectedId === doc.id && <Check size={14} className="shrink-0 text-[#3370ff]"/>}
@@ -662,8 +698,8 @@ function AddShortcutDialog({ folderId, scope, userId, onDone }: { folderId: numb
       </div>
       {error && <p role="alert" className="mt-2 text-xs text-destructive">{error}</p>}
       <div className="mt-4 flex justify-end gap-2">
-        <button type="button" disabled={create.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">取消</button>
-        <button type="button" disabled={create.isPending || !selectedId} onClick={() => create.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">{create.isPending ? "添加中…" : "添加到当前目录"}</button>
+        <button type="button" disabled={create.isPending} onClick={() => onDone()} className="h-8 rounded-md border px-3 text-[13px] disabled:opacity-40">{t("取消")}</button>
+        <button type="button" disabled={create.isPending || !selectedId} onClick={() => create.mutate()} className="h-8 rounded-md bg-[#3370ff] px-3 text-[13px] text-white disabled:opacity-40">{create.isPending ? t("添加中…") : t("添加到当前目录")}</button>
       </div>
     </div>
   </div>;

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Maximize2, Minus, Plus, RotateCw } from "lucide-react";
 import { detectPreviewKind, RichFilePreview } from "@/components/rich-file-preview";
+import { useI18n } from "@/lib/i18n";
 import { IMAGE_ZOOM_LEVELS, previewImageSize, stepImageZoom } from "./image-preview-zoom";
 import { useImagePreviewTouch } from "./use-image-preview-touch";
 
@@ -24,6 +25,7 @@ export function AttachmentPreview({
   allowPrint?: boolean;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const root = useRef<HTMLDivElement>(null);
   const close = useRef<HTMLButtonElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
@@ -58,7 +60,7 @@ export function AttachmentPreview({
       ref={root}
       role="dialog"
       aria-modal="true"
-      aria-label={`预览：${name}`}
+      aria-label={t("预览：{name}", { name })}
       onKeyDown={(event) => {
         if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); return; }
         if (isImage && !imageError && !event.ctrlKey && !event.metaKey && !event.altKey && !event.nativeEvent.isComposing) {
@@ -85,13 +87,13 @@ export function AttachmentPreview({
       <div className="mb-3 flex shrink-0 items-center gap-3 px-1" onClick={(e) => e.stopPropagation()}>
         <span className="truncate text-[14px] text-white/90">{name}</span>
         <span className="text-[12px] text-white/40">{mime}</span>
-        <button ref={close} type="button" onClick={onClose} className="ml-auto rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label="关闭">
+        <button ref={close} type="button" onClick={onClose} className="ml-auto rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label={t("关闭")}>
           ✕
         </button>
       </div>
       <div ref={viewport} className={isImage ? "flex min-h-0 flex-1 overflow-auto" : "flex min-h-0 flex-1 items-center justify-center overflow-auto"} style={isImage ? { touchAction: "none" } : undefined} {...(isImage && natural && !imageError ? touch : {})} onClick={(e) => e.stopPropagation()}>
         {isImage ? (
-          imageError ? <p role="status" className="m-auto text-[13px] text-white/70">图片加载失败</p> : <div ref={imageFrame} style={size} className={size ? "relative m-auto shrink-0" : "m-auto flex max-h-full max-w-full shrink-0"}><img
+          imageError ? <p role="status" className="m-auto text-[13px] text-white/70">{t("图片加载失败")}</p> : <div ref={imageFrame} style={size} className={size ? "relative m-auto shrink-0" : "m-auto flex max-h-full max-w-full shrink-0"}><img
             src={src}
             alt={name}
             onLoad={(event) => setNatural({ width: event.currentTarget.naturalWidth, height: event.currentTarget.naturalHeight })}
@@ -115,13 +117,13 @@ export function AttachmentPreview({
           />
         )}
       </div>
-      {isImage && <div className="mt-3 flex shrink-0 justify-center" onClick={(event) => event.stopPropagation()}><div className="flex items-center gap-1 rounded-lg bg-white/10 p-1 text-white shadow-lg" role="group" aria-label="图片缩放">
-        <button type="button" aria-label="缩小图片" title="缩小" aria-disabled={imageError || zoom <= IMAGE_ZOOM_LEVELS[0]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, -1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Minus size={17}/></button>
-        <span className="min-w-14 text-center text-[13px] tabular-nums" aria-label={`缩放比例，相对于适应窗口 ${Math.round(zoom * 100)}%`}>{Math.round(zoom * 100)}%</span>
-        <button type="button" aria-label="放大图片" title="放大" aria-disabled={imageError || zoom >= IMAGE_ZOOM_LEVELS[IMAGE_ZOOM_LEVELS.length - 1]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, 1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Plus size={17}/></button>
+      {isImage && <div className="mt-3 flex shrink-0 justify-center" onClick={(event) => event.stopPropagation()}><div className="flex items-center gap-1 rounded-lg bg-white/10 p-1 text-white shadow-lg" role="group" aria-label={t("图片缩放")}>
+        <button type="button" aria-label={t("缩小图片")} title={t("缩小")} aria-disabled={imageError || zoom <= IMAGE_ZOOM_LEVELS[0]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, -1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Minus size={17}/></button>
+        <span className="min-w-14 text-center text-[13px] tabular-nums" aria-label={t("缩放比例，相对于适应窗口 {n}%", { n: Math.round(zoom * 100) })}>{Math.round(zoom * 100)}%</span>
+        <button type="button" aria-label={t("放大图片")} title={t("放大")} aria-disabled={imageError || zoom >= IMAGE_ZOOM_LEVELS[IMAGE_ZOOM_LEVELS.length - 1]} onClick={() => { if (!imageError) setZoom((value) => stepImageZoom(value, 1)); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Plus size={17}/></button>
         <span className="mx-1 h-5 w-px bg-white/20"/>
-        <button type="button" aria-label="适应窗口" title="适应窗口" aria-disabled={imageError || zoom === 1} onClick={() => { if (!imageError) setZoom(1); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Maximize2 size={16}/></button>
-        <button type="button" aria-label="顺时针旋转图片" title="顺时针旋转" aria-disabled={imageError} onClick={() => { if (!imageError) setRotation((value) => (value + 90) % 360); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><RotateCw size={17}/></button>
+        <button type="button" aria-label={t("适应窗口")} title={t("适应窗口")} aria-disabled={imageError || zoom === 1} onClick={() => { if (!imageError) setZoom(1); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><Maximize2 size={16}/></button>
+        <button type="button" aria-label={t("顺时针旋转图片")} title={t("顺时针旋转")} aria-disabled={imageError} onClick={() => { if (!imageError) setRotation((value) => (value + 90) % 360); }} className="grid size-9 place-items-center rounded hover:bg-white/15 aria-disabled:opacity-35"><RotateCw size={17}/></button>
       </div></div>}
     </div>
   );

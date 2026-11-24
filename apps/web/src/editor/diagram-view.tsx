@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import mermaid from "mermaid";
+import { useI18n } from "@/lib/i18n";
 
 let initialized = false;
 function ensureInit(dark: boolean) {
@@ -11,6 +12,7 @@ function ensureInit(dark: boolean) {
 
 /** Mermaid 流程图渲染（graph TD / sequenceDiagram / gantt…）。失败时显示错误提示。 */
 export function DiagramView({ src }: { src: string }) {
+  const { t } = useI18n();
   const [svg, setSvg] = useState("");
   const [err, setErr] = useState("");
   const id = useId().replace(/[^a-zA-Z0-9]/g, "");
@@ -36,7 +38,7 @@ export function DiagramView({ src }: { src: string }) {
   if (err) {
     return (
       <div className="rounded-md bg-destructive/10 px-3 py-2 text-[12px] text-destructive" data-diagram-error>
-        流程图语法错误：{err.split("\n")[0]}
+        {t("流程图语法错误：{error}", { error: err.split("\n")[0] })}
       </div>
     );
   }

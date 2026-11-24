@@ -1,16 +1,25 @@
 import type { SlideShape } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 export type BasicSlideShape = Exclude<SlideShape["kind"], "text" | "image" | "table" | "chart" | "video" | "audio">;
 export const SLIDE_SHAPES: { kind: BasicSlideShape; label: string; group: "基础" | "线条" | "箭头" }[] = [
-  { kind: "rectangle", label: "矩形", group: "基础" }, { kind: "rounded-rectangle", label: "圆角矩形", group: "基础" },
-  { kind: "parallelogram", label: "平行四边形", group: "基础" }, { kind: "ellipse", label: "椭圆", group: "基础" },
-  { kind: "triangle", label: "三角形", group: "基础" }, { kind: "right-triangle", label: "直角三角形", group: "基础" },
-  { kind: "diamond", label: "菱形", group: "基础" }, { kind: "pentagon", label: "五边形", group: "基础" },
-  { kind: "hexagon", label: "六边形", group: "基础" }, { kind: "star", label: "五角星", group: "基础" },
-  { kind: "trapezoid", label: "梯形", group: "基础" },
-  { kind: "line", label: "直线", group: "线条" }, { kind: "line-arrow", label: "开放箭头线", group: "线条" },
-  { kind: "line-arrow-filled", label: "实心箭头线", group: "线条" }, { kind: "line-dot", label: "圆点线", group: "线条" },
-  { kind: "line-double-arrow", label: "双向箭头线", group: "线条" }, { kind: "arrow-right", label: "向右箭头", group: "箭头" },
+  { kind: "rectangle", get label() { return t("矩形"); }, group: "基础" },
+  { kind: "rounded-rectangle", get label() { return t("圆角矩形"); }, group: "基础" },
+  { kind: "parallelogram", get label() { return t("平行四边形"); }, group: "基础" },
+  { kind: "ellipse", get label() { return t("椭圆"); }, group: "基础" },
+  { kind: "triangle", get label() { return t("三角形"); }, group: "基础" },
+  { kind: "right-triangle", get label() { return t("直角三角形"); }, group: "基础" },
+  { kind: "diamond", get label() { return t("菱形"); }, group: "基础" },
+  { kind: "pentagon", get label() { return t("五边形"); }, group: "基础" },
+  { kind: "hexagon", get label() { return t("六边形"); }, group: "基础" },
+  { kind: "star", get label() { return t("五角星"); }, group: "基础" },
+  { kind: "trapezoid", get label() { return t("梯形"); }, group: "基础" },
+  { kind: "line", get label() { return t("直线"); }, group: "线条" },
+  { kind: "line-arrow", get label() { return t("开放箭头线"); }, group: "线条" },
+  { kind: "line-arrow-filled", get label() { return t("实心箭头线"); }, group: "线条" },
+  { kind: "line-dot", get label() { return t("圆点线"); }, group: "线条" },
+  { kind: "line-double-arrow", get label() { return t("双向箭头线"); }, group: "线条" },
+  { kind: "arrow-right", get label() { return t("向右箭头"); }, group: "箭头" },
 ];
 type LineShape = Extract<BasicSlideShape, `line${string}`>;
 export function isLineSlideShape(kind: BasicSlideShape): kind is LineShape { return kind === "line" || kind.startsWith("line-"); }

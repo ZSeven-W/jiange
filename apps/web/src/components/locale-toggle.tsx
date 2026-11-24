@@ -3,8 +3,8 @@ import { Languages } from "lucide-react";
 
 /** 语言切换：显示目标语言名，点击在 中文/English 之间切换。 */
 export function LocaleToggle({ className, compact = false }: { className?: string; compact?: boolean }) {
-  const { locale, setLocale } = useI18n();
-  const label = locale === "zh-CN" ? "切换到 English" : "切换到中文";
+  const { locale, setLocale, t } = useI18n();
+  const label = locale === "zh-CN" ? t("切换到 English") : t("切换到中文");
   return (
     <button
       type="button"

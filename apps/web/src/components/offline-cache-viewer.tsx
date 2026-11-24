@@ -933,6 +933,14 @@ export function OfflineCacheDrawer({
     () => state.cachedSnapshots.reduce((sum, snap) => sum + Math.max(0, snap.sizeBytes), 0),
     [state.cachedSnapshots],
   );
+  const collabCount = state.offlineCollabCount ?? 0;
+  const collabSummary = state.offlineCollabSummary;
+  const pendingCollabDeltas = collabSummary
+    ? collabSummary.sheetDeltaCount + collabSummary.slidesDraftCount
+    : 0;
+  const pendingCollabMerges = collabSummary ? collabSummary.pendingMergeCount : 0;
+  const collabConflictsCount = state.lastSyncSummary?.collabConflicts?.length ?? 0;
+  const totalPendingTabCount = state.pendingQueue.length + pendingCollabDeltas;
 
   if (!open) return null;
 
@@ -988,12 +996,22 @@ export function OfflineCacheDrawer({
                   {state.online ? t("已联网") : t("离线模式")}
                 </span>
               </div>
-              <p className="mt-0.5 text-[12px] text-subtle">
-                {t("已缓存 {n} 项 · 占用 {used} / {max}", {
-                  n: state.cachedSnapshots.length,
-                  used: formatOfflineBytes(totalBytes),
-                  max: formatOfflineBytes(MAX_OFFLINE_SNAPSHOT_BYTES),
-                })}
+              <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-subtle">
+                <span>
+                  {t("已缓存 {n} 项 · 占用 {used} / {max}", {
+                    n: state.cachedSnapshots.length,
+                    used: formatOfflineBytes(totalBytes),
+                    max: formatOfflineBytes(MAX_OFFLINE_SNAPSHOT_BYTES),
+                  })}
+                </span>
+                {collabCount > 0 && (
+                  <span
+                    data-offline-drawer-collab-count={collabCount}
+                    className="rounded-full bg-[#e8f0ff] px-1.5 py-0.2 text-[11px] font-medium text-[#1456f0] dark:bg-[#1d3461] dark:text-[#9cbdff]"
+                  >
+                    {t("离线协同副本 {n} 份", { n: collabCount })}
+                  </span>
+                )}
               </p>
             </div>
           </div>
@@ -1048,12 +1066,12 @@ export function OfflineCacheDrawer({
             <span
               className={cn(
                 "rounded-full px-1.5 py-0.2 text-[11px]",
-                state.pendingQueue.length > 0
+                totalPendingTabCount > 0
                   ? "bg-[#fff3e6] font-semibold text-[#c25400] dark:bg-[#3d2511] dark:text-[#fdba74]"
                   : "bg-black/5 text-muted-foreground dark:bg-white/10",
               )}
             >
-              {state.pendingQueue.length}
+              {totalPendingTabCount}
             </span>
           </button>
         </div>
@@ -1174,7 +1192,7 @@ export function OfflineCacheDrawer({
                 <button
                   type="button"
                   data-offline-drawer-sync-btn=""
-                  disabled={!state.online || state.syncing || state.pendingQueue.length === 0}
+                  disabled={!state.online || state.syncing || totalPendingTabCount === 0}
                   onClick={() => void state.syncNow()}
                   className="inline-flex items-center gap-1.5 rounded-md bg-[#3370ff] px-3 py-1.5 text-[12px] font-medium text-white transition-colors hover:bg-[#245bdb] disabled:cursor-not-allowed disabled:opacity-45"
                 >
@@ -1182,6 +1200,86 @@ export function OfflineCacheDrawer({
                   <span>{t("立即同步")}</span>
                 </button>
               </div>
+
+              {(collabCount > 0 || collabConflictsCount > 0) && (
+                <div
+                  data-offline-collab-status=""
+                  className="rounded-lg border border-[#bed3ff] bg-[#f5f8ff] p-3.5 text-[12px] text-foreground dark:border-[#2a4a85] dark:bg-[#14233f]"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-semibold text-[#1456f0] dark:text-[#9cbdff]">
+                      {t("离线协同与自动合并")}
+                    </span>
+                    {collabCount > 0 && (
+                      <span className="rounded-full bg-[#3370ff]/12 px-2 py-0.5 text-[11px] font-medium text-[#1456f0] dark:bg-[#3370ff]/25 dark:text-[#9cbdff]">
+                        {t("离线协同副本 {n} 份", { n: collabCount })}
+                      </span>
+                    )}
+                  </div>
+
+                  {collabSummary && (
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-[11.5px] text-muted-foreground">
+                      {collabSummary.docReplicaCount > 0 && (
+                        <span
+                          data-offline-collab-doc-summary=""
+                          className="rounded bg-surface px-2 py-0.5 border border-[#dee0e3] dark:border-border"
+                        >
+                          {t("文档 CRDT 副本 {n} 份（待合并操作 {ops} 条）", {
+                            n: collabSummary.docReplicaCount,
+                            ops: collabSummary.docPendingOpsCount,
+                          })}
+                        </span>
+                      )}
+                      {collabSummary.sheetDeltaCount > 0 && (
+                        <span
+                          data-offline-collab-sheet-summary=""
+                          className="rounded bg-surface px-2 py-0.5 border border-[#dee0e3] dark:border-border"
+                        >
+                          {t("表格离线增量 {sheets} 份（{cells} 个单元格）", {
+                            sheets: collabSummary.sheetDeltaCount,
+                            cells: collabSummary.sheetEditCount,
+                          })}
+                        </span>
+                      )}
+                      {collabSummary.slidesDraftCount > 0 && (
+                        <span
+                          data-offline-collab-slides-summary=""
+                          className="rounded bg-surface px-2 py-0.5 border border-[#dee0e3] dark:border-border"
+                        >
+                          {t("幻灯片离线草稿 {n} 份", {
+                            n: collabSummary.slidesDraftCount,
+                          })}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {pendingCollabMerges > 0 && (
+                    <p
+                      data-offline-collab-merge-hint=""
+                      className="mt-2 text-[11.5px] text-[#1456f0] dark:text-[#9cbdff]"
+                    >
+                      {t("联网后将自动通过 CRDT 与增量策略合并 {n} 项离线协同修改", {
+                        n: pendingCollabMerges,
+                      })}
+                    </p>
+                  )}
+
+                  {collabConflictsCount > 0 && (
+                    <div
+                      data-offline-collab-conflicts=""
+                      className="mt-2 flex items-start gap-1.5 rounded-md border border-[#ffd591] bg-[#fff7e6] px-2.5 py-1.5 text-[11.5px] text-[#8c4a00] dark:border-[#6e4b1f] dark:bg-[#2b2215] dark:text-[#ffd591]"
+                    >
+                      <AlertTriangle size={13} className="mt-0.5 shrink-0" aria-hidden="true" />
+                      <span>
+                        {t("检测到 {n} 处离线合并冲突（已按最新修改策略处理）", {
+                          n: collabConflictsCount,
+                        })}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {state.pendingQueue.length === 0 ? (
                 <div

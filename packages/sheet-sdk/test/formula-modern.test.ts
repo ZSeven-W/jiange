@@ -1,8 +1,22 @@
 import { describe, expect, it } from "vitest";
+import { parseFormulaAst } from "../src/formula-ast.js";
 import { calculateWorkbook, IncrementalFormulaEngine } from "../src/formula-engine.js";
-import { isSafeSheetImageUrl, SUPPORTED_FORMULA_FUNCTIONS } from "../src/formula-functions.js";
+import {
+  arrVal,
+  boolVal,
+  BUILTIN_FUNCTIONS,
+  EMPTY_VAL,
+  errVal,
+  type FormulaEvalContext,
+  imgVal,
+  isSafeSheetImageUrl,
+  numVal,
+  strVal,
+  SUPPORTED_FORMULA_FUNCTIONS,
+  toBoolean,
+} from "../src/formula-functions.js";
 import { formatCellDisplay } from "../src/numfmt.js";
-import type { SheetWorksheet } from "../src/types.js";
+import type { EvalValue, SheetWorksheet } from "../src/types.js";
 
 function makeSheet(id: number, title: string, entries: [number, number, string][], rows = 30, cols = 12): SheetWorksheet {
   const rowAxes = Array.from({ length: rows }, (_, i) => ({ id: i + 1, pos: i }));
@@ -286,5 +300,287 @@ describe("Modern sheet formula functions (Wave 2 E4-2)", () => {
     expect(m["0:5"]).toEqual({ kind: "number", value: 12 });
     expect(m["0:6"]).toEqual({ kind: "error", value: "#VALUE!", error: "#VALUE!" });
     expect(formatCellDisplay('=IMAGE("https://example.com/logo.png","Company Logo")', m["0:0"])).toBe("Company Logo");
+  });
+
+  it("covers modern formula edge branches across regex, LET, LAMBDA, ARRAYFORMULA, QUERY, IMAGE, and AST invoke", () => {
+    // AST postfix invoke error & max depth branches
+    expect(parseFormulaAst("=LAMBDA(x, x)(1+)")).toBeNull();
+    expect(parseFormulaAst("=(1)(")).toBeNull();
+    expect(parseFormulaAst("=F()" + "()".repeat(65))).toBeNull();
+
+    // isSafeSheetImageUrl edge cases
+    expect(isSafeSheetImageUrl("")).toBe(false);
+    expect(isSafeSheetImageUrl("https://example.com/" + "a".repeat(4100))).toBe(false);
+    expect(isSafeSheetImageUrl("https://example.com/a\nb.png")).toBe(false);
+    expect(isSafeSheetImageUrl("http://[invalid")).toBe(false);
+    expect(isSafeSheetImageUrl("/api/drive/files/42?v=1")).toBe(true);
+    expect(toBoolean(imgVal("https://example.com/a.png"))).toEqual(errVal("#VALUE!"));
+
+    const ws = makeSheet(
+      1,
+      "ModernEdge",
+      [
+        // Table at A1:B2 for QUERY
+        [0, 0, "Name"], [0, 1, "Val"],
+        [1, 0, "A"], [1, 1, "10"],
+
+        // Regex arity, error propagation, ReDoS nested parens, unmatched ')', length limit, alternate/optional capture groups
+        [2, 0, '=REGEXMATCH("a")'],
+        [2, 1, '=REGEXMATCH(1/0, "a")'],
+        [2, 2, '=REGEXMATCH("a", 1/0)'],
+        [2, 3, '=REGEXMATCH("a", ")")'],
+        [2, 4, '=REGEXMATCH("a", "((a)+)+")'],
+        [2, 5, '=REGEXMATCH("a", "((a+))+")'],
+        [2, 6, '=REGEXMATCH("a", "((a+))")'],
+        [2, 7, '=REGEXMATCH("a", REPT("a", 513))'],
+        [3, 0, '=REGEXREPLACE("a", "b")'],
+        [3, 1, '=REGEXREPLACE(1/0, "a", "b")'],
+        [3, 2, '=REGEXREPLACE("a", 1/0, "b")'],
+        [3, 3, '=REGEXREPLACE("a", "b", 1/0)'],
+        [3, 4, '=REGEXEXTRACT("a")'],
+        [3, 5, '=REGEXEXTRACT(1/0, "a")'],
+        [3, 6, '=REGEXEXTRACT("a", 1/0)'],
+        [3, 7, '=REGEXEXTRACT("bar", "(foo)|(bar)")'],
+        [3, 8, '=REGEXEXTRACT("baz", "(foo)?(bar)?baz")'],
+
+        // LAMBDA & LET edge cases: missing args, non-lambda invoke, error-bound call, unwrapScalar on lambda, bad params
+        [4, 0, "=LAMBDA()"],
+        [4, 1, "=LAMBDA(123, 1)"],
+        [4, 2, "=LAMBDA(x, )"],
+        [4, 3, "=LAMBDA(x, y, x+y)(1,)"],
+        [4, 4, "=(1)(2)"],
+        [4, 5, "=LET(bad, 1/0, bad(5))"],
+        [4, 6, "=LEN(LAMBDA(x, x))"],
+        [4, 7, '={50, "bad"}%'], // percent on array (number + non-number)
+
+        // ARRAYFORMULA edge cases: wrong arity, scalar lift, missing arg lift, empty/ragged array lift
+        [5, 0, "=ARRAYFORMULA()"],
+        [5, 1, "=ARRAYFORMULA(1, 2)"],
+        [5, 2, "=ARRAYFORMULA(ABS(-5))"],
+        [5, 3, '=ARRAYFORMULA(LEFT("hello",))'],
+        [5, 4, '=ARRAYFORMULA(LEFT({"abc";"def"},))'],
+        [5, 5, "=ARRAYFORMULA(ABS(EMPTY_ARR()))"],
+        [5, 6, "=ARRAYFORMULA(ABS(ONE_EMPTY_ROW()))"],
+        [5, 7, "=ARRAYFORMULA(LET(x, {2,3}, x*10))"],
+
+        // IF / IFERROR / IFNA in arrayMode edge cases
+        [7, 0, "=ARRAYFORMULA(IF(EMPTY_ARR(), 1, 2))"],
+        [7, 1, "=ARRAYFORMULA(IF(RAGGED_BOOL2(), 1, 2))"],
+        [7, 3, "=ARRAYFORMULA(IF({FALSE;FALSE}, 1, 2))"],
+        [7, 5, "=ARRAYFORMULA(IF({TRUE;TRUE}, 1, 2))"],
+        [7, 7, "=ARRAYFORMULA(IF({TRUE;FALSE}, 1))"],
+        [7, 8, "=ARRAYFORMULA(IF({TRUE;FALSE}, 1,))"],
+        [7, 9, "=ARRAYFORMULA(IF({TRUE;FALSE}, {10;20}, {30;40}))"],
+        [9, 0, "=ARRAYFORMULA(IF({TRUE;FALSE}, EMPTY_ARR(), EMPTY_ARR()))"],
+        [9, 2, '=ARRAYFORMULA(IF({"notbool";TRUE}, 1, 2))'],
+        [11, 0, "=ARRAYFORMULA(IFERROR({1,2}, 0))"],
+        [11, 3, "=ARRAYFORMULA(IFERROR({1/0, 2}, {99, 88}))"],
+        [11, 6, "=ARRAYFORMULA(IFERROR({1/0, 2}, EMPTY_ARR()))"],
+        [12, 0, "=ARRAYFORMULA(IFNA({1, 2}, 0))"],
+        [12, 3, "=ARRAYFORMULA(IFNA({#N/A, #DIV/0!}, 99))"],
+        [12, 6, "=ARRAYFORMULA(IFNA({#N/A, 2}, {77, 88}))"],
+        [12, 9, "=ARRAYFORMULA(IFNA({#N/A, 2}, EMPTY_ARR()))"],
+
+        // QUERY edge branches in formula-functions.ts
+        [14, 0, "=QUERY()"],
+        [14, 1, '=QUERY(A1:B2, "SELECT *", 1, 2)'],
+        [14, 2, '=QUERY(Missing!A1:B2, "SELECT *")'],
+        [14, 3, "=QUERY(A1:B2)"],
+        [14, 6, "=QUERY(A1:B2,)"],
+        [14, 9, "=QUERY(A1:B2, 1/0)"],
+        [14, 10, '=QUERY(A1:B2, "SELECT *", "bad")'],
+        [16, 0, '=QUERY({1,2;3,4}, "SELECT Col1")'],
+
+        // IMAGE edge branches in formula-functions.ts
+        [18, 0, "=IMAGE()"],
+        [18, 1, '=IMAGE("https://example.com/a.png", "a", 1, 10, 10, 10)'],
+        [18, 2, "=IMAGE(1/0)"],
+        [18, 3, '=IMAGE("https://example.com/a.png", 1/0)'],
+        [18, 4, '=IMAGE("https://example.com/a.png", 3)'],
+        [18, 5, '=IMAGE("https://example.com/a.png", 5)'],
+        [18, 6, '=IMAGE("https://example.com/a.png", -1)'],
+        [18, 7, '=IMAGE("https://example.com/a.png", 123, 2)'],
+        [18, 8, '=IMAGE("https://example.com/a.png", "alt", "bad")'],
+        [18, 9, '=IMAGE("https://example.com/a.png", "alt", 9)'],
+        [18, 10, '=IMAGE("https://example.com/a.png", "alt", -1)'],
+        [19, 0, '=IF(IMAGE("https://example.com/a.png"), 1, 2)'],
+      ],
+      25,
+      12,
+    );
+
+    const engine = new IncrementalFormulaEngine();
+    const m = engine.loadSheets([ws], {
+      customFunctions: {
+        EMPTY_ARR: () => arrVal([]),
+        ONE_EMPTY_ROW: () => arrVal([[]]),
+        RAGGED_BOOL2: () => arrVal([[boolVal(true), boolVal(false)], [boolVal(true)]]),
+      },
+    }).get(1)!;
+
+    expect(m["2:0"]).toEqual(errVal("#VALUE!"));
+    expect(m["2:1"]).toEqual(errVal("#DIV/0!"));
+    expect(m["2:2"]).toEqual(errVal("#DIV/0!"));
+    expect(m["2:3"]).toEqual(errVal("#VALUE!"));
+    expect(m["2:4"]).toEqual(errVal("#VALUE!"));
+    expect(m["2:5"]).toEqual(errVal("#VALUE!"));
+    expect(m["2:6"]).toEqual(boolVal(true));
+    expect(m["2:7"]).toEqual(errVal("#VALUE!"));
+    expect(m["3:0"]).toEqual(errVal("#VALUE!"));
+    expect(m["3:1"]).toEqual(errVal("#DIV/0!"));
+    expect(m["3:2"]).toEqual(errVal("#DIV/0!"));
+    expect(m["3:3"]).toEqual(errVal("#DIV/0!"));
+    expect(m["3:4"]).toEqual(errVal("#VALUE!"));
+    expect(m["3:5"]).toEqual(errVal("#DIV/0!"));
+    expect(m["3:6"]).toEqual(errVal("#DIV/0!"));
+    expect(m["3:7"]).toEqual(strVal("bar"));
+    expect(m["3:8"]).toEqual(strVal(""));
+
+    expect(m["4:0"]).toEqual(errVal("#VALUE!"));
+    expect(m["4:1"]).toEqual(errVal("#VALUE!"));
+    expect(m["4:2"]).toEqual(errVal("#VALUE!"));
+    expect(m["4:3"]).toEqual(errVal("#VALUE!"));
+    expect(m["4:4"]).toEqual(errVal("#VALUE!"));
+    expect(m["4:5"]).toEqual(errVal("#DIV/0!"));
+    expect(m["4:6"]).toEqual(errVal("#CALC!"));
+    expect(m["4:7"]).toEqual(numVal(0.5));
+    expect(m["4:8"]).toEqual(errVal("#VALUE!"));
+
+    expect(m["5:0"]).toEqual(errVal("#VALUE!"));
+    expect(m["5:1"]).toEqual(errVal("#VALUE!"));
+    expect(m["5:2"]).toEqual(numVal(5));
+    expect(m["5:3"]).toEqual(strVal("h"));
+    expect(m["5:4"]).toEqual(strVal("a"));
+    expect(m["6:4"]).toEqual(strVal("d"));
+    expect(m["5:5"]).toEqual(errVal("#N/A"));
+    expect(m["5:6"]).toEqual(errVal("#N/A"));
+    expect(m["5:7"]).toEqual(numVal(20));
+    expect(m["5:8"]).toEqual(numVal(30));
+
+    expect(m["7:0"]).toEqual(EMPTY_VAL);
+    expect(m["7:1"]).toEqual(numVal(1));
+    expect(m["7:2"]).toEqual(numVal(2));
+    expect(m["8:2"]).toEqual(numVal(2));
+    expect(m["7:3"]).toEqual(numVal(2));
+    expect(m["7:5"]).toEqual(numVal(1));
+    expect(m["8:7"]).toEqual(boolVal(false));
+    expect(m["8:8"]).toEqual(boolVal(false));
+    expect(m["7:9"]).toEqual(numVal(10));
+    expect(m["8:9"]).toEqual(numVal(40));
+    expect(m["9:0"]).toEqual(EMPTY_VAL);
+    expect(m["10:0"]).toEqual(boolVal(false));
+    expect(m["9:2"]).toEqual(errVal("#VALUE!"));
+    expect(m["10:2"]).toEqual(numVal(1));
+
+    expect(m["11:0"]).toEqual(numVal(1));
+    expect(m["11:3"]).toEqual(numVal(99));
+    expect(m["11:6"]).toEqual(EMPTY_VAL);
+    expect(m["12:0"]).toEqual(numVal(1));
+    expect(m["12:3"]).toEqual(numVal(99));
+    expect(m["12:4"]).toEqual(errVal("#DIV/0!"));
+    expect(m["12:6"]).toEqual(numVal(77));
+    expect(m["12:9"]).toEqual(EMPTY_VAL);
+
+    expect(m["14:0"]).toEqual(errVal("#VALUE!"));
+    expect(m["14:1"]).toEqual(errVal("#VALUE!"));
+    expect(m["14:2"]).toEqual(errVal("#REF!"));
+    expect(m["14:3"]).toEqual(strVal("Name"));
+    expect(m["14:6"]).toEqual(strVal("Name"));
+    expect(m["14:9"]).toEqual(errVal("#DIV/0!"));
+    expect(m["14:10"]).toEqual(errVal("#VALUE!"));
+    expect(m["16:0"]).toEqual(numVal(1));
+    expect(m["17:0"]).toEqual(numVal(3));
+
+    expect(m["18:0"]).toEqual(errVal("#VALUE!"));
+    expect(m["18:1"]).toEqual(errVal("#VALUE!"));
+    expect(m["18:2"]).toEqual(errVal("#DIV/0!"));
+    expect(m["18:3"]).toEqual(errVal("#DIV/0!"));
+    expect(m["18:4"]).toMatchObject({ kind: "image", mode: 3 });
+    expect(m["18:5"]).toEqual(errVal("#VALUE!"));
+    expect(m["18:6"]).toEqual(errVal("#VALUE!"));
+    expect(m["18:7"]).toMatchObject({ kind: "image", alt: "123", mode: 2 });
+    expect(m["18:8"]).toEqual(errVal("#VALUE!"));
+    expect(m["18:9"]).toEqual(errVal("#VALUE!"));
+    expect(m["18:10"]).toEqual(errVal("#VALUE!"));
+    expect(m["19:0"]).toEqual(errVal("#VALUE!"));
+
+    // Direct BUILTIN_FUNCTIONS tests for optional ctx fallbacks (no getEnv / evalAstWithEnv) and blank/missing AST nodes
+    const minCtx: FormulaEvalContext = {
+      sheetId: 1,
+      row: 0,
+      col: 0,
+      evalAst: (node) => (node.kind === "number" ? numVal(node.value) : EMPTY_VAL),
+      resolveRange: () => null,
+      resolveCellRef: () => null,
+      readCell: () => EMPTY_VAL,
+      readRawCell: () => "",
+      readMatrix: () => [],
+      parseAndResolveRef: () => null,
+      sheetBounds: () => null,
+      tickOp: () => true,
+    };
+    expect(
+      BUILTIN_FUNCTIONS.LET(
+        [{ kind: "name", name: "x" }, { kind: "number", value: 1 }, { kind: "number", value: 42 }],
+        minCtx,
+      ),
+    ).toEqual(numVal(42));
+    expect(
+      BUILTIN_FUNCTIONS.LAMBDA(
+        [{ kind: "name", name: "   " }, { kind: "number", value: 1 }],
+        minCtx,
+      ),
+    ).toEqual(errVal("#VALUE!"));
+    expect(
+      BUILTIN_FUNCTIONS.LAMBDA([{ kind: "number", value: 7 }], minCtx).kind,
+    ).toBe("lambda" as unknown as EvalValue["kind"]);
+    expect(
+      BUILTIN_FUNCTIONS.ARRAYFORMULA([{ kind: "error", code: "__MISSING__" }], minCtx),
+    ).toEqual(errVal("#VALUE!"));
+    expect(
+      BUILTIN_FUNCTIONS.ARRAYFORMULA([{ kind: "number", value: 9 }], minCtx),
+    ).toEqual(numVal(9));
+  });
+
+  it("covers MAX_DEPTH and MAX_OPS #LIMIT! guards in LAMBDA invocation, lifted ARRAYFORMULA, and array IF", () => {
+    // 1. invokeLambdaClosure depth > MAX_DEPTH via 64-cell chain ending in LET(f, LAMBDA(x, x), f(1))
+    const depthCells: [number, number, string][] = [];
+    for (let r = 0; r < 63; r++) {
+      depthCells.push([r, 0, `=A${r + 2}`]);
+    }
+    depthCells.push([63, 0, "=LET(f, LAMBDA(x, x), f(1))"]);
+    const depthWs = makeSheet(1, "DepthLam", depthCells, 66, 2);
+    const depthEngine = new IncrementalFormulaEngine();
+    const depthRes = depthEngine.loadSheets([depthWs]).get(1)!;
+    // #LIMIT! is intentionally left uncached during loadSheets
+    expect(depthRes["0:0"]).toBeUndefined();
+
+    // 2. invokeLambdaClosure ++budget.ops > MAX_OPS right at closure invocation boundary
+    const opsLamWs = makeSheet(
+      1,
+      "OpsLam",
+      [[10000, 0, "=LET(a, SUM(A1:J9999), b, 1+1+1+1+1+1+1+1, LAMBDA(n, n))(1)"]],
+      10002,
+      10,
+    );
+    const opsLamEngine = new IncrementalFormulaEngine();
+    const opsLamRes = opsLamEngine.loadSheets([opsLamWs]).get(1)!;
+    expect(opsLamRes["10000:0"]).toBeUndefined();
+
+    // 3. ARRAYFORMULA lifted builtin & array IF #LIMIT! budget exhaustion
+    const bigArrWs = makeSheet(
+      1,
+      "BigArr",
+      [
+        [5502, 0, "=ARRAYFORMULA(ABS(A1:T5500))"],
+        [5503, 0, "=ARRAYFORMULA(IF(A1:T5500>0, 1, 0))"],
+      ],
+      5505,
+      20,
+    );
+    const bigArrEngine = new IncrementalFormulaEngine();
+    bigArrEngine.loadSheets([bigArrWs]);
+    expect(bigArrEngine.getValue(1, 5502, 0)).toEqual(errVal("#LIMIT!"));
+    expect(bigArrEngine.getValue(1, 5503, 0)).toEqual(errVal("#LIMIT!"));
   });
 });

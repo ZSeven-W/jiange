@@ -667,7 +667,7 @@ export function evaluateQuery(
         };
         const projected = selectItems.map((item) =>
           item.kind === "col"
-            ? (grp.keyVals.get(item.colIndex) ?? EMPTY)
+            ? grp.keyVals.get(item.colIndex)!
             : getAgg(item.fn, item.colIndex, item.key),
         );
         const sortKeys = parsed.orderBy.map((o) =>
@@ -685,9 +685,10 @@ export function evaluateQuery(
         if (!v) { v = computeAggregate(fn, colIndex, filtered); aggCache.set(key, v); }
         return v;
       };
-      const projected = selectItems.map((item) =>
-        item.kind === "agg" ? getAgg(item.fn, item.colIndex, item.key) : EMPTY,
-      );
+      const projected = selectItems.map((item) => {
+        const agg = item as Extract<SelectItem, { kind: "agg" }>;
+        return getAgg(agg.fn, agg.colIndex, agg.key);
+      });
       const sortKeys = parsed.orderBy.map((o) =>
         o.target.kind === "agg" ? getAgg(o.target.fn, o.target.colIndex, o.target.key) : EMPTY,
       );
@@ -696,10 +697,8 @@ export function evaluateQuery(
   } else {
     for (const row of filtered) {
       if (!tickOp()) return err("#LIMIT!");
-      const projected = selectItems.map((item) => (item.kind === "col" ? (row[item.colIndex] ?? EMPTY) : EMPTY));
-      const sortKeys = parsed.orderBy.map((o) =>
-        o.target.kind === "col" ? (row[o.target.colIndex] ?? EMPTY) : EMPTY,
-      );
+      const projected = selectItems.map((item) => row[(item as Extract<SelectItem, { kind: "col" }>).colIndex] ?? EMPTY);
+      const sortKeys = parsed.orderBy.map((o) => row[(o.target as { kind: "col"; colIndex: number }).colIndex] ?? EMPTY);
       candidates.push({ projected, sortKeys });
     }
   }
@@ -733,8 +732,8 @@ export function evaluateQuery(
       selectItems.map((item) => {
         const explicit = parsed.labels.get(item.key) ?? item.alias;
         if (explicit !== undefined) return str(explicit);
-        if (item.kind === "col") return str(colHeaders[item.colIndex] ?? "");
-        const base = item.colIndex === "*" ? "" : (colHeaders[item.colIndex] ?? "");
+        if (item.kind === "col") return str(colHeaders[item.colIndex]);
+        const base = item.colIndex === "*" ? "" : colHeaders[item.colIndex];
         return str(base ? `${item.fn.toLowerCase()} ${base}` : item.fn.toLowerCase());
       }),
     );

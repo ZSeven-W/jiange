@@ -1,4 +1,5 @@
 import type { SlideMasterMeta, SlidesPage } from "@/lib/api";
+import { t } from "@/lib/i18n";
 
 export type SlideMasterMap = Record<number, SlideMasterMeta>;
 
@@ -12,14 +13,14 @@ export const SLIDE_MASTER_ACCENT_PRESETS = [
   "#1f2329",
 ] as const;
 
-export const SLIDE_MASTER_FONT_OPTIONS = [
-  { value: "", label: "系统默认" },
-  { value: "sans", label: "现代黑体（Sans）" },
-  { value: "serif", label: "雅致宋体（Serif）" },
-  { value: "kai", label: "演示楷体（Kai）" },
-  { value: "mono", label: "等宽代码（Mono）" },
-  { value: "rounded", label: "圆润体（Rounded）" },
-] as const;
+export const SLIDE_MASTER_FONT_OPTIONS: readonly { readonly value: "" | "sans" | "serif" | "kai" | "mono" | "rounded"; readonly label: string }[] = [
+  { value: "", get label() { return t("系统默认"); } },
+  { value: "sans", get label() { return t("现代黑体（Sans）"); } },
+  { value: "serif", get label() { return t("雅致宋体（Serif）"); } },
+  { value: "kai", get label() { return t("演示楷体（Kai）"); } },
+  { value: "mono", get label() { return t("等宽代码（Mono）"); } },
+  { value: "rounded", get label() { return t("圆润体（Rounded）"); } },
+];
 
 const FONT_STACK_MAP: Record<string, string> = {
   sans: 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif',

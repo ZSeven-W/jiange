@@ -80,6 +80,7 @@ describe("OfflineBanner", () => {
           retries: 0,
         },
       ],
+      offlineCollabCount: 0,
       syncing: false,
       lastSyncSummary: null,
       syncNow: vi.fn(async () => ({ synced: 0, failed: 0, remaining: 1, completedAt: 0 })),
@@ -135,6 +136,7 @@ describe("OfflineBanner", () => {
           retries: 0,
         },
       ],
+      offlineCollabCount: 0,
       syncing: false,
       lastSyncSummary: null,
       syncNow: vi.fn(async () => ({ synced: 2, failed: 0, remaining: 0, completedAt: 0 })),
@@ -162,6 +164,56 @@ describe("OfflineBanner", () => {
     expect(html).toContain('data-offline-drawer-btn=""');
     expect(html).toContain('data-offline-cache-drawer=""');
     expect(html).not.toMatch(/<select[\s>]/i);
+  });
+
+  it("displays offline CRDT replica count and pending collab merge status cleanly", () => {
+    const offlineState: OfflineStateHookValue = {
+      online: false,
+      cachedSnapshots: [],
+      pendingQueue: [],
+      offlineCollabCount: 3,
+      offlineCollabSummary: {
+        totalCount: 3,
+        docReplicaCount: 1,
+        docPendingOpsCount: 5,
+        sheetDeltaCount: 1,
+        sheetEditCount: 4,
+        slidesDraftCount: 1,
+        pendingMergeCount: 3,
+      },
+      syncing: false,
+      lastSyncSummary: null,
+      syncNow: vi.fn(async () => ({ synced: 0, failed: 0, remaining: 2, completedAt: 0 })),
+      removeSnapshot: vi.fn(async () => {}),
+      clearCache: vi.fn(async () => {}),
+      removeQueuedItem: vi.fn(async () => {}),
+    };
+
+    const offlineHtml = renderToStaticMarkup(
+      <I18nProvider>
+        <OfflineBanner
+          status={{ online: false, justReconnected: false }}
+          offlineState={offlineState}
+        />
+      </I18nProvider>,
+    );
+    expect(offlineHtml).toContain('data-offline-collab-badge=""');
+    expect(offlineHtml).toContain("离线协同副本 3 份");
+    expect(offlineHtml).toContain('data-offline-collab-merge-badge=""');
+    expect(offlineHtml).toContain("待合并 3 项协同修改");
+
+    // Online with pending collab deltas shows pending sync bar with enabled sync button
+    const onlinePendingHtml = renderToStaticMarkup(
+      <I18nProvider>
+        <OfflineBanner
+          status={{ online: true, justReconnected: false }}
+          offlineState={{ ...offlineState, online: true }}
+        />
+      </I18nProvider>,
+    );
+    expect(onlinePendingHtml).toContain('data-offline-pending-banner=""');
+    expect(onlinePendingHtml).toContain("待合并 3 项协同修改");
+    expect(onlinePendingHtml).not.toMatch(/data-offline-sync-btn=""[^>]*\sdisabled=""/);
   });
 });
 

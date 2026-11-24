@@ -5,6 +5,18 @@ import type { Op } from "./ops.js";
 import { decodeServerMsg, encodeClientMsg, type ClientMsg } from "./protocol.js";
 
 export type SyncStatus = "connecting" | "synced" | "syncing" | "offline";
+export type SyncMode = "edit" | "view";
+
+export interface OfflineHydrateOptions {
+  /** Last known server sequence included in the snapshot (defaults to 0). */
+  seq?: number;
+  /** History epoch of the snapshot (null or omitted for v1/untracked). */
+  historyEpoch?: number | null;
+  /** Initial replica mode while offline (defaults to "edit"). */
+  mode?: SyncMode;
+  /** Optional client id to bind to the hydrated replica (defaults to current clientId or 1). */
+  clientId?: number;
+}
 
 export interface Peer {
   clientId: number;
@@ -59,13 +71,16 @@ export class SyncClient {
   /** ACKs received while history is unresolved stay tied to this transport. */
   private deferredAcks: { firstSeq: number; count: number }[] = [];
   private rejectedTransport = false;
-  private mode: "edit" | "view" | null = null;
+  private mode: SyncMode | null = null;
+  private _offlineHydrated = false;
 
   constructor(readonly docId: number, private h: SyncHandlers = {}, private options: { requireMode?: boolean } = {}) {}
 
   /** A view projection is replaced as a whole and must never be edited. */
   get projectionOnly(): boolean { return this.mode === "view"; }
-  get syncMode(): "edit" | "view" | null { return this.mode; }
+  get syncMode(): SyncMode | null { return this.mode; }
+  /** True when `doc` was hydrated from an offline snapshot and has not yet completed a live welcome. */
+  get offlineHydrated(): boolean { return this._offlineHydrated; }
 
   get unacked(): number {
     return this.inflight.reduce((n, b) => n + b.length, 0) + this.queued.length;
@@ -100,6 +115,7 @@ export class SyncClient {
     this.deferredAcks = [];
     this.setBlocked(code);
     this.doc = null;
+    this._offlineHydrated = false;
     this.send = null;
     this.rejectedTransport = true;
     this.refreshCaughtUp();
@@ -224,6 +240,48 @@ export class SyncClient {
     return this.inflight.flat().concat(this.queued);
   }
 
+  /** Encodes the current local CRDT replica state for offline persistence. */
+  exportSnapshot(): Uint8Array | null {
+    return this.doc ? this.doc.encodeState() : null;
+  }
+
+  /**
+   * Hydrates `doc` from a locally persisted CRDT snapshot while disconnected
+   * so offline reading/editing works immediately. Never clobbers an active
+   * replica, replays restored pending ops when safe, and seamlessly merges
+   * with server state upon the next `welcome`.
+   */
+  hydrateOffline(snapshot: Uint8Array, options: OfflineHydrateOptions = {}): boolean {
+    if (this.doc || this._blocked === "table_unsupported") return false;
+    if (options.seq != null && (!Number.isSafeInteger(options.seq) || options.seq < 0)) {
+      throw new RangeError("invalid offline sequence");
+    }
+    if (options.historyEpoch != null && (!Number.isSafeInteger(options.historyEpoch) || options.historyEpoch < 1)) {
+      throw new RangeError("invalid offline history epoch");
+    }
+    const cid = options.clientId ?? (this.clientId || 1);
+    const hydrated = Doc.fromState(cid, snapshot);
+    const pending = this.pendingOps();
+    if (hydrated.hasTables() || pending.some((op) => op.t === "ttable")) {
+      this.blockUnsupportedTable();
+      return false;
+    }
+    const mode: SyncMode = options.mode ?? "edit";
+    const epochMismatch = options.historyEpoch != null && this.draftEpoch !== null && this.draftEpoch !== options.historyEpoch;
+    if (mode === "edit" && this._blocked !== "history_changed" && !epochMismatch) {
+      for (const op of pending) hydrated.apply(op);
+    }
+    this.doc = hydrated;
+    this.clientId = cid;
+    this.lastSeq = options.seq ?? 0;
+    if (options.historyEpoch != null) this.historyEpoch = options.historyEpoch;
+    this.mode = mode;
+    this._offlineHydrated = true;
+    if (!this.send) this.setStatus("offline");
+    this.h.change?.(true);
+    return true;
+  }
+
   /** Retry retained writes after the caller has checked access/connection state. */
   retryPending() {
     if (this.projectionOnly || !this._blocked || this._blocked === "table_unsupported" || this._blocked === "history_changed" || this.causalIssue) return;
@@ -342,7 +400,7 @@ export class SyncClient {
     switch (m.type) {
       case "welcome": {
         const incomingMode = "mode" in m ? m.mode : null;
-        if ((this.options.requireMode || this.mode !== null) && incomingMode === null) {
+        if ((this.options.requireMode || (this.mode !== null && !this._offlineHydrated)) && incomingMode === null) {
           this.blockUnavailable("protocol_incompatible", "服务器未确认只读同步模式，已停止同步并保留本地草稿。");
           throw new Error("sync mode negotiation required");
         }
@@ -380,6 +438,7 @@ export class SyncClient {
         }
         if (epoch !== undefined) this.historyEpoch = epoch;
         this.mode = incomingMode;
+        this._offlineHydrated = false;
         this.inflight = [];
         this.awaitingFence = false;
         this.deferredAcks = [];

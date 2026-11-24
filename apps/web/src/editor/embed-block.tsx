@@ -30,6 +30,7 @@ import {
   type SurveyDetailResponse,
 } from "@/lib/api";
 import { FeishuSelect } from "@/components/feishu-select";
+import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export type EmbedResourceKind = "sheet" | "base" | "survey" | "slides";
@@ -48,15 +49,15 @@ export function isEmbedResourceKind(value: string | undefined): value is EmbedRe
 export function embedKindLabel(kind: string | undefined): string {
   switch (kind) {
     case "sheet":
-      return "电子表格";
+      return t("电子表格");
     case "base":
-      return "多维表格";
+      return t("多维表格");
     case "survey":
-      return "问卷";
+      return t("问卷");
     case "slides":
-      return "幻灯片";
+      return t("幻灯片");
     default:
-      return "嵌入资源";
+      return t("嵌入资源");
   }
 }
 
@@ -93,7 +94,7 @@ function formatBaseCell(val: unknown): string {
         return "";
       })
       .filter(Boolean)
-      .join("、");
+      .join(t("、"));
   }
   if (typeof val === "object") {
     const obj = val as Record<string, unknown>;
@@ -130,14 +131,14 @@ export function coerceBaseCellInput(
     const trimmed = raw.trim();
     if (!trimmed) return { ok: true, value: null };
     const num = Number(trimmed);
-    if (!Number.isFinite(num)) return { ok: false, error: "请输入有效数字" };
+    if (!Number.isFinite(num)) return { ok: false, error: t("请输入有效数字") };
     return { ok: true, value: num };
   }
   if (field.type === "select") {
     const trimmed = raw.trim();
     if (!trimmed) return { ok: true, value: null };
     if (field.options?.length && !field.options.includes(trimmed)) {
-      return { ok: false, error: "请选择有效选项" };
+      return { ok: false, error: t("请选择有效选项") };
     }
     return { ok: true, value: trimmed };
   }
@@ -177,7 +178,7 @@ export async function commitEmbedSheetCellEdit(params: {
     ],
   });
   if (result.conflicts?.length) {
-    throw new Error("单元格已被他人修改，已刷新最新内容");
+    throw new Error(t("单元格已被他人修改，已刷新最新内容"));
   }
   return result;
 }
@@ -207,13 +208,13 @@ export async function createEmbedBaseRecord(params: {
 
 function questionTypeLabel(type: string): string {
   switch (type) {
-    case "single": return "单选";
-    case "multi": return "多选";
-    case "text": return "简答";
-    case "rating": return "评分";
-    case "matrix": return "矩阵";
-    case "ranking": return "排序";
-    case "signature": return "签名";
+    case "single": return t("单选");
+    case "multi": return t("多选");
+    case "text": return t("简答");
+    case "rating": return t("评分");
+    case "matrix": return t("矩阵");
+    case "ranking": return t("排序");
+    case "signature": return t("签名");
     default: return type;
   }
 }
@@ -222,7 +223,7 @@ function kindMeta(kind: EmbedResourceKind) {
   switch (kind) {
     case "sheet":
       return {
-        label: "电子表格",
+        label: t("电子表格"),
         Icon: FileSpreadsheet,
         badge: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300",
         border: "border-emerald-200/90 dark:border-emerald-900/70",
@@ -230,7 +231,7 @@ function kindMeta(kind: EmbedResourceKind) {
       };
     case "base":
       return {
-        label: "多维表格",
+        label: t("多维表格"),
         Icon: Table2,
         badge: "bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300",
         border: "border-indigo-200/90 dark:border-indigo-900/70",
@@ -238,7 +239,7 @@ function kindMeta(kind: EmbedResourceKind) {
       };
     case "survey":
       return {
-        label: "问卷",
+        label: t("问卷"),
         Icon: ClipboardList,
         badge: "bg-violet-100 text-violet-700 dark:bg-violet-950/70 dark:text-violet-300",
         border: "border-violet-200/90 dark:border-violet-900/70",
@@ -246,7 +247,7 @@ function kindMeta(kind: EmbedResourceKind) {
       };
     case "slides":
       return {
-        label: "幻灯片",
+        label: t("幻灯片"),
         Icon: Presentation,
         badge: "bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300",
         border: "border-amber-200/90 dark:border-amber-900/70",
@@ -289,6 +290,7 @@ export function EmbedResourceBlock({
   onBind?: (next: { resourceKind: EmbedResourceKind; resourceId: string; title: string }) => void;
   onDelete?: () => void;
 }) {
+  const { t } = useI18n();
   const initialKind: EmbedResourceKind = isEmbedResourceKind(resourceKind) ? resourceKind : "sheet";
   const numericId = Number(resourceId);
   const hasResource = isEmbedResourceKind(resourceKind) && Number.isSafeInteger(numericId) && numericId > 0;
@@ -340,19 +342,19 @@ export function EmbedResourceBlock({
     setErrorMsg("");
     try {
       if (resourceKind === "sheet") {
-        if (!userId) throw new Error("请先登录以查看电子表格预览");
+        if (!userId) throw new Error(t("请先登录以查看电子表格预览"));
         const snapshot = await sheetsApi.get(numericId, userId);
         setPreview({ kind: "sheet", snapshot });
         if (!opts?.silent) setActiveSheetIdx(0);
       } else if (resourceKind === "base") {
         const snap = await baseApi.get(numericId);
-        const activeTable = snap.tables?.find((t) => t.id === snap.activeTableId) ?? snap.tables?.[0];
+        const activeTable = snap.tables?.find((tbl) => tbl.id === snap.activeTableId) ?? snap.tables?.[0];
         setPreview({
           kind: "base",
           baseId: numericId,
           activeTableId: activeTable?.id ?? snap.activeTableId,
           title: snap.base.title,
-          tableName: activeTable?.name || "主数据表",
+          tableName: activeTable?.name || t("主数据表"),
           fields: snap.fields ?? [],
           records: snap.records ?? [],
           tableCount: snap.tables?.length ?? 1,
@@ -363,25 +365,25 @@ export function EmbedResourceBlock({
         const detail = await surveysApi.get(numericId);
         setPreview({ kind: "survey", detail });
       } else if (resourceKind === "slides") {
-        if (!userId) throw new Error("请先登录以查看幻灯片预览");
+        if (!userId) throw new Error(t("请先登录以查看幻灯片预览"));
         const [meta, pages] = await Promise.all([
           docsApi.get(numericId).catch(() => null),
           slidesApi.pages(numericId, userId),
         ]);
-        setPreview({ kind: "slides", title: meta?.title || title || `幻灯片 #${numericId}`, pages });
+        setPreview({ kind: "slides", title: meta?.title || title || t("幻灯片 #{id}", { id: numericId }), pages });
       }
       setStatus("idle");
     } catch (err) {
       if (!opts?.silent) setPreview(null);
       if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
         setStatus("forbidden");
-        setErrorMsg(`无权查看该${embedKindLabel(resourceKind)}或资源已删除`);
+        setErrorMsg(t("无权查看该{kind}或资源已删除", { kind: embedKindLabel(resourceKind) }));
       } else {
         setStatus("error");
-        setErrorMsg(err instanceof Error ? err.message : "加载嵌入资源失败");
+        setErrorMsg(err instanceof Error ? err.message : t("加载嵌入资源失败"));
       }
     }
-  }, [hasResource, numericId, resourceKind, title, userId]);
+  }, [hasResource, numericId, resourceKind, title, userId, t]);
 
   useEffect(() => {
     if (hasResource && !picking) void loadPreview();
@@ -407,7 +409,7 @@ export function EmbedResourceBlock({
     e.preventDefault();
     const parsed = parseEmbedUrl(urlInput);
     if (!parsed) {
-      setUrlError("请输入有效的链接（例如 #/sheet/1、#/base/2、#/survey/3 或 #/slides/4）");
+      setUrlError(t("请输入有效的链接（例如 #/sheet/1、#/base/2、#/survey/3 或 #/slides/4）"));
       return;
     }
     const existing = candidates.find((c) => c.id === parsed.id && c.kind === parsed.kind);
@@ -432,7 +434,7 @@ export function EmbedResourceBlock({
         <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
           <div className="flex items-center gap-1.5 font-medium text-foreground">
             <meta.Icon size={15} className="text-primary" />
-            <span>选择要嵌入的文档资源</span>
+            <span>{t("选择要嵌入的文档资源")}</span>
           </div>
           <div className="flex items-center gap-1">
             {hasResource && (
@@ -441,14 +443,14 @@ export function EmbedResourceBlock({
                 onClick={() => setPicking(false)}
                 className="rounded px-2 py-1 text-[12px] text-muted-foreground hover:bg-hover hover:text-foreground"
               >
-                取消
+                {t("取消")}
               </button>
             )}
             {!readOnly && onDelete && (
               <button
                 type="button"
                 onClick={onDelete}
-                aria-label="删除嵌入资源块"
+                aria-label={t("删除嵌入资源块")}
                 className="rounded p-1 text-muted-foreground hover:bg-hover hover:text-destructive"
               >
                 <Trash2 size={14} />
@@ -476,7 +478,7 @@ export function EmbedResourceBlock({
                     )}
                   >
                     <info.Icon size={13} />
-                    {item.label}
+                    {t(item.label)}
                   </button>
                 );
               })}
@@ -488,7 +490,7 @@ export function EmbedResourceBlock({
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder={`搜索可访问的${embedKindLabel(tab)}…`}
+                placeholder={t("搜索可访问的{kind}…", { kind: embedKindLabel(tab) })}
                 data-embed-search
                 className="h-8 w-full rounded-md border bg-surface pl-8 pr-2.5 text-[12px] outline-none focus:border-primary"
               />
@@ -496,10 +498,10 @@ export function EmbedResourceBlock({
 
             <div className="mb-2.5 max-h-44 overflow-y-auto rounded-md border bg-surface">
               {loadingList ? (
-                <div className="px-3 py-4 text-center text-[12px] text-muted-foreground">正在加载资源列表…</div>
+                <div className="px-3 py-4 text-center text-[12px] text-muted-foreground">{t("正在加载资源列表…")}</div>
               ) : filteredCandidates.length === 0 ? (
                 <div className="px-3 py-4 text-center text-[12px] text-muted-foreground">
-                  暂无匹配的{embedKindLabel(tab)}，可直接粘贴资源链接嵌入
+                  {t("暂无匹配的{kind}，可直接粘贴资源链接嵌入", { kind: embedKindLabel(tab) })}
                 </div>
               ) : (
                 <ul className="divide-y divide-border/60">
@@ -513,7 +515,7 @@ export function EmbedResourceBlock({
                       >
                         <span className="flex min-w-0 items-center gap-2">
                           <meta.Icon size={14} className="shrink-0 text-primary" />
-                          <span className="truncate font-medium text-foreground">{doc.title || `未命名${embedKindLabel(tab)}`}</span>
+                          <span className="truncate font-medium text-foreground">{doc.title || t("未命名{kind}", { kind: embedKindLabel(tab) })}</span>
                         </span>
                         <span className="shrink-0 text-[11px] text-subtle">#{doc.id}</span>
                       </button>
@@ -528,7 +530,7 @@ export function EmbedResourceBlock({
                 type="text"
                 value={urlInput}
                 onChange={(e) => { setUrlInput(e.target.value); if (urlError) setUrlError(""); }}
-                placeholder="或粘贴链接（如 #/sheet/1、#/base/2、#/survey/3）"
+                placeholder={t("或粘贴链接（如 #/sheet/1、#/base/2、#/survey/3）")}
                 data-embed-url-input
                 className="h-8 min-w-[200px] flex-1 rounded-md border bg-surface px-2.5 text-[12px] outline-none focus:border-primary"
               />
@@ -538,13 +540,13 @@ export function EmbedResourceBlock({
                 data-embed-url-submit
                 className="inline-flex h-8 items-center rounded-md border bg-surface px-3 text-[12px] font-medium hover:bg-hover disabled:opacity-50"
               >
-                嵌入
+                {t("嵌入")}
               </button>
             </form>
             {urlError && <p className="mt-1.5 text-[12px] text-destructive">{urlError}</p>}
           </>
         ) : (
-          <p className="text-[12px] text-muted-foreground">未关联嵌入资源</p>
+          <p className="text-[12px] text-muted-foreground">{t("未关联嵌入资源")}</p>
         )}
       </div>
     );
@@ -585,7 +587,7 @@ export function EmbedResourceBlock({
           <button
             type="button"
             onClick={() => void loadPreview()}
-            title="刷新实时预览"
+            title={t("刷新实时预览")}
             data-embed-refresh
             className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground"
           >
@@ -594,19 +596,19 @@ export function EmbedResourceBlock({
           {href && (
             <a
               href={href}
-              title={`打开${meta.label}`}
+              title={t("打开{kind}", { kind: meta.label })}
               data-embed-open
               className="inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium text-primary hover:bg-primary/10"
             >
               <ExternalLink size={11} />
-              打开
+              {t("打开")}
             </a>
           )}
           {!readOnly && onBind && (
             <button
               type="button"
               onClick={() => { setTab(kind); setPicking(true); }}
-              title="更换嵌入资源"
+              title={t("更换嵌入资源")}
               data-embed-change
               className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-hover hover:text-foreground"
             >
@@ -617,7 +619,7 @@ export function EmbedResourceBlock({
             <button
               type="button"
               onClick={onDelete}
-              title="移除嵌入卡片"
+              title={t("移除嵌入卡片")}
               className="grid size-6 place-items-center rounded text-muted-foreground hover:bg-hover hover:text-destructive"
             >
               <Trash2 size={12} />
@@ -635,7 +637,7 @@ export function EmbedResourceBlock({
         ) : status === "error" ? (
           <div className="text-[12px] text-destructive" data-embed-error>{errorMsg}</div>
         ) : status === "loading" && !preview ? (
-          <div className="py-4 text-center text-[12px] text-muted-foreground">正在加载实时预览…</div>
+          <div className="py-4 text-center text-[12px] text-muted-foreground">{t("正在加载实时预览…")}</div>
         ) : preview?.kind === "sheet" ? (
           <SheetEmbedPreview
             snapshot={preview.snapshot}
@@ -661,7 +663,7 @@ export function EmbedResourceBlock({
         ) : preview?.kind === "slides" ? (
           <SlidesEmbedPreview pages={preview.pages} />
         ) : (
-          <div className="text-[12px] text-muted-foreground">点击右上角打开查看完整内容</div>
+          <div className="text-[12px] text-muted-foreground">{t("点击右上角打开查看完整内容")}</div>
         )}
       </div>
     </div>
@@ -683,6 +685,7 @@ export function SheetEmbedPreview({
   userId?: number;
   onRefresh?: () => Promise<void> | void;
 }) {
+  const { t } = useI18n();
   const sheets = snapshot.sheets ?? [];
   const ws = sheets[Math.min(activeIndex, Math.max(0, sheets.length - 1))];
   const canEdit = !readOnly && !!userId && snapshot.role !== "view";
@@ -713,7 +716,7 @@ export function SheetEmbedPreview({
     return () => window.clearTimeout(timer);
   }, [syncState]);
 
-  if (!ws) return <p className="text-[12px] text-muted-foreground">暂无工作表</p>;
+  if (!ws) return <p className="text-[12px] text-muted-foreground">{t("暂无工作表")}</p>;
 
   const rowOrder = [...ws.rows].sort((a, b) => a.pos - b.pos);
   const colOrder = [...ws.columns].sort((a, b) => a.pos - b.pos);
@@ -797,7 +800,7 @@ export function SheetEmbedPreview({
         return next;
       });
       setSyncState("error");
-      setSyncError(err instanceof Error ? err.message : "同步单元格失败");
+      setSyncError(err instanceof Error ? err.message : t("同步单元格失败"));
       await onRefresh?.();
     } finally {
       committingRef.current = false;
@@ -825,7 +828,7 @@ export function SheetEmbedPreview({
       )}
       {displayRows === 0 || displayCols === 0 ? (
         <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">
-          工作表「{ws.title}」暂无单元格数据
+          {t("工作表「{title}」暂无单元格数据", { title: ws.title })}
         </div>
       ) : (
         <div className="overflow-x-auto rounded border border-border/80">
@@ -844,7 +847,7 @@ export function SheetEmbedPreview({
                         key={c}
                         data-embed-sheet-cell={`${r}:${c}`}
                         onClick={canEdit && !isEditing ? () => startCellEdit(r, c) : undefined}
-                        title={canEdit ? "点击编辑单元格" : undefined}
+                        title={canEdit ? t("点击编辑单元格") : undefined}
                         className={cn(
                           "max-w-[160px] border-r border-border/60 last:border-r-0",
                           isEditing ? "p-0.5" : "truncate px-2.5 py-1.5",
@@ -855,7 +858,7 @@ export function SheetEmbedPreview({
                           <input
                             autoFocus
                             data-embed-sheet-input
-                            aria-label={`编辑第 ${r + 1} 行第 ${c + 1} 列单元格`}
+                            aria-label={t("编辑第 {row} 行第 {col} 列单元格", { row: r + 1, col: c + 1 })}
                             value={draft}
                             onChange={(e) => setDraft(e.target.value)}
                             onBlur={() => {
@@ -898,21 +901,21 @@ export function SheetEmbedPreview({
       )}
       <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px] text-subtle">
         <span>
-          {sheets.length} 个工作表 · {ws.cells.filter((c) => c.raw).length} 个非空单元格
-          {canEdit && " · 点击单元格即可编辑"}
+          {t("{sheets} 个工作表 · {cells} 个非空单元格", { sheets: sheets.length, cells: ws.cells.filter((c) => c.raw).length })}
+          {canEdit && t(" · 点击单元格即可编辑")}
         </span>
         <span className="flex items-center gap-2">
-          {syncState === "saving" && <span className="text-primary">同步中…</span>}
+          {syncState === "saving" && <span className="text-primary">{t("同步中…")}</span>}
           {syncState === "synced" && (
             <span
               data-embed-sync-badge
               className="inline-flex items-center gap-0.5 rounded bg-[#d9f7e6] px-1.5 py-0.5 font-medium text-[#0b6b3a]"
             >
               <Check size={11} />
-              已同步
+              {t("已同步")}
             </span>
           )}
-          {maxRowIdx + 1 > 6 && <span>仅预览前 6 行</span>}
+          {maxRowIdx + 1 > 6 && <span>{t("仅预览前 6 行")}</span>}
         </span>
       </div>
     </div>
@@ -938,6 +941,7 @@ export function BaseEmbedPreview({
   readOnly?: boolean;
   onRefresh?: () => Promise<void> | void;
 }) {
+  const { t } = useI18n();
   const canEdit = !readOnly && baseId > 0;
   const visibleFields = fields.slice(0, 5);
   const [editing, setEditing] = useState<{
@@ -1030,7 +1034,7 @@ export function BaseEmbedPreview({
         return next;
       });
       setSyncState("error");
-      setSyncError(err instanceof Error ? err.message : "更新记录失败");
+      setSyncError(err instanceof Error ? err.message : t("更新记录失败"));
     } finally {
       committingRef.current = false;
     }
@@ -1056,7 +1060,7 @@ export function BaseEmbedPreview({
       }
     } catch (err) {
       setSyncState("error");
-      setSyncError(err instanceof Error ? err.message : "新增记录失败");
+      setSyncError(err instanceof Error ? err.message : t("新增记录失败"));
     } finally {
       setAddingRecord(false);
     }
@@ -1069,23 +1073,23 @@ export function BaseEmbedPreview({
           <span className="rounded bg-indigo-50 px-1.5 py-0.5 font-medium text-indigo-700 dark:bg-indigo-950/60 dark:text-indigo-300">
             {tableName}
           </span>
-          <span>{tableCount} 张表 · {fields.length} 个字段 · {records.length} 条记录</span>
+          <span>{t("{tables} 张表 · {fields} 个字段 · {records} 条记录", { tables: tableCount, fields: fields.length, records: records.length })}</span>
         </div>
         <span className="flex items-center gap-1.5">
-          {syncState === "saving" && <span className="text-primary">同步中…</span>}
+          {syncState === "saving" && <span className="text-primary">{t("同步中…")}</span>}
           {syncState === "synced" && (
             <span
               data-embed-sync-badge
               className="inline-flex items-center gap-0.5 rounded bg-[#d9f7e6] px-1.5 py-0.5 font-medium text-[#0b6b3a]"
             >
               <Check size={11} />
-              已同步
+              {t("已同步")}
             </span>
           )}
         </span>
       </div>
       {visibleFields.length === 0 ? (
-        <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">暂无字段定义</div>
+        <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">{t("暂无字段定义")}</div>
       ) : (
         <div className="overflow-x-auto rounded border border-border/80">
           <table className="w-full border-collapse text-left text-[12px]">
@@ -1101,7 +1105,7 @@ export function BaseEmbedPreview({
             <tbody>
               {visibleRecords.length === 0 ? (
                 <tr>
-                  <td colSpan={visibleFields.length} className="px-3 py-3 text-center text-muted-foreground">暂无记录</td>
+                  <td colSpan={visibleFields.length} className="px-3 py-3 text-center text-muted-foreground">{t("暂无记录")}</td>
                 </tr>
               ) : (
                 visibleRecords.map((rec) => (
@@ -1118,7 +1122,7 @@ export function BaseEmbedPreview({
                           key={f.id}
                           data-embed-base-cell={`${rec.id}:${f.id}`}
                           onClick={editable && !isEditing ? () => startCellEdit(rec, f) : undefined}
-                          title={editable ? `点击编辑「${f.name}」` : undefined}
+                          title={editable ? t("点击编辑「{name}」", { name: f.name }) : undefined}
                           className={cn(
                             "max-w-[160px] border-r border-border/60 last:border-r-0",
                             isEditing ? "p-0.5" : "truncate px-2.5 py-1.5",
@@ -1128,10 +1132,10 @@ export function BaseEmbedPreview({
                           {isEditing ? (
                             f.type === "select" && f.options?.length ? (
                               <FeishuSelect
-                                ariaLabel={`选择 ${f.name}`}
+                                ariaLabel={t("选择 {name}", { name: f.name })}
                                 value={draft}
                                 options={[
-                                  { value: "", label: "（清空）" },
+                                  { value: "", label: t("（清空）") },
                                   ...f.options.map((opt) => ({ value: opt, label: opt })),
                                 ]}
                                 onChange={(val) => {
@@ -1146,7 +1150,7 @@ export function BaseEmbedPreview({
                               <input
                                 autoFocus
                                 data-embed-base-input
-                                aria-label={`编辑 ${f.name}`}
+                                aria-label={t("编辑 {name}", { name: f.name })}
                                 type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
                                 value={draft}
                                 onChange={(e) => setDraft(e.target.value)}
@@ -1199,9 +1203,9 @@ export function BaseEmbedPreview({
             data-embed-base-add-record
             className="inline-flex h-7 items-center gap-1 rounded-md border border-indigo-200 bg-indigo-50/60 px-2.5 text-[12px] font-medium text-indigo-700 transition-colors hover:bg-indigo-100/80 disabled:opacity-50 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-300"
           >
-            {addingRecord ? "新增中…" : "+ 新增记录"}
+            {addingRecord ? t("新增中…") : t("+ 新增记录")}
           </button>
-          <span className="text-[11px] text-subtle">点击文本/数字/选项单元格可直接编辑</span>
+          <span className="text-[11px] text-subtle">{t("点击文本/数字/选项单元格可直接编辑")}</span>
         </div>
       )}
     </div>
@@ -1209,13 +1213,14 @@ export function BaseEmbedPreview({
 }
 
 function SurveyEmbedPreview({ detail }: { detail: SurveyDetailResponse }) {
+  const { t } = useI18n();
   const { survey, responseCount } = detail;
   const statusInfo =
     survey.status === "published"
-      ? { label: "收集中", cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300" }
+      ? { label: t("收集中"), cls: "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/70 dark:text-emerald-300" }
       : survey.status === "closed"
-        ? { label: "已停止", cls: "bg-muted text-muted-foreground" }
-        : { label: "草稿", cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300" };
+        ? { label: t("已停止"), cls: "bg-muted text-muted-foreground" }
+        : { label: t("草稿"), cls: "bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300" };
   const questions = survey.questions ?? [];
 
   return (
@@ -1223,7 +1228,7 @@ function SurveyEmbedPreview({ detail }: { detail: SurveyDetailResponse }) {
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
           <span className={cn("rounded px-1.5 py-0.5 font-medium", statusInfo.cls)}>{statusInfo.label}</span>
-          <span>{questions.length} 道题目 · 已收集 {responseCount} 份答卷</span>
+          <span>{t("{questions} 道题目 · 已收集 {responses} 份答卷", { questions: questions.length, responses: responseCount })}</span>
         </div>
         {survey.status === "published" && survey.publicToken && (
           <a
@@ -1231,7 +1236,7 @@ function SurveyEmbedPreview({ detail }: { detail: SurveyDetailResponse }) {
             data-embed-survey-fill
             className="inline-flex h-6 items-center gap-1 rounded bg-violet-600 px-2.5 text-[11px] font-medium text-white hover:bg-violet-700"
           >
-            前往填写
+            {t("前往填写")}
           </a>
         )}
       </div>
@@ -1239,13 +1244,13 @@ function SurveyEmbedPreview({ detail }: { detail: SurveyDetailResponse }) {
         <p className="mb-2 line-clamp-2 text-[12px] text-muted-foreground">{survey.description}</p>
       )}
       {questions.length === 0 ? (
-        <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">问卷暂未添加题目</div>
+        <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">{t("问卷暂未添加题目")}</div>
       ) : (
         <ul className="space-y-1">
           {questions.slice(0, 4).map((q, idx) => (
             <li key={q.id} className="flex items-center gap-2 rounded bg-muted/35 px-2.5 py-1.5 text-[12px]">
               <span className="shrink-0 font-mono text-[11px] text-subtle">{idx + 1}.</span>
-              <span className="min-w-0 flex-1 truncate text-foreground">{q.title || "未命名题目"}</span>
+              <span className="min-w-0 flex-1 truncate text-foreground">{q.title || t("未命名题目")}</span>
               <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-[10px] text-muted-foreground">
                 {questionTypeLabel(q.type)}
               </span>
@@ -1258,12 +1263,13 @@ function SurveyEmbedPreview({ detail }: { detail: SurveyDetailResponse }) {
 }
 
 function SlidesEmbedPreview({ pages }: { pages: SlidesPage[] }) {
+  const { t } = useI18n();
   const visible = pages.filter((p) => !p.hidden);
   return (
     <div data-embed-slides-preview>
-      <div className="mb-2 text-[11px] text-muted-foreground">共 {pages.length} 页（可见 {visible.length} 页）</div>
+      <div className="mb-2 text-[11px] text-muted-foreground">{t("共 {total} 页（可见 {visible} 页）", { total: pages.length, visible: visible.length })}</div>
       {visible.length === 0 ? (
-        <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">暂无可见幻灯片</div>
+        <div className="rounded border border-dashed py-3 text-center text-[12px] text-muted-foreground">{t("暂无可见幻灯片")}</div>
       ) : (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {visible.slice(0, 4).map((page, idx) => (
@@ -1273,7 +1279,7 @@ function SlidesEmbedPreview({ pages }: { pages: SlidesPage[] }) {
               style={{ background: page.background || "#ffffff" }}
             >
               <span className="text-[10px] opacity-60">#{idx + 1}</span>
-              <span className="line-clamp-2 font-medium">{page.title || "无标题幻灯片"}</span>
+              <span className="line-clamp-2 font-medium">{page.title || t("无标题幻灯片")}</span>
             </div>
           ))}
         </div>

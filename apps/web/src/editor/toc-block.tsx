@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, ChevronRight, ListTree, Trash2 } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import type { OutlineItem } from "@/pages/outline-panel";
 
@@ -13,6 +14,7 @@ export interface TocBlockProps {
 
 /** Feishu-style in-document Table of Contents block (`/目录`). */
 export function TocBlockView({ items, headingNumbers, readOnly, onJump, onDelete }: TocBlockProps) {
+  const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
   const minLevel = items.reduce((m, it) => Math.min(m, it.level), 9);
 
@@ -31,15 +33,15 @@ export function TocBlockView({ items, headingNumbers, readOnly, onJump, onDelete
         >
           {collapsed ? <ChevronRight size={14} className="text-[#8f959e]" /> : <ChevronDown size={14} className="text-[#8f959e]" />}
           <ListTree size={14} className="text-[#3370ff]" />
-          <span>目录</span>
+          <span>{t("目录")}</span>
           {items.length > 0 && <span className="text-[11px] font-normal text-[#8f959e]">({items.length})</span>}
         </button>
         {!readOnly && onDelete && (
           <button
             type="button"
             onClick={onDelete}
-            title="删除目录"
-            aria-label="删除目录"
+            title={t("删除目录")}
+            aria-label={t("删除目录")}
             className="grid size-6 place-items-center rounded text-[#8f959e] opacity-0 transition-opacity hover:bg-[#eff0f1] hover:text-destructive group-hover/toc:opacity-100"
           >
             <Trash2 size={13} />
@@ -49,9 +51,9 @@ export function TocBlockView({ items, headingNumbers, readOnly, onJump, onDelete
 
       {!collapsed && (
         items.length === 0 ? (
-          <p className="mt-2 pl-5 text-[12px] text-[#8f959e]">添加标题（H1–H9）后将自动生成文档目录</p>
+          <p className="mt-2 pl-5 text-[12px] text-[#8f959e]">{t("添加标题（H1–H9）后将自动生成文档目录")}</p>
         ) : (
-          <nav aria-label="文内目录" className="mt-2 space-y-0.5 border-l border-[#e5e6eb] pl-2 dark:border-border">
+          <nav aria-label={t("文内目录")} className="mt-2 space-y-0.5 border-l border-[#e5e6eb] pl-2 dark:border-border">
             {items.map((item) => {
               const depth = Math.max(0, Math.min(5, item.level - minLevel));
               const num = headingNumbers?.get(item.id);

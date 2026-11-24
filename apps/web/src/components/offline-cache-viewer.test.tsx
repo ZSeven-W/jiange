@@ -129,6 +129,7 @@ function makeOfflineState(overrides: Partial<OfflineStateHookValue> = {}): Offli
     online: false,
     cachedSnapshots: [docSnapshot, sheetSnapshot, listSnapshot],
     pendingQueue: sampleQueue,
+    offlineCollabCount: 0,
     syncing: false,
     lastSyncSummary: null,
     syncNow: vi.fn(async () => ({ synced: 0, failed: 0, remaining: 0, completedAt: Date.now() })),
@@ -284,6 +285,61 @@ describe("OfflineCacheDrawer", () => {
     );
     expect(html).toContain('data-offline-viewer=""');
     expect(html).toContain("离线只读预览 · 网络恢复后自动获取最新版本");
+  });
+
+  it("displays CRDT replica count, pending Sheet/Slides merge status, and conflict notice in drawer", () => {
+    const html = renderToStaticMarkup(
+      <I18nProvider>
+        <OfflineCacheDrawer
+          open
+          onClose={() => {}}
+          initialTab="queue"
+          offlineState={makeOfflineState({
+            online: true,
+            pendingQueue: [],
+            offlineCollabCount: 3,
+            offlineCollabSummary: {
+              totalCount: 3,
+              docReplicaCount: 1,
+              docPendingOpsCount: 6,
+              sheetDeltaCount: 1,
+              sheetEditCount: 4,
+              slidesDraftCount: 1,
+              pendingMergeCount: 3,
+            },
+            lastSyncSummary: {
+              synced: 1,
+              failed: 0,
+              remaining: 2,
+              completedAt: Date.now(),
+              collabFlushed: 1,
+              collabFailed: 0,
+              collabConflicts: [
+                {
+                  kind: "sheet",
+                  resourceId: 7,
+                  worksheetId: 1,
+                  row: 0,
+                  col: 0,
+                  reason: "value_conflict",
+                },
+              ],
+            },
+          })}
+        />
+      </I18nProvider>,
+    );
+
+    expect(html).toContain('data-offline-drawer-collab-count="3"');
+    expect(html).toContain('data-offline-collab-status=""');
+    expect(html).toContain("离线协同与自动合并");
+    expect(html).toContain("文档 CRDT 副本 1 份（待合并操作 6 条）");
+    expect(html).toContain("表格离线增量 1 份（4 个单元格）");
+    expect(html).toContain("幻灯片离线草稿 1 份");
+    expect(html).toContain("联网后将自动通过 CRDT 与增量策略合并 3 项离线协同修改");
+    expect(html).toContain("检测到 1 处离线合并冲突（已按最新修改策略处理）");
+    // Sync button enabled because sheet/slides collab deltas are pending while online
+    expect(html).not.toMatch(/data-offline-drawer-sync-btn=""[^>]*\sdisabled=""/);
   });
 });
 

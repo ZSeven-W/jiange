@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useI18n } from "@/lib/i18n";
 
 export interface TitleConsistencySnapshot {
   directoryTitle: string;
@@ -71,6 +72,7 @@ export function createTitleConsistencyCheck(
 
 /** The directory name changes only on an explicit, guarded user action. */
 export function TitleConsistency({ id, userId, canEdit = false, allowCopy, allowPrint = true, onClose, onAccessDenied, onUpdated }: { id: number; userId?: number; canEdit?: boolean; allowCopy: boolean; allowPrint?: boolean; onClose: () => void; onAccessDenied: () => void; onUpdated?: (title: string) => void }) {
+  const { t } = useI18n();
   const [state, setState] = useState<CheckState>({ status: "loading" });
   const [copyNotice, setCopyNotice] = useState("");
   const [repairing, setRepairing] = useState(false);
@@ -95,8 +97,8 @@ export function TitleConsistency({ id, userId, canEdit = false, allowCopy, allow
     try {
       if (!navigator.clipboard) throw new Error("clipboard unavailable");
       await navigator.clipboard.writeText(text);
-      if (active.current) setCopyNotice("已复制。");
-    } catch { if (active.current) setCopyNotice("复制失败，请手动选择文字。"); }
+      if (active.current) setCopyNotice(t("已复制。"));
+    } catch { if (active.current) setCopyNotice(t("复制失败，请手动选择文字。")); }
   };
   const reconcile = async (snapshot: TitleConsistencySnapshot) => {
     if (!userId || !snapshot.historyEpoch || repair.current || !canEdit) return;
@@ -104,33 +106,33 @@ export function TitleConsistency({ id, userId, canEdit = false, allowCopy, allow
     try {
       const response = await fetch(`/api/docs/${id}/title-consistency`, { method: "POST", credentials: "same-origin", cache: "no-store", signal: controller.signal, headers: { "Content-Type": "application/json", "X-Jiange-User-Id": String(userId) }, body: JSON.stringify({ historyEpoch: snapshot.historyEpoch, head: snapshot.head, directoryTitle: snapshot.directoryTitle, documentTitle: snapshot.documentTitle }) });
       if (!active.current || controller.signal.aborted) return;
-      if (response.status === 401 || response.status === 403 || response.status === 404) { denied.current(); setCopyNotice("权限已变化，请重新检查。"); }
-      else if (response.status === 409) setCopyNotice("文档或目录名称已变化，请重新检查。");
-      else if (!response.ok) setCopyNotice("未能同步名称，请重新检查后重试。");
-      else { setCopyNotice("已使用文档标题更新目录名称。"); onUpdated?.(snapshot.documentTitle); }
-    } catch { if (active.current && !controller.signal.aborted) setCopyNotice("同步结果未确认，请重新检查后再操作。"); }
+      if (response.status === 401 || response.status === 403 || response.status === 404) { denied.current(); setCopyNotice(t("权限已变化，请重新检查。")); }
+      else if (response.status === 409) setCopyNotice(t("文档或目录名称已变化，请重新检查。"));
+      else if (!response.ok) setCopyNotice(t("未能同步名称，请重新检查后重试。"));
+      else { setCopyNotice(t("已使用文档标题更新目录名称。")); onUpdated?.(snapshot.documentTitle); }
+    } catch { if (active.current && !controller.signal.aborted) setCopyNotice(t("同步结果未确认，请重新检查后再操作。")); }
     finally { if (repair.current === controller) repair.current = null; if (active.current) { setRepairing(false); if (document.visibilityState !== "hidden") void check.current?.run(); } }
   };
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/25 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section role="dialog" aria-modal="true" aria-labelledby="title-check-heading" className="w-full max-w-[480px] rounded-xl border bg-surface p-5 shadow-xl">
-      <div className="flex items-center justify-between gap-3"><h2 id="title-check-heading" className="text-[16px] font-semibold">检查文档名称</h2><button type="button" aria-label="关闭" className="rounded px-2 py-1 text-muted-foreground hover:bg-hover" onClick={onClose}>×</button></div>
-      {state.status === "loading" && <p role="status" className="mt-5 text-sm text-muted-foreground">正在检查…</p>}
-      {state.status === "denied" && <p role="alert" className="mt-5 text-sm text-destructive">文档不存在或当前没有查看权限。</p>}
-      {state.status === "error" && <p role="alert" className="mt-5 text-sm text-destructive">暂时无法检查文档名称，请稍后重试。</p>}
+      <div className="flex items-center justify-between gap-3"><h2 id="title-check-heading" className="text-[16px] font-semibold">{t("检查文档名称")}</h2><button type="button" aria-label={t("关闭")} className="rounded px-2 py-1 text-muted-foreground hover:bg-hover" onClick={onClose}>×</button></div>
+      {state.status === "loading" && <p role="status" className="mt-5 text-sm text-muted-foreground">{t("正在检查…")}</p>}
+      {state.status === "denied" && <p role="alert" className="mt-5 text-sm text-destructive">{t("文档不存在或当前没有查看权限。")}</p>}
+      {state.status === "error" && <p role="alert" className="mt-5 text-sm text-destructive">{t("暂时无法检查文档名称，请稍后重试。")}</p>}
       {state.status === "ready" && <div className="mt-4 space-y-4 text-sm" data-document-print-restricted={!allowPrint ? "true" : undefined} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }}>
-        <p className={state.snapshot.differs ? "text-amber-700" : "text-muted-foreground"}>{state.snapshot.differs ? "目录名称和文档标题不同，请核对。" : "目录名称和文档标题一致。"}</p>
-        {([["目录名称", state.snapshot.directoryTitle], ["文档标题", state.snapshot.documentTitle]] as const).map(([label, text]) => <div key={label}>
-          <div className="mb-1 flex items-center justify-between gap-3"><span className="text-muted-foreground">{label}</span>{allowCopy && <button type="button" onClick={() => void copy(text)} className="text-primary hover:underline">复制</button>}</div>
-          <div className="min-h-10 whitespace-pre-wrap break-all rounded-md border bg-hover/30 px-3 py-2">{text || <span className="text-subtle">（空）</span>}</div>
+        <p className={state.snapshot.differs ? "text-amber-700" : "text-muted-foreground"}>{state.snapshot.differs ? t("目录名称和文档标题不同，请核对。") : t("目录名称和文档标题一致。")}</p>
+        {([[t("目录名称"), state.snapshot.directoryTitle], [t("文档标题"), state.snapshot.documentTitle]] as const).map(([label, text]) => <div key={label}>
+          <div className="mb-1 flex items-center justify-between gap-3"><span className="text-muted-foreground">{label}</span>{allowCopy && <button type="button" onClick={() => void copy(text)} className="text-primary hover:underline">{t("复制")}</button>}</div>
+          <div className="min-h-10 whitespace-pre-wrap break-all rounded-md border bg-hover/30 px-3 py-2">{text || <span className="text-subtle">{t("（空）")}</span>}</div>
         </div>)}
-        <p className="text-xs text-subtle">这是检查时的结果，之后的修改可能改变名称。</p>
+        <p className="text-xs text-subtle">{t("这是检查时的结果，之后的修改可能改变名称。")}</p>
         {canEdit && userId && state.snapshot.differs && state.snapshot.historyEpoch && <>
-          {(state.snapshot.documentTitle !== state.snapshot.documentTitle.trim() || [...state.snapshot.documentTitle].length > 200) && <p role="status" className="text-xs text-amber-700">请先移除文档标题首尾空白，并确保标题不超过 200 个字符。</p>}
-          <button type="button" disabled={repairing || state.snapshot.documentTitle !== state.snapshot.documentTitle.trim() || [...state.snapshot.documentTitle].length > 200} onClick={() => void reconcile(state.snapshot)} className="rounded-md bg-primary px-3 py-1.5 text-white hover:opacity-90 disabled:opacity-50">{repairing ? "正在同步…" : "使用文档标题更新目录名称"}</button>
+          {(state.snapshot.documentTitle !== state.snapshot.documentTitle.trim() || [...state.snapshot.documentTitle].length > 200) && <p role="status" className="text-xs text-amber-700">{t("请先移除文档标题首尾空白，并确保标题不超过 200 个字符。")}</p>}
+          <button type="button" disabled={repairing || state.snapshot.documentTitle !== state.snapshot.documentTitle.trim() || [...state.snapshot.documentTitle].length > 200} onClick={() => void reconcile(state.snapshot)} className="rounded-md bg-primary px-3 py-1.5 text-white hover:opacity-90 disabled:opacity-50">{repairing ? t("正在同步…") : t("使用文档标题更新目录名称")}</button>
         </>}
         {copyNotice && <p role="status" className="text-xs text-muted-foreground">{copyNotice}</p>}
       </div>}
-      {state.status !== "loading" && state.status !== "denied" && <button type="button" className="mt-5 rounded-md border px-3 py-1.5 text-sm hover:bg-hover" onClick={() => { setCopyNotice(""); void check.current?.run(); }}>重新检查</button>}
+      {state.status !== "loading" && state.status !== "denied" && <button type="button" className="mt-5 rounded-md border px-3 py-1.5 text-sm hover:bg-hover" onClick={() => { setCopyNotice(""); void check.current?.run(); }}>{t("重新检查")}</button>}
     </section>
   </div>;
 }

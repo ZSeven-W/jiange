@@ -504,4 +504,31 @@ describe("@jiange/base-sdk full branch coverage", () => {
     expect((tools.execute("base_dashboard") as unknown[]).length).toBeGreaterThan(0);
     expect((tools.execute("base_export_csv") as { csv: string }).csv).toContain("T1".length ? "Name" : "");
   });
+
+  it("covers autonumber multi-table isolation, overwrite protection, and formula references", () => {
+    const base = Base.create("AutoNumBase");
+    const t1 = base.getTables()[0].id;
+    const t2 = base.createTable("SecondTable").id;
+    base.addRecord(t2, { 名称: "Other table row" });
+
+    const autoField = base.addField(t1, { name: "Seq", type: "autonumber" });
+    const formulaField = base.addField(t1, { name: "SeqDouble", type: "formula", formula: "[Seq] * 2" });
+
+    // addRecord in t1 skips existing records from t2 (base.ts:601) and assigns monotonic Seq
+    const r1 = base.addRecord(t1, { 名称: "Row 1", Seq: 999 });
+    expect(r1.cells[String(autoField.id)]).toBe(1);
+    const r2 = base.addRecord(t1, { 名称: "Row 2" });
+    expect(r2.cells[String(autoField.id)]).toBe(2);
+
+    // updateRecord ignores attempts to mutate autonumber cells (base.ts:631)
+    base.updateRecord(r1.id, { Seq: 777, 名称: "Row 1 Updated" });
+    const t1Fields = base.getFields(t1);
+    const recWithVal = base.getRecords(t1).find((r) => r.id === r1.id)!;
+    expect(recWithVal.cells[String(autoField.id)]).toBe(1);
+
+    // Formula referencing populated autonumber (formula.ts:436) and missing autonumber fallback to record.id (formula.ts:437)
+    expect(evalRecordFormulas(recWithVal, t1Fields)[formulaField.id]).toBe(2);
+    const recMissingAuto = { ...recWithVal, cells: {} };
+    expect(evalRecordFormulas(recMissingAuto, t1Fields)[formulaField.id]).toBe(r1.id * 2);
+  });
 });

@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
 import { Eraser } from "lucide-react";
+import { useI18n } from "@/lib/i18n";
 
 export function SignaturePad({
   value,
@@ -10,6 +11,7 @@ export function SignaturePad({
   onChange: (dataUrl: string) => void;
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
   const [hasStroke, setHasStroke] = useState(Boolean(value));
@@ -81,12 +83,12 @@ export function SignaturePad({
         />
         {!hasStroke && !value && (
           <span className="pointer-events-none absolute inset-0 grid place-items-center text-[13px] text-muted-foreground">
-            请在此区域手写签名
+            {t("请在此区域手写签名")}
           </span>
         )}
       </div>
       <div className="flex items-center justify-between text-[12px] text-muted-foreground">
-        <span>{value ? "已采集电子签名" : "支持鼠标或触控笔手写签名"}</span>
+        <span>{value ? t("已采集电子签名") : t("支持鼠标或触控笔手写签名")}</span>
         {!disabled && (
           <button
             type="button"
@@ -94,7 +96,7 @@ export function SignaturePad({
             data-signature-clear
             className="inline-flex items-center gap-1 rounded px-2 py-1 hover:bg-hover hover:text-foreground"
           >
-            <Eraser size={12} />清除重写
+            <Eraser size={12} />{t("清除重写")}
           </button>
         )}
       </div>

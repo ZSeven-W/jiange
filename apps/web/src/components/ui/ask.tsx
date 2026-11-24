@@ -100,7 +100,7 @@ export function AskHost() {
   if (!c && !p && !a) return null;
   return (
     <div
-      className="fixed inset-0 z-[70] grid place-items-center bg-black/30"
+      className="fixed inset-0 z-[200] grid place-items-center bg-black/30"
       onMouseDown={() => (c ? closeConfirm(false) : p ? closePrompt(null) : closeArea(null))}
       data-ask
     >

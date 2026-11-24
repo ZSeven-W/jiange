@@ -35,8 +35,10 @@ import { SidebarFoldIcon } from "@/components/feishu-icons";
 import type { SearchGuardCapture } from "@/components/search-focus";
 import { isDocumentSidebarShortcut } from "@/lib/sidebar-shortcut";
 import { browserSidebarStorage, decodeSidebarPreference, readSidebarPreference, sidebarPreferenceKey, writeSidebarPreference } from "@/lib/sidebar-preference";
+import { useI18n } from "@/lib/i18n";
 
 export default function App() {
+  const { t } = useI18n();
   const route = useRoute();
   const qc = useQueryClient();
   const me = useQuery({ queryKey: ["me"], queryFn: api.me });
@@ -75,12 +77,12 @@ export default function App() {
   if (route.page === "form") {
     return <PublicForm key={route.token} token={route.token} />;
   }
-  if (route.page === "legacy-form") return <div className="grid min-h-full place-items-center p-6 text-center text-muted-foreground"><p>此收集表链接已失效，请联系创建者获取新的分享链接。</p></div>;
-  if (checkingAuth) return <div className="grid h-full place-items-center text-subtle">正在确认账号…</div>;
-  if (authCheckError) return <div className="grid h-full place-items-center text-destructive"><div>无法确认当前账号。<button type="button" onClick={() => void verifyExternalAuth()} className="ml-2 underline">重试</button></div></div>;
-  if (me.isPending) return <div className="grid h-full place-items-center text-subtle">加载中…</div>;
+  if (route.page === "legacy-form") return <div className="grid min-h-full place-items-center p-6 text-center text-muted-foreground"><p>{t("此收集表链接已失效，请联系创建者获取新的分享链接。")}</p></div>;
+  if (checkingAuth) return <div className="grid h-full place-items-center text-subtle">{t("正在确认账号…")}</div>;
+  if (authCheckError) return <div className="grid h-full place-items-center text-destructive"><div>{t("无法确认当前账号。")}<button type="button" onClick={() => void verifyExternalAuth()} className="ml-2 underline">{t("重试")}</button></div></div>;
+  if (me.isPending) return <div className="grid h-full place-items-center text-subtle">{t("加载中…")}</div>;
   if (unauth) return <LoginPage />;
-  if (!me.data) return <div className="grid h-full place-items-center text-destructive">无法连接服务器：{String(me.error)}</div>;
+  if (!me.data) return <div className="grid h-full place-items-center text-destructive">{t("无法连接服务器：{error}", { error: String(me.error) })}</div>;
 
   return <AuthenticatedApp key={`${me.data.user.id}:${sessionGeneration}`} me={me.data} route={route} authClient={qc} onLogout={() => logout.mutate()} />;
 }
@@ -92,6 +94,7 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
   authClient: ReturnType<typeof useQueryClient>;
   onLogout: () => void;
 }) {
+  const { t } = useI18n();
   const [sessionClient] = useState(() => createSessionQueryClient(authClient));
   const [uploads] = useState(() => new DriveUploadManager(me.user.id, () => { void sessionClient.invalidateQueries({ queryKey: ["drive"] }); void sessionClient.invalidateQueries({ queryKey: ["drive-nav"] }); void sessionClient.invalidateQueries({ queryKey: ["docs"] }); }));
   const globalSearch = useRef<(() => void) | null>(null);
@@ -194,11 +197,11 @@ function AuthenticatedApp({ me, route, authClient, onLogout }: {
       <AccountSecurityHost />
       <WorkspaceAiDialog open={workspaceAiOpen} onClose={() => setWorkspaceAiOpen(false)} workspaceId={me.workspaces[0]?.id} />
       <OfflineBanner />
-      <button type="button" ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg border border-[#dee0e3]/80 bg-surface/90 text-muted-foreground shadow-xs backdrop-blur-sm transition-colors hover:bg-hover dark:border-border/80 md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-none ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label="打开导航" aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
-      {sidebarOpen && <button type="button" data-mobile-nav-backdrop className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] transition-opacity md:hidden" aria-label="关闭导航" onClick={closeSidebar} />}
+      <button type="button" ref={openSidebarButton} className={`fixed left-3 top-3 z-30 grid size-9 place-items-center rounded-lg border border-[#dee0e3]/80 bg-surface/90 text-muted-foreground shadow-xs backdrop-blur-sm transition-colors hover:bg-hover dark:border-border/80 md:border-0 md:bg-transparent md:shadow-none md:backdrop-blur-none ${docLayout && !docSidebarDocked ? "md:top-3.5" : "md:hidden"}`} onClick={openSidebar} aria-label={t("打开导航")} aria-expanded={sidebarOpen} aria-controls="workspace-navigation" aria-keyshortcuts={docLayout ? "Meta+] Control+]" : undefined}>{docLayout ? <SidebarFoldIcon collapsed className="size-4" /> : <Menu size={20} />}</button>
+      {sidebarOpen && <button type="button" data-mobile-nav-backdrop className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px] transition-opacity md:hidden" aria-label={t("关闭导航")} onClick={closeSidebar} />}
       <div id="workspace-navigation" ref={sidebarContainer} className={sidebarClass}>
         <Sidebar me={me} route={route} onLogout={() => { uploads.cancel(); onLogout(); }} onCollapse={docLayout && docSidebarDocked ? collapseDocumentSidebar : undefined} onSearchRegistrar={registerGlobalSearch} captureSearchGuard={captureGlobalSearchGuard} onWorkspacesChanged={() => { void authClient.invalidateQueries({ queryKey: ["me"], exact: true }); }} />
-        <button type="button" className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label="关闭导航" data-close-navigation><X size={16} /></button>
+        <button type="button" className="absolute right-3 top-4 grid size-7 place-items-center rounded text-muted-foreground hover:bg-hover md:hidden" onClick={closeSidebar} aria-label={t("关闭导航")} data-close-navigation><X size={16} /></button>
       </div>
       {route.page === "doc" ? (
         <DocPage key={route.id} id={route.id} linkedVersion={route.versionId} me={me} sidebarDocked={docSidebarDocked} onGlobalSearch={openGlobalSearch} onSearchGuardRegistrar={registerGlobalSearchGuard} />

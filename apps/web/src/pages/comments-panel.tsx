@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, commentsApi, type Comment, type User } from "@/lib/api";
 import { isCrossBlockComment, scrollToCommentThread } from "@/editor/comment-anchor";
 import { Avatar } from "@/components/brand";
+import { t, useI18n } from "@/lib/i18n";
 import { colorFor } from "@/lib/presence";
 import { commentListKey, commentMembersKey, type SavedCommentDraft } from "./comment-access";
 import { isDocAccessDenied } from "./doc-meta-state";
@@ -45,8 +46,8 @@ export function classifyCommentMutationError(error: unknown): "policy" | "access
 export function reconcileUncertainComment(refresh: () => Promise<unknown>, keepDraft: boolean): string {
   try { void refresh().catch(() => {}); } catch { /* Keep the original draft even if refresh cannot start. */ }
   return keepDraft
-    ? "发送结果未确认，正在尝试刷新评论；草稿已保留，请联网核对后再决定是否重试。"
-    : "操作结果未确认，正在尝试刷新评论；请联网核对后再决定是否重试。";
+    ? t("发送结果未确认，正在尝试刷新评论；草稿已保留，请联网核对后再决定是否重试。")
+    : t("操作结果未确认，正在尝试刷新评论；请联网核对后再决定是否重试。");
 }
 
 /** A new selection can arrive after the drawer and composer are already mounted. */
@@ -106,6 +107,7 @@ export function CommentsPanel({
   onComposerSuspended: () => void;
   attemptStore?: CommentAttemptStore | null;
 }) {
+  const { t } = useI18n();
   const qc = useQueryClient();
   const key = commentListKey(id, meId, session);
   const list = useQuery({ queryKey: key, queryFn: () => commentsApi.list(id) });
@@ -130,8 +132,8 @@ export function CommentsPanel({
     try {
       const result = attemptStore?.list();
       setAttempts(result?.attempts ?? []);
-      if (result?.damaged) setAttemptNotice("部分本机评论提交记录损坏，原始数据已保留，请勿重复发送。");
-    } catch { setAttemptNotice("无法读取本机评论提交记录，原始数据已保留。"); }
+      if (result?.damaged) setAttemptNotice(t("部分本机评论提交记录损坏，原始数据已保留，请勿重复发送。"));
+    } catch { setAttemptNotice(t("无法读取本机评论提交记录，原始数据已保留。")); }
   };
   useLayoutEffect(() => {
     attemptScope.current.mounted = true;
@@ -149,27 +151,27 @@ export function CommentsPanel({
       const capability = await requireCommentAttempts(id, meId);
       if (!currentAttemptScope() || !attemptPolicy.current.canCheckAttempt) return;
       const result = await attemptStore.run(attempt, async (stored) => {
-        if (!currentAttemptScope() || !attemptPolicy.current.canCheckAttempt) throw new Error("评论权限尚未验证");
+        if (!currentAttemptScope() || !attemptPolicy.current.canCheckAttempt) throw new Error(t("评论权限尚未验证"));
         const queryOnly = !attemptPolicy.current.canSubmit || !!stored.redacted || !!stored.payload.quote && (!attemptPolicy.current.allowCopyQuote || !capability.canCopyQuote);
         if (!queryOnly) return sendCommentAttempt(stored);
         const receipt = await queryCommentAttempt(stored);
-        if (receipt.state === "unknown") throw new Error("尚未观察到提交结果");
+        if (receipt.state === "unknown") throw new Error(t("尚未观察到提交结果"));
         return receipt;
       });
       if (!currentAttemptScope()) return;
       setAttemptNotice(result.cleaned
-        ? result.value.state === "deleted" ? "该评论之前已发送并被删除，不会重复创建。" : "已确认评论发送。"
-        : "评论已确认，但无法安全清除其他标签页的本机记录；记录已保留。" );
+        ? result.value.state === "deleted" ? t("该评论之前已发送并被删除，不会重复创建。") : t("已确认评论发送。")
+        : t("评论已确认，但无法安全清除其他标签页的本机记录；记录已保留。") );
       refreshAttempts();
       void invalidate();
     } catch (error) {
       if (!currentAttemptScope()) return;
-      if (error instanceof CommentAttemptAccountChanged) { setAttemptNotice("账号已变化，原账号的提交记录已保留，请切回原账号后核对。"); return; }
+      if (error instanceof CommentAttemptAccountChanged) { setAttemptNotice(t("账号已变化，原账号的提交记录已保留，请切回原账号后核对。")); return; }
       if (error instanceof CommentAttemptDocumentDenied) { onAccessDenied(); return; }
       const kind = classifyCommentMutationError(error);
       if (kind === "access") onAccessDenied();
       else if (kind === "policy") onPolicyDenied?.();
-      setAttemptNotice("结果仍未确认，本机记录已保留；请联网并重新验证权限后继续核对，不要重复发送。");
+      setAttemptNotice(t("结果仍未确认，本机记录已保留；请联网并重新验证权限后继续核对，不要重复发送。"));
     } finally { if (currentAttemptScope()) setRetryingAttempt(null); }
   };
   const runAction = async (action: () => Promise<unknown>) => {
@@ -183,9 +185,9 @@ export function CommentsPanel({
     } catch (error) {
       const result = classifyCommentMutationError(error);
       if (result === "access") onAccessDenied();
-      else if (result === "policy") { onPolicyDenied?.(); setActionError("评论权限已变化，请查看最新权限。"); }
+      else if (result === "policy") { onPolicyDenied?.(); setActionError(t("评论权限已变化，请查看最新权限。")); }
       else if (result === "uncertain") setActionError(reconcileUncertainComment(invalidate, false));
-      else setActionError("操作未被接受，请检查后重试。");
+      else setActionError(t("操作未被接受，请检查后重试。"));
     } finally {
       actionPendingRef.current = false;
       setActionPending(false);
@@ -225,86 +227,86 @@ export function CommentsPanel({
     <aside className="fixed bottom-0 right-0 top-14 z-40 flex w-full flex-col border-l bg-surface shadow-xl sm:max-w-[296px] md:top-16 xl:z-20 xl:shadow-none" data-comments-panel>
       {/* 飞书实测：侧栏宽 296、标题「评论（N）」14px、右侧收起按钮 */}
       <header className="flex h-10 shrink-0 items-center px-3 text-[14px] font-medium">
-        评论{threads.length ? `（${threads.length}）` : ""}
-        <button className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label="关闭" title="收起评论">
+        {threads.length ? t("评论（{n}）", { n: threads.length }) : t("评论")}
+        <button className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover hover:text-foreground" onClick={onClose} aria-label={t("关闭")} title={t("收起评论")}>
           <svg viewBox="0 0 16 16" className="size-4" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden><path d="M4 4l4 4-4 4M8.5 4l4 4-4 4" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       </header>
       <div ref={listRef} className="flex-1 overflow-y-auto p-3" data-comment-list>
         {attemptNotice && <p role="status" className="mb-3 rounded border p-2 text-[12px] text-muted-foreground">{attemptNotice}</p>}
         {attempts.map((attempt) => <div key={attempt.mutationId} className="mb-3 rounded-lg border p-2 text-[12px] text-muted-foreground" data-comment-attempt>
-          <p>这条评论的发送结果尚未确认，重试会使用原来的请求。</p>
-          {attempt.payload.parentId && <p>回复所属评论 #{attempt.payload.parentId}</p>}
+          <p>{t("这条评论的发送结果尚未确认，重试会使用原来的请求。")}</p>
+          {attempt.payload.parentId && <p>{t("回复所属评论 #{id}", { id: attempt.payload.parentId })}</p>}
           <p className="mt-1 whitespace-pre-wrap text-foreground">{attempt.payload.body}</p>
-          {(attempt.redacted || attempt.payload.quote && !allowCopyQuote) && <p className="mt-1">原引用受保护，此记录只能查询提交状态，不会以不同内容重发。</p>}
-          <button type="button" className="mt-1 text-primary disabled:opacity-50" disabled={!canCheckAttempt || !!retryingAttempt} onClick={() => void retryAttempt(attempt)}>{retryingAttempt === attempt.mutationId ? "正在确认…" : !canSubmit || attempt.redacted || attempt.payload.quote && !allowCopyQuote ? "查询发送状态" : "重试并确认"}</button>
+          {(attempt.redacted || attempt.payload.quote && !allowCopyQuote) && <p className="mt-1">{t("原引用受保护，此记录只能查询提交状态，不会以不同内容重发。")}</p>}
+          <button type="button" className="mt-1 text-primary disabled:opacity-50" disabled={!canCheckAttempt || !!retryingAttempt} onClick={() => void retryAttempt(attempt)}>{retryingAttempt === attempt.mutationId ? t("正在确认…") : !canSubmit || attempt.redacted || attempt.payload.quote && !allowCopyQuote ? t("查询发送状态") : t("重试并确认")}</button>
         </div>)}
         {!!recovery?.length && <div className="mb-3 rounded-lg border p-2 text-[12px] text-muted-foreground" role="status">
-          <p>上次未发送的评论已保留，请复制后重新选择位置。</p>
+          <p>{t("上次未发送的评论已保留，请复制后重新选择位置。")}</p>
           {recovery.map((item, index) => <div key={index}>
-            {item.draft?.quote && <p className="mt-1 truncate" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>原引用：{item.draft.quote}</p>}
-            {item.parentId && <p className="mt-1">原回复所属评论 #{item.parentId}</p>}
-            <textarea readOnly value={item.text} aria-label="未发送的评论内容" rows={2} className="mt-1 w-full resize-none rounded border p-1 text-foreground" />
+            {item.draft?.quote && <p className="mt-1 truncate" data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>{t("原引用：{quote}", { quote: item.draft.quote })}</p>}
+            {item.parentId && <p className="mt-1">{t("原回复所属评论 #{id}", { id: item.parentId })}</p>}
+            <textarea readOnly value={item.text} aria-label={t("未发送的评论内容")} rows={2} className="mt-1 w-full resize-none rounded border p-1 text-foreground" />
           </div>)}
-          <button type="button" className="mt-1 text-primary" onClick={onDismissRecovery}>已复制，清除恢复记录</button>
+          <button type="button" className="mt-1 text-primary" onClick={onDismissRecovery}>{t("已复制，清除恢复记录")}</button>
         </div>}
         {canEdit && <Composer key={`${id}:${meId}:${session}:root`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={draft} canSubmit={canSubmit} allowCopyQuote={allowCopyQuote} allowPrintQuote={allowPrintQuote} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={(sent) => { if (sent) onDraftSent(sent); void invalidate(); }} />}
         {actionError && <p role="alert" className="mb-3 text-[13px] text-destructive">{actionError}</p>}
-        {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">评论加载失败，请检查网络后重试。<button className="ml-2 underline" onClick={() => void list.refetch()}>重试</button></p>}
-        {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">暂无未解决的评论</p>}
-        {threads.map((t) => (
+        {list.isError && <p role="alert" className="mb-3 text-[13px] text-destructive">{t("评论加载失败，请检查网络后重试。")}<button className="ml-2 underline" onClick={() => void list.refetch()}>{t("重试")}</button></p>}
+        {list.isSuccess && threads.length === 0 && <p className="px-2 py-8 text-center text-[13px] text-subtle">{t("暂无未解决的评论")}</p>}
+        {threads.map((thread) => (
           <div
-            key={t.id}
-            className={`group/thread mb-2.5 cursor-pointer rounded-lg border bg-surface p-3 text-[14px] leading-[1.6] transition-shadow hover:shadow-[0_2px_8px_rgba(31,35,41,0.08)] ${activeThread === t.id ? "border-primary shadow-[0_2px_8px_rgba(31,35,41,0.08)]" : ""}`}
-            onClick={() => onActivate(activeThread === t.id ? null : t.id)}
-            data-thread={t.id}
+            key={thread.id}
+            className={`group/thread mb-2.5 cursor-pointer rounded-lg border bg-surface p-3 text-[14px] leading-[1.6] transition-shadow hover:shadow-[0_2px_8px_rgba(31,35,41,0.08)] ${activeThread === thread.id ? "border-primary shadow-[0_2px_8px_rgba(31,35,41,0.08)]" : ""}`}
+            onClick={() => onActivate(activeThread === thread.id ? null : thread.id)}
+            data-thread={thread.id}
           >
-            {t.quote && (
-              <div className={`mb-2.5 border-l-2 border-[#FFC60A] pl-2 text-[12px] leading-5 text-subtle ${isCrossBlockComment(t) ? "line-clamp-3 whitespace-pre-line" : "truncate"}`} data-thread-quote data-cross-block-thread={isCrossBlockComment(t) ? "true" : undefined} data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>
-                {isCrossBlockComment(t) && <span className="mr-1.5 inline-block rounded bg-amber-100/90 px-1 py-0 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">跨段落</span>}
-                {t.quote}
+            {thread.quote && (
+              <div className={`mb-2.5 border-l-2 border-[#FFC60A] pl-2 text-[12px] leading-5 text-subtle ${isCrossBlockComment(thread) ? "line-clamp-3 whitespace-pre-line" : "truncate"}`} data-thread-quote data-cross-block-thread={isCrossBlockComment(thread) ? "true" : undefined} data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>
+                {isCrossBlockComment(thread) && <span className="mr-1.5 inline-block rounded bg-amber-100/90 px-1 py-0 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{t("跨段落")}</span>}
+                {thread.quote}
               </div>
             )}
-            <CommentAuthor name={t.userName} userId={t.userId} at={t.createdAt} />
-            <div className="mt-1 pl-8"><CommentBody c={t} members={visibleMembers} /></div>
-            {(replies.get(t.id) ?? []).map((rp) => (
+            <CommentAuthor name={thread.userName} userId={thread.userId} at={thread.createdAt} />
+            <div className="mt-1 pl-8"><CommentBody c={thread} members={visibleMembers} /></div>
+            {(replies.get(thread.id) ?? []).map((rp) => (
               <div key={rp.id} className="mt-3" data-comment-reply={rp.id}>
                 <CommentAuthor name={rp.userName} userId={rp.userId} at={rp.createdAt} />
                 <div className="mt-1 pl-8"><CommentBody c={rp} members={visibleMembers} /></div>
                 {canEdit && (rp.userId === meId || canManage) && (
-                  <div className={`mt-0.5 flex justify-end pl-8 text-[12px] text-subtle ${activeThread === t.id ? "" : "opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100"}`}>
-                    <button disabled={actionPending || !canSubmit} className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>删除</button>
+                  <div className={`mt-0.5 flex justify-end pl-8 text-[12px] text-subtle ${activeThread === thread.id ? "" : "opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100"}`}>
+                    <button disabled={actionPending || !canSubmit} className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, rp.id)); }}>{t("删除")}</button>
                   </div>
                 )}
               </div>
             ))}
             {canEdit && (
-              <div className={`mt-2 flex items-center gap-1 pl-8 text-[12px] text-subtle ${activeThread === t.id ? "" : "opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100"}`} data-thread-actions>
+              <div className={`mt-2 flex items-center gap-1 pl-8 text-[12px] text-subtle ${activeThread === thread.id ? "" : "opacity-0 group-focus-within/thread:opacity-100 group-hover/thread:opacity-100"}`} data-thread-actions>
                 <button
                   className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-primary"
                   disabled={!canSubmit}
                   onClick={(e) => {
                     e.stopPropagation();
                     if (replyTo !== null) onComposerSuspended();
-                    setReplyTo(replyTo === t.id ? null : t.id);
+                    setReplyTo(replyTo === thread.id ? null : thread.id);
                   }}
-                >回复</button>
+                >{t("回复")}</button>
                 <button
                   className="rounded px-1.5 py-0.5 hover:bg-hover hover:text-primary"
                   disabled={actionPending || !canSubmit}
                   onClick={(e) => {
                     e.stopPropagation();
-                    void runAction(() => commentsApi.updateForAccount(id, t.id, meId, { resolved: true }));
+                    void runAction(() => commentsApi.updateForAccount(id, thread.id, meId, { resolved: true }));
                   }}
-                >解决</button>
-                {(t.userId === meId || canManage) && (
-                  <button disabled={actionPending || !canSubmit} className="ml-auto rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, t.id)); }}>删除</button>
+                >{t("解决")}</button>
+                {(thread.userId === meId || canManage) && (
+                  <button disabled={actionPending || !canSubmit} className="ml-auto rounded px-1.5 py-0.5 hover:bg-hover hover:text-destructive" onClick={(e) => { e.stopPropagation(); void runAction(() => commentsApi.remove(id, thread.id)); }}>{t("删除")}</button>
                 )}
               </div>
             )}
-            {replyTo === t.id && canEdit && (
+            {replyTo === thread.id && canEdit && (
               <div className="mt-2" onClick={(e) => e.stopPropagation()}>
-                <Composer key={`${id}:${meId}:${session}:${t.id}`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={null} parentId={t.id} canSubmit={canSubmit} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: t.id }); setReplyTo(null); }} />
+                <Composer key={`${id}:${meId}:${session}:${thread.id}`} id={id} meId={meId} session={session} attemptStore={attemptStore} attempts={attempts} refreshAttempts={refreshAttempts} onAttemptNotice={setAttemptNotice} members={visibleMembers} draft={null} parentId={thread.id} canSubmit={canSubmit} onSnapshot={onSnapshot} onAccessDenied={onAccessDenied} onPolicyDenied={onPolicyDenied} onUncertain={invalidate} onDone={() => { setReplyTo(null); void invalidate(); }} onCancel={() => { onSnapshot({ text: "", draft: null, parentId: thread.id }); setReplyTo(null); }} />
               </div>
             )}
           </div>
@@ -316,6 +318,7 @@ export function CommentsPanel({
 
 /** 飞书评论卡片头部：头像 + 姓名 + 时间。 */
 export function CommentAuthor({ name, userId, at, badge }: { name: string; userId: number; at: string; badge?: React.ReactNode }) {
+  useI18n();
   return <div className="flex min-w-0 items-center gap-2" data-comment-author>
     <Avatar name={name} color={colorFor(userId - 1)} size={24} />
     <span className="truncate text-[13px] font-medium text-foreground">{name}</span>
@@ -329,8 +332,10 @@ export function formatCommentTime(iso: string, now = new Date()) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "";
   const hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
-  if (d.toDateString() === now.toDateString()) return `今天 ${hm}`;
-  return d.getFullYear() === now.getFullYear() ? `${d.getMonth() + 1}月${d.getDate()}日 ${hm}` : `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  if (d.toDateString() === now.toDateString()) return t("今天 {time}", { time: hm });
+  return d.getFullYear() === now.getFullYear()
+    ? t("{m}月{d}日 {time}", { m: d.getMonth() + 1, d: d.getDate(), time: hm })
+    : t("{y}年{m}月{d}日", { y: d.getFullYear(), m: d.getMonth() + 1, d: d.getDate() });
 }
 
 /** Renders a comment body with @人 highlighted. */
@@ -396,6 +401,7 @@ function Composer({
   onDone: (draft: CommentAnchor | null) => void;
   onCancel?: () => void;
 }) {
+  const { t } = useI18n();
   const [text, setText] = useState("");
   const [textOrigin, setTextOrigin] = useState<CommentAnchor | null>(draft);
   const [posting, setPosting] = useState(false);
@@ -426,7 +432,7 @@ function Composer({
   const post = async () => {
     const body = text.trim();
     if (!body || postingRef.current || originChanged || !canSubmit) return;
-    if (!attemptStore) { setError("无法安全保存本机提交记录，草稿已保留。"); return; }
+    if (!attemptStore) { setError(t("无法安全保存本机提交记录，草稿已保留。")); return; }
     postingRef.current = true;
     setPosting(true);
     setError("");
@@ -435,9 +441,9 @@ function Composer({
     try {
       const payload = commentAttemptPayload(body, mentioned, parentId, textOrigin, allowCopyQuote);
       const records = attemptStore.list();
-      if (records.damaged) throw new Error("部分提交记录损坏，请勿重复发送。");
+      if (records.damaged) throw new Error(t("部分提交记录损坏，请勿重复发送。"));
       if (records.attempts.some((attempt) => matchesUnresolvedDraft(attempt, payload)) || attempts.some((attempt) => matchesUnresolvedDraft(attempt, payload))) {
-        throw new Error("这条评论已有未确认的发送记录，请使用上方的重试入口。");
+        throw new Error(t("这条评论已有未确认的发送记录，请使用上方的重试入口。"));
       }
       const capability = await requireCommentAttempts(id, meId);
       // The document, account, or policy may have changed during discovery.
@@ -451,27 +457,27 @@ function Composer({
       onSnapshot({ text: "", draft: textOrigin, parentId });
       refreshAttempts();
       const result = await attemptStore.run(attempt, async (stored) => {
-        if (!active.current || !canSubmitRef.current) throw new Error("评论权限尚未验证");
-        if (stored.payload.quote && (!allowCopyQuoteRef.current || !capability.canCopyQuote)) throw new Error("原引用权限已变化");
+        if (!active.current || !canSubmitRef.current) throw new Error(t("评论权限尚未验证"));
+        if (stored.payload.quote && (!allowCopyQuoteRef.current || !capability.canCopyQuote)) throw new Error(t("原引用权限已变化"));
         return sendCommentAttempt(stored);
       });
       if (!active.current) return;
       refreshAttempts();
-      if (!result.cleaned) onAttemptNotice("评论已确认，但本机记录暂无法安全清除，已保留供核对。");
-      else if (result.value.state === "deleted") onAttemptNotice("这条评论之前已发送并被删除，不会重复创建。");
+      if (!result.cleaned) onAttemptNotice(t("评论已确认，但本机记录暂无法安全清除，已保留供核对。"));
+      else if (result.value.state === "deleted") onAttemptNotice(t("这条评论之前已发送并被删除，不会重复创建。"));
       onDone(draft);
     } catch (error) {
       if (!active.current) return;
-      if (error instanceof CommentAttemptAccountChanged) { setError("账号已变化，原账号的草稿与提交记录已保留。"); return; }
+      if (error instanceof CommentAttemptAccountChanged) { setError(t("账号已变化，原账号的草稿与提交记录已保留。")); return; }
       if (error instanceof CommentAttemptDocumentDenied) { onAccessDenied(prepared ? undefined : { text, draft: textOrigin, parentId }); return; }
-      if (error instanceof CommentAttemptsUnavailable) { setError(`${error.message} 草稿已保留。`); return; }
+      if (error instanceof CommentAttemptsUnavailable) { setError(t("{message} 草稿已保留。", { message: error.message })); return; }
       const result = classifyCommentMutationError(error);
       if (result === "access") onAccessDenied(prepared ? undefined : { text, draft: textOrigin, parentId });
-      else if (result === "policy") { onPolicyDenied?.(); setError("评论权限已变化，草稿已保留。"); }
-      else if (prepared) { refreshAttempts(); setError("发送结果未确认，本机已保留原请求，请使用上方记录重试。"); void onUncertain().catch(() => {}); }
-      else if (error instanceof Error && (error.message.includes("未确认的发送记录") || error.message.includes("提交记录损坏") || error.message.includes("评论包含") || error.message.includes("评论需要") || error.message.includes("最多提及") || error.message.includes("评论引用"))) setError(error.message);
+      else if (result === "policy") { onPolicyDenied?.(); setError(t("评论权限已变化，草稿已保留。")); }
+      else if (prepared) { refreshAttempts(); setError(t("发送结果未确认，本机已保留原请求，请使用上方记录重试。")); void onUncertain().catch(() => {}); }
+      else if (error instanceof Error && (error.message === t("部分提交记录损坏，请勿重复发送。") || error.message === t("这条评论已有未确认的发送记录，请使用上方的重试入口。") || error.message.includes("未确认的发送记录") || error.message.includes("提交记录损坏") || error.message.includes("评论包含") || error.message.includes("评论需要") || error.message.includes("最多提及") || error.message.includes("评论引用"))) setError(error.message);
       else if (result === "uncertain") setError(reconcileUncertainComment(onUncertain, true));
-      else setError("评论未被接受，草稿已保留，请检查后重试。");
+      else setError(t("评论未被接受，草稿已保留，请检查后重试。"));
     } finally {
       postingRef.current = false;
       if (active.current) setPosting(false);
@@ -481,20 +487,20 @@ function Composer({
     <div ref={composerRef} tabIndex={-1} className="mb-3 rounded-lg border p-2 focus-within:border-primary" data-comment-composer>
       {draft?.quote && !parentId && (
         <div className={`mb-1.5 border-l-2 border-[#F5B1E5] bg-[#FBF3FA] px-2 py-1 text-[12px] text-muted-foreground ${isCrossBlockComment(draft) ? "line-clamp-3 whitespace-pre-line" : "truncate"}`} data-document-print-restricted={!allowPrintQuote ? "true" : undefined} onCopy={(event) => { if (!allowCopyQuote) event.preventDefault(); }}>
-          {isCrossBlockComment(draft) && <span className="mr-1.5 inline-block rounded bg-amber-100/90 px-1 py-0 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">跨段落</span>}
+          {isCrossBlockComment(draft) && <span className="mr-1.5 inline-block rounded bg-amber-100/90 px-1 py-0 text-[10px] font-medium text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">{t("跨段落")}</span>}
           {draft.quote}
         </div>
       )}
-      {posting && <p role="status" className="mb-1 text-[12px] text-muted-foreground">上一条评论正在发送，请稍候。</p>}
-      {!canSubmit && <p role="status" className="mb-1 text-[12px] text-muted-foreground">正在验证评论权限，草稿仍可编辑。</p>}
-      {originChanged && <p role="alert" className="mb-1 text-[12px] text-muted-foreground">未发送的文字属于之前的选区。 <button type="button" className="text-primary underline" onClick={() => { setTextOrigin(draft); onSnapshot({ text, draft, parentId }); }}>用于当前选区</button></p>}
+      {posting && <p role="status" className="mb-1 text-[12px] text-muted-foreground">{t("上一条评论正在发送，请稍候。")}</p>}
+      {!canSubmit && <p role="status" className="mb-1 text-[12px] text-muted-foreground">{t("正在验证评论权限，草稿仍可编辑。")}</p>}
+      {originChanged && <p role="alert" className="mb-1 text-[12px] text-muted-foreground">{t("未发送的文字属于之前的选区。")} <button type="button" className="text-primary underline" onClick={() => { setTextOrigin(draft); onSnapshot({ text, draft, parentId }); }}>{t("用于当前选区")}</button></p>}
       <textarea
         ref={ref}
         autoFocus={!!parentId}
         rows={2}
         value={text}
         disabled={posting}
-        placeholder={parentId ? "回复…" : "添加评论，@ 提及他人"}
+        placeholder={parentId ? t("回复…") : t("添加评论，@ 提及他人")}
         className="w-full resize-none text-[13px] outline-none"
         onChange={(e) => changeText(e.target.value)}
         onKeyDown={(e) => {
@@ -521,15 +527,15 @@ function Composer({
         </div>
       )}
       <div className="mt-1 flex items-center gap-2">
-        <span className="min-w-0 truncate text-[11px] text-subtle">Enter 发送，Shift+Enter 换行</span>
+        <span className="min-w-0 truncate text-[11px] text-subtle">{t("Enter 发送，Shift+Enter 换行")}</span>
         <div className="ml-auto flex shrink-0 gap-1.5">
           {onCancel && (
             <button className="h-6 shrink-0 whitespace-nowrap rounded border px-2 text-[12px]" onClick={onCancel}>
-              取消
+              {t("取消")}
             </button>
           )}
           <button className="h-6 shrink-0 whitespace-nowrap rounded bg-primary px-2.5 text-[12px] text-white disabled:opacity-50" disabled={!text.trim() || posting || originChanged || !canSubmit} onClick={() => void post()} data-comment-send>
-            发送
+            {t("发送")}
           </button>
         </div>
       </div>

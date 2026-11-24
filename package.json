@@ -15,9 +15,11 @@
     "bench": "node benchmarks/run-benchmarks.mjs",
     "test:cli": "cd cli && go test -count=1 -race -cover ./...",
     "test:sdk:go": "cd sdk/go && go test -count=1 -race -cover ./...",
+    "test:e2e": "playwright test -c e2e/playwright.config.ts",
     "lint:names": "node scripts/check-file-names.mjs"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22.10.0",
     "@vitest/coverage-v8": "2.1.9"
   }

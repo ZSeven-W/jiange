@@ -258,10 +258,11 @@ export function parseFormulaAst(raw: string): FormulaAst | null {
 
   const parsePostfixInvokes = (base: FormulaAst, depth: number): FormulaAst | null => {
     let node = base;
+    let d = depth;
     while (tokens[pos]?.kind === "op" && tokens[pos].text === "(") {
-      if (depth > MAX_PARSE_DEPTH) return null;
+      if (++d > MAX_PARSE_DEPTH) return null;
       pos++;
-      const args = parseArgList(depth);
+      const args = parseArgList(d);
       if (!args) return null;
       node = { kind: "invoke", callee: node, args };
     }

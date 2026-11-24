@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { templatesApi } from "@/lib/api";
 import { SearchIcon } from "@/components/feishu-icons";
+import { useI18n } from "@/lib/i18n";
 import { parseMarkdown } from "@/lib/markdown";
 import { TemplateLibrary } from "./template-library";
 import { STARTER_TEMPLATES, type StarterTemplate } from "./starter-template-data";
@@ -39,6 +40,7 @@ export function starterTemplateCount(width: number): number {
 
 /** Real starter documents shown only while the collaborative body is empty. */
 export function StarterTemplates({ onChoose, onHide, disabled = false }: { onChoose: (template: StarterTemplate) => void; onHide: () => void; disabled?: boolean }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [visibleCount, setVisibleCount] = useState(4);
@@ -56,24 +58,24 @@ export function StarterTemplates({ onChoose, onHide, disabled = false }: { onCho
   }, []);
   const qc = useQueryClient();
   const mine = useQuery({ queryKey: ["my-templates"], queryFn: templatesApi.list, staleTime: 30_000 });
-  const own: (StarterTemplate & { userTemplateId: number })[] = (mine.data ?? []).map((t) => ({ id: `u:${t.id}`, name: t.name, body: t.body, color: "#eef3ff", userTemplateId: t.id }));
-  const items = [...own, ...STARTER_TEMPLATES].filter((t) => t.name.includes(query.trim()));
+  const own: (StarterTemplate & { userTemplateId: number })[] = (mine.data ?? []).map((tpl) => ({ id: `u:${tpl.id}`, name: tpl.name, body: tpl.body, color: "#eef3ff", userTemplateId: tpl.id }));
+  const items = [...own, ...STARTER_TEMPLATES].filter((tpl) => tpl.name.includes(query.trim()));
   const visible = query.trim() ? items : items.slice(0, visibleCount);
-  return <section ref={section} className="mt-auto w-full pt-20" aria-label="文档模板" data-starter-templates>
+  return <section ref={section} className="mt-auto w-full pt-20" aria-label={t("文档模板")} data-starter-templates>
     <div className="mb-4 flex items-center justify-between gap-4">
-      <label className="flex h-8 w-[240px] max-w-full items-center gap-2 rounded-md border px-3 text-subtle focus-within:border-primary"><SearchIcon className="size-[15px] shrink-0"/><span className="sr-only">搜索模板</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="输入关键词搜索模板" className="w-full min-w-0 bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]"/></label>
-      <button type="button" onClick={onHide} className="shrink-0 rounded px-1 text-[13px] text-muted-foreground hover:text-foreground">隐藏</button>
+      <label className="flex h-8 w-[240px] max-w-full items-center gap-2 rounded-md border px-3 text-subtle focus-within:border-primary"><SearchIcon className="size-[15px] shrink-0"/><span className="sr-only">{t("搜索模板")}</span><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("输入关键词搜索模板")} className="w-full min-w-0 bg-transparent text-[16px] text-foreground outline-none placeholder:text-subtle sm:text-[13px]"/></label>
+      <button type="button" onClick={onHide} className="shrink-0 rounded px-1 text-[13px] text-muted-foreground hover:text-foreground">{t("隐藏")}</button>
     </div>
     <div className="flex gap-4 overflow-x-auto pb-1">
-      {visible.map((t) => <span key={t.id} className="group relative shrink-0">
-        <button type="button" disabled={disabled} onClick={() => onChoose(t)} style={{ width: cardWidth }} className="h-[162px] overflow-hidden rounded-lg border bg-surface text-left shadow-[0_2px_10px_rgba(31,35,41,0.05)] transition-shadow hover:shadow-[0_5px_18px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-starter-template={t.id}>
-          <span className="flex items-center gap-1 px-2.5 pt-2 text-[12px] font-medium"><span className="truncate">{t.name}</span>{"userTemplateId" in t && <span className="shrink-0 rounded bg-[#e1eaff] px-1 text-[10px] font-normal text-primary">我的</span>}</span>
-          <TemplatePreview template={t} />
+      {visible.map((tpl) => <span key={tpl.id} className="group relative shrink-0">
+        <button type="button" disabled={disabled} onClick={() => onChoose(tpl)} style={{ width: cardWidth }} className="h-[162px] overflow-hidden rounded-lg border bg-surface text-left shadow-[0_2px_10px_rgba(31,35,41,0.05)] transition-shadow hover:shadow-[0_5px_18px_rgba(31,35,41,0.12)] focus-visible:outline-2 focus-visible:outline-primary" data-starter-template={tpl.id}>
+          <span className="flex items-center gap-1 px-2.5 pt-2 text-[12px] font-medium"><span className="truncate">{tpl.name}</span>{"userTemplateId" in tpl && <span className="shrink-0 rounded bg-[#e1eaff] px-1 text-[10px] font-normal text-primary">{t("我的")}</span>}</span>
+          <TemplatePreview template={tpl} />
         </button>
-        {"userTemplateId" in t && <button type="button" aria-label={`删除模板「${t.name}」`} title="删除模板" onClick={() => { void templatesApi.remove((t as { userTemplateId: number }).userTemplateId).then(() => qc.invalidateQueries({ queryKey: ["my-templates"] })); }} className="absolute right-1.5 top-1.5 hidden size-5 place-items-center rounded bg-surface text-[12px] text-muted-foreground shadow group-hover:grid hover:text-destructive" data-delete-template>×</button>}
+        {"userTemplateId" in tpl && <button type="button" aria-label={t("删除模板「{name}」", { name: tpl.name })} title={t("删除模板")} onClick={() => { void templatesApi.remove((tpl as { userTemplateId: number }).userTemplateId).then(() => qc.invalidateQueries({ queryKey: ["my-templates"] })); }} className="absolute right-1.5 top-1.5 hidden size-5 place-items-center rounded bg-surface text-[12px] text-muted-foreground shadow group-hover:grid hover:text-destructive" data-delete-template>×</button>}
       </span>)}
-      {!query.trim() && <button type="button" disabled={disabled} onClick={() => setLibraryOpen(true)} style={{ width: cardWidth }} className="flex h-[162px] max-w-full shrink-0 flex-col items-center justify-center gap-2 rounded-lg border bg-surface text-[13px] text-muted-foreground shadow-[0_2px_10px_rgba(31,35,41,0.05)] hover:bg-hover/40"><MoreTemplatesIcon />更多模板</button>}
-      {items.length === 0 && <p className="py-8 text-[13px] text-subtle">没有找到匹配的模板</p>}
+      {!query.trim() && <button type="button" disabled={disabled} onClick={() => setLibraryOpen(true)} style={{ width: cardWidth }} className="flex h-[162px] max-w-full shrink-0 flex-col items-center justify-center gap-2 rounded-lg border bg-surface text-[13px] text-muted-foreground shadow-[0_2px_10px_rgba(31,35,41,0.05)] hover:bg-hover/40"><MoreTemplatesIcon />{t("更多模板")}</button>}
+      {items.length === 0 && <p className="py-8 text-[13px] text-subtle">{t("没有找到匹配的模板")}</p>}
     </div>
     {libraryOpen && <TemplateLibrary onChoose={onChoose} onClose={() => setLibraryOpen(false)} disabled={disabled}/>}
   </section>;

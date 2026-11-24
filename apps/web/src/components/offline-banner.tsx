@@ -72,7 +72,14 @@ export function OfflineBanner({
 
   const cachedCount = effectiveOffline.cachedSnapshots.length;
   const pendingCount = effectiveOffline.pendingQueue.length;
-  const showBanner = !online || justReconnected || pendingCount > 0;
+  const collabCount = effectiveOffline.offlineCollabCount ?? 0;
+  const collabSummary = effectiveOffline.offlineCollabSummary;
+  const pendingCollabMerges = collabSummary ? collabSummary.pendingMergeCount : 0;
+  const pendingCollabDeltas = collabSummary
+    ? collabSummary.sheetDeltaCount + collabSummary.slidesDraftCount
+    : 0;
+  const hasPendingSync = pendingCount > 0 || pendingCollabDeltas > 0;
+  const showBanner = !online || justReconnected || pendingCount > 0 || pendingCollabMerges > 0;
 
   if (!showBanner && !drawerOpen) {
     return null;
@@ -94,7 +101,7 @@ export function OfflineBanner({
     setDrawerOpen(true);
   };
 
-  const syncButtonDisabled = !online || effectiveOffline.syncing || pendingCount === 0;
+  const syncButtonDisabled = !online || effectiveOffline.syncing || !hasPendingSync;
 
   let bannerNode: React.ReactNode = null;
 
@@ -122,9 +129,25 @@ export function OfflineBanner({
             <span className="rounded-full bg-[#ff8800]/12 px-2 py-0.5 text-[#8c4a00] dark:bg-[#ffb74d]/15 dark:text-[#ffd591]">
               {t("已缓存 {n} 项可离线查看", { n: cachedCount })}
             </span>
+            {collabCount > 0 && (
+              <span
+                data-offline-collab-badge=""
+                className="rounded-full bg-[#ff8800]/15 px-2 py-0.5 text-[#8c4a00] dark:bg-[#ffb74d]/20 dark:text-[#ffd591]"
+              >
+                {t("离线协同副本 {n} 份", { n: collabCount })}
+              </span>
+            )}
             {pendingCount > 0 && (
               <span className="rounded-full bg-[#ff8800]/20 px-2 py-0.5 font-semibold text-[#7a3e00] dark:bg-[#ffb74d]/25 dark:text-[#ffe0b2]">
                 {t("待同步 {m} 条修改", { m: pendingCount })}
+              </span>
+            )}
+            {pendingCollabMerges > 0 && (
+              <span
+                data-offline-collab-merge-badge=""
+                className="rounded-full bg-[#ff8800]/20 px-2 py-0.5 font-semibold text-[#7a3e00] dark:bg-[#ffb74d]/25 dark:text-[#ffe0b2]"
+              >
+                {t("待合并 {n} 项协同修改", { n: pendingCollabMerges })}
               </span>
             )}
           </span>
@@ -177,11 +200,21 @@ export function OfflineBanner({
             <span>{t("网络已恢复，正在同步最新内容")}</span>
           </span>
 
-          {pendingCount > 0 && (
+          {(pendingCount > 0 || pendingCollabMerges > 0) && (
             <>
-              <span className="rounded-full bg-[#00b42a]/12 px-2 py-0.5 text-[12px] font-semibold">
-                {t("待同步 {m} 条修改", { m: pendingCount })}
-              </span>
+              {pendingCount > 0 && (
+                <span className="rounded-full bg-[#00b42a]/12 px-2 py-0.5 text-[12px] font-semibold">
+                  {t("待同步 {m} 条修改", { m: pendingCount })}
+                </span>
+              )}
+              {pendingCollabMerges > 0 && (
+                <span
+                  data-offline-collab-merge-badge=""
+                  className="rounded-full bg-[#00b42a]/12 px-2 py-0.5 text-[12px] font-semibold"
+                >
+                  {t("待合并 {n} 项协同修改", { n: pendingCollabMerges })}
+                </span>
+              )}
               <span className="inline-flex items-center gap-1.5">
                 <button
                   type="button"
@@ -212,7 +245,7 @@ export function OfflineBanner({
         </div>
       </div>
     );
-  } else if (pendingCount > 0) {
+  } else if (pendingCount > 0 || pendingCollabMerges > 0) {
     bannerNode = (
       <div className={containerClass}>
         <div
@@ -221,7 +254,7 @@ export function OfflineBanner({
           aria-atomic="true"
           data-offline-banner=""
           data-offline-pending-banner=""
-          className="pointer-events-auto inline-flex max-w-[min(740px,calc(100vw-24px))] flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-2xl border border-[#bed3ff] bg-[#f0f5ff]/95 px-3.5 py-2 text-[13px] font-medium leading-snug text-[#1456f0] shadow-[0_6px_20px_rgba(31,35,41,0.12)] backdrop-blur-md dark:border-[#2a4a85] dark:bg-[#14233f]/95 dark:text-[#9cbdff] dark:shadow-[0_6px_20px_rgba(0,0,0,0.4)] sm:rounded-full"
+          className="pointer-events-auto inline-flex max-w-[min(780px,calc(100vw-24px))] flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-2xl border border-[#bed3ff] bg-[#f0f5ff]/95 px-3.5 py-2 text-[13px] font-medium leading-snug text-[#1456f0] shadow-[0_6px_20px_rgba(31,35,41,0.12)] backdrop-blur-md dark:border-[#2a4a85] dark:bg-[#14233f]/95 dark:text-[#9cbdff] dark:shadow-[0_6px_20px_rgba(0,0,0,0.4)] sm:rounded-full"
         >
           <span className="inline-flex items-center gap-2">
             <RefreshCw
@@ -230,8 +263,30 @@ export function OfflineBanner({
               className={cn("shrink-0 text-[#3370ff] dark:text-[#9cbdff]", effectiveOffline.syncing && "animate-spin")}
               aria-hidden="true"
             />
-            <span>{t("待同步 {m} 条修改", { m: pendingCount })}</span>
+            <span>
+              {pendingCount > 0
+                ? t("待同步 {m} 条修改", { m: pendingCount })
+                : t("待合并 {n} 项协同修改", { n: pendingCollabMerges })}
+            </span>
           </span>
+
+          {pendingCount > 0 && pendingCollabMerges > 0 && (
+            <span
+              data-offline-collab-merge-badge=""
+              className="rounded-full bg-[#3370ff]/15 px-2 py-0.5 text-[12px] font-semibold dark:bg-[#3370ff]/25"
+            >
+              {t("待合并 {n} 项协同修改", { n: pendingCollabMerges })}
+            </span>
+          )}
+
+          {collabCount > 0 && (
+            <span
+              data-offline-collab-badge=""
+              className="rounded-full bg-[#3370ff]/10 px-2 py-0.5 text-[12px] dark:bg-[#3370ff]/20"
+            >
+              {t("离线协同副本 {n} 份", { n: collabCount })}
+            </span>
+          )}
 
           <span className="rounded-full bg-[#3370ff]/10 px-2 py-0.5 text-[12px] dark:bg-[#3370ff]/20">
             {t("已缓存 {n} 项可离线查看", { n: cachedCount })}
@@ -282,7 +337,8 @@ export function OfflineBanner({
 
 export interface OfflineCacheButtonProps {
   /** Optional offline state override (defaults to live `useOfflineState()`). */
-  offlineState?: Pick<OfflineStateHookValue, "online" | "cachedSnapshots" | "pendingQueue">;
+  offlineState?: Pick<OfflineStateHookValue, "online" | "cachedSnapshots" | "pendingQueue"> &
+    Partial<Pick<OfflineStateHookValue, "offlineCollabCount" | "offlineCollabSummary">>;
   /** Compact variant for narrow sidebars or headers. */
   compact?: boolean;
   /** Optional custom click handler (defaults to `openOfflineCacheDrawer()`). */
@@ -304,7 +360,10 @@ export function OfflineCacheButton({
   const liveState = useOfflineState();
   const state = offlineState ?? liveState;
   const cachedCount = state.cachedSnapshots.length;
-  const pendingCount = state.pendingQueue.length;
+  const pendingCollabDeltas = state.offlineCollabSummary
+    ? state.offlineCollabSummary.sheetDeltaCount + state.offlineCollabSummary.slidesDraftCount
+    : 0;
+  const pendingCount = state.pendingQueue.length + pendingCollabDeltas;
 
   const handleClick = () => {
     if (onClick) {

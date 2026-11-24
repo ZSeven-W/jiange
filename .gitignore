@@ -8,6 +8,8 @@ coverage
 output
 docs
 .DS_Store
+playwright-report
+test-results
 
 # Embedded UI on the Uppcoder deploy branch: a plain `go build` needs these files.
 !server/webui/dist/.gitkeep

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { CheckCircle2, MessageSquare, Send, X } from "lucide-react";
 import type { Comment } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 import {
   parseFlowCommentAnchor,
   resolveFlowCommentPosition,
@@ -145,6 +146,7 @@ export function BoardCommentComposer({
   onSubmit: (body: string) => Promise<void>;
   onCancel: () => void;
 }) {
+  const { t } = useI18n();
   const [body, setBody] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -158,22 +160,22 @@ export function BoardCommentComposer({
     try {
       await onSubmit(trimmed);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "发送评论失败，请重试");
+      setError(err instanceof Error ? err.message : t("发送评论失败，请重试"));
       setSaving(false);
     }
   };
 
   const label =
     anchor.kind === "node"
-      ? `图形评论：${quote}`
+      ? t("图形评论：{quote}", { quote })
       : anchor.kind === "mind"
-        ? `导图评论：${quote}`
-        : `画布位置 (${anchor.x}, ${anchor.y})`;
+        ? t("导图评论：{quote}", { quote })
+        : t("画布位置 ({x}, {y})", { x: anchor.x, y: anchor.y });
 
   return (
     <div
       role="dialog"
-      aria-label="添加画板评论"
+      aria-label={t("添加画板评论")}
       data-flow-comment-composer
       onPointerDown={(e) => e.stopPropagation()}
       className="fixed z-[96] rounded-xl border border-[#DEE0E3] bg-surface p-3 shadow-[0_8px_28px_rgba(31,35,41,0.16)]"
@@ -186,7 +188,7 @@ export function BoardCommentComposer({
         </span>
         <button
           type="button"
-          aria-label="关闭评论输入"
+          aria-label={t("关闭评论输入")}
           onClick={onCancel}
           className="grid size-6 shrink-0 place-items-center rounded text-subtle hover:bg-hover"
         >
@@ -208,7 +210,7 @@ export function BoardCommentComposer({
             onCancel();
           }
         }}
-        placeholder="输入评论内容（⌘/Ctrl + Enter 发送）"
+        placeholder={t("输入评论内容（⌘/Ctrl + Enter 发送）")}
         data-flow-comment-input
         className="w-full select-text resize-none rounded-md border border-[#DEE0E3] bg-background p-2 text-[13px] text-foreground outline-none focus:border-primary"
       />
@@ -219,7 +221,7 @@ export function BoardCommentComposer({
           onClick={onCancel}
           className="h-7 rounded-md border px-2.5 text-[12px] text-subtle hover:bg-hover"
         >
-          取消
+          {t("取消")}
         </button>
         <button
           type="button"
@@ -229,7 +231,7 @@ export function BoardCommentComposer({
           className="flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-[12px] font-medium text-white hover:bg-primary/90 disabled:opacity-40"
         >
           <Send size={12} />
-          {saving ? "发送中…" : "发送"}
+          {saving ? t("发送中…") : t("发送")}
         </button>
       </div>
     </div>
@@ -253,6 +255,7 @@ export function BoardCommentThreadPopover({
   onResolve?: (commentId: number) => Promise<void>;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [replyText, setReplyText] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -267,7 +270,7 @@ export function BoardCommentThreadPopover({
       await onReply(pin.root.id, trimmed);
       setReplyText("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "回复失败，请重试");
+      setError(err instanceof Error ? err.message : t("回复失败，请重试"));
     } finally {
       setBusy(false);
     }
@@ -281,7 +284,7 @@ export function BoardCommentThreadPopover({
       await onResolve(pin.root.id);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "解决评论失败，请重试");
+      setError(err instanceof Error ? err.message : t("解决评论失败，请重试"));
       setBusy(false);
     }
   };
@@ -289,7 +292,7 @@ export function BoardCommentThreadPopover({
   return (
     <div
       role="dialog"
-      aria-label="画板评论详情"
+      aria-label={t("画板评论详情")}
       data-flow-comment-popover={pin.root.id}
       onPointerDown={(e) => e.stopPropagation()}
       className="fixed z-[96] flex max-h-[min(420px,calc(100dvh-96px))] flex-col rounded-xl border border-[#DEE0E3] bg-surface shadow-[0_8px_28px_rgba(31,35,41,0.18)]"
@@ -301,11 +304,11 @@ export function BoardCommentThreadPopover({
             {pin.index}
           </span>
           <span className="truncate text-[12px] font-medium text-foreground">
-            {pin.root.quote || `画布 (${pin.x}, ${pin.y})`}
+            {pin.root.quote || t("画布 ({x}, {y})", { x: pin.x, y: pin.y })}
           </span>
           {pin.orphaned && (
             <span className="shrink-0 rounded bg-[#FFF7E6] px-1 text-[10px] text-[#B25900]">
-              原对象已删
+              {t("原对象已删")}
             </span>
           )}
         </div>
@@ -315,17 +318,17 @@ export function BoardCommentThreadPopover({
               type="button"
               disabled={busy}
               onClick={() => void handleResolve()}
-              title="标记已解决"
+              title={t("标记已解决")}
               data-flow-comment-resolve
               className="flex h-6 items-center gap-1 rounded px-1.5 text-[11px] text-[#2EA121] hover:bg-[#EDF9EC] disabled:opacity-40"
             >
               <CheckCircle2 size={13} />
-              解决
+              {t("解决")}
             </button>
           )}
           <button
             type="button"
-            aria-label="关闭评论"
+            aria-label={t("关闭评论")}
             onClick={onClose}
             className="grid size-6 place-items-center rounded text-subtle hover:bg-hover"
           >
@@ -337,7 +340,7 @@ export function BoardCommentThreadPopover({
       <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto px-3 py-2.5 text-[13px]">
         <div>
           <div className="flex items-center justify-between text-[11px] text-subtle">
-            <span className="font-medium text-foreground">{pin.root.userName || "协作者"}</span>
+            <span className="font-medium text-foreground">{pin.root.userName || t("协作者")}</span>
             <span>{pin.root.createdAt ? new Date(pin.root.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
           </div>
           <p className="mt-1 whitespace-pre-wrap break-words text-[#1F2329] dark:text-foreground">
@@ -347,7 +350,7 @@ export function BoardCommentThreadPopover({
         {pin.replies.map((r) => (
           <div key={r.id} className="border-t border-[#EFF0F1] pt-2 dark:border-border">
             <div className="flex items-center justify-between text-[11px] text-subtle">
-              <span className="font-medium text-foreground">{r.userName || "协作者"}</span>
+              <span className="font-medium text-foreground">{r.userName || t("协作者")}</span>
               <span>{r.createdAt ? new Date(r.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</span>
             </div>
             <p className="mt-0.5 whitespace-pre-wrap break-words text-[#1F2329] dark:text-foreground">
@@ -374,7 +377,7 @@ export function BoardCommentThreadPopover({
                 onClose();
               }
             }}
-            placeholder="回复此评论…"
+            placeholder={t("回复此评论…")}
             data-flow-comment-reply-input
             className="h-8 min-w-0 flex-1 select-text rounded-md border border-[#DEE0E3] bg-background px-2 text-[12px] outline-none focus:border-primary"
           />
@@ -384,7 +387,7 @@ export function BoardCommentThreadPopover({
             onClick={() => void handleReply()}
             data-flow-comment-reply-submit
             className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-white hover:bg-primary/90 disabled:opacity-40"
-            title="发送回复"
+            title={t("发送回复")}
           >
             <Send size={13} />
           </button>
