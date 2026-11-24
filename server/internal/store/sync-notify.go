@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 	"weak"
+
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -243,25 +245,20 @@ func (p *Postgres) ListenRealtime(ctx context.Context, channel string, onMessage
 }
 
 func (p *Postgres) listenRealtimeOnce(ctx context.Context, channel string, onMessage func(payload string)) (bool, error) {
-	c, err := p.Pool.Acquire(ctx)
+	// Open a standalone connection outside pgxpool so long-lived LISTEN
+	// subscribers never consume query pool slots on small 1-4 vCPU hosts.
+	conn, err := pgx.ConnectConfig(ctx, p.Pool.Config().ConnConfig.Copy())
 	if err != nil {
 		return false, err
 	}
-	closeConn := false
 	defer func() {
-		if closeConn {
-			// Never return a LISTENing or broken connection back to pgxpool.
-			_ = c.Conn().Close(context.Background())
-		}
-		c.Release()
+		_ = conn.Close(context.Background())
 	}()
-	if _, err := c.Exec(ctx, "LISTEN "+channel); err != nil {
-		closeConn = true
+	if _, err := conn.Exec(ctx, "LISTEN "+channel); err != nil {
 		return false, err
 	}
-	closeConn = true
 	for {
-		n, err := c.Conn().WaitForNotification(ctx)
+		n, err := conn.WaitForNotification(ctx)
 		if err != nil {
 			return true, err
 		}

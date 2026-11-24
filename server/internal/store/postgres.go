@@ -14,7 +14,15 @@ import (
 type Postgres struct{ Pool *pgxpool.Pool }
 
 func NewPostgres(ctx context.Context, url string) (*Postgres, error) {
-	pool, err := pgxpool.New(ctx, url)
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, err
+	}
+	// Ensure small containers (1-4 vCPUs) have plenty of query connections.
+	if cfg.MaxConns < 25 {
+		cfg.MaxConns = 25
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

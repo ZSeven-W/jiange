@@ -161,6 +161,17 @@ func TestSheetSyncMultiReplicaFanout(t *testing.T) {
 	}
 	defer c2.CloseNow()
 
+	// Wait for both sockets' initial presence frames so hubA and hubB have
+	// registered their local rooms before sending cross-replica events.
+	for _, conn := range []*websocket.Conn{c1, c2} {
+		initCtx, initCancel := context.WithTimeout(ctx, 2*time.Second)
+		if _, _, err := conn.Read(initCtx); err != nil {
+			initCancel()
+			t.Fatalf("initial presence read: %v", err)
+		}
+		initCancel()
+	}
+
 	// 1. Cross-replica cursor presence: Bob on hubB -> Alice on hubA.
 	cursorPayload, _ := json.Marshal(map[string]any{
 		"type": "cursor", "worksheetId": 1, "row": 7, "col": 3, "anchorRow": 7, "anchorCol": 2, "editing": true,

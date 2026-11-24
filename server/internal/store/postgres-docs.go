@@ -604,18 +604,21 @@ func (p *Postgres) Listen(ctx context.Context, fn func(int64, int64)) error {
 }
 
 func (p *Postgres) listenOnce(ctx context.Context, fn func(int64, int64)) error {
-	c, err := p.Pool.Acquire(ctx)
+	// Open a standalone connection outside pgxpool so LISTEN jiange_ops never
+	// consumes a query pool slot on small 1-4 vCPU hosts.
+	conn, err := pgx.ConnectConfig(ctx, p.Pool.Config().ConnConfig.Copy())
 	if err != nil {
 		return err
 	}
-	defer c.Release()
-	if _, err := c.Exec(ctx, "LISTEN "+NotifyChannel); err != nil {
+	defer func() {
+		_ = conn.Close(context.Background())
+	}()
+	if _, err := conn.Exec(ctx, "LISTEN "+NotifyChannel); err != nil {
 		return err
 	}
 	for {
-		n, err := c.Conn().WaitForNotification(ctx)
+		n, err := conn.WaitForNotification(ctx)
 		if err != nil {
-			c.Conn().Close(context.Background()) // don't return a LISTENing conn to the pool
 			return err
 		}
 		a, b, ok := strings.Cut(n.Payload, ":")

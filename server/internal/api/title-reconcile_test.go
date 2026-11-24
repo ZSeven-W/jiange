@@ -11,11 +11,14 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/ZSeven-W/jiange/server/collab"
 	"github.com/ZSeven-W/jiange/server/internal/auth"
 	"github.com/ZSeven-W/jiange/server/internal/migrate"
 	"github.com/ZSeven-W/jiange/server/internal/store"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func checkTitleReconcile(t *testing.T, st store.Store) {
@@ -152,12 +155,35 @@ func TestPostgresTitleReconcile(t *testing.T) {
 	if url == "" {
 		t.Skip("JIANGE_TEST_DATABASE_URL not set")
 	}
-	pg, err := store.NewPostgres(context.Background(), url)
+	ctx := context.Background()
+	admin, err := pgxpool.New(ctx, url)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer pg.Close()
-	if _, err = migrate.Up(context.Background(), pg.Pool); err != nil {
+	schema := fmt.Sprintf("title_reconcile_%d", time.Now().UnixNano())
+	quoted := pgx.Identifier{schema}.Sanitize()
+	if _, err = admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		admin.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		pool.Close()
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+quoted+" CASCADE")
+		admin.Close()
+	})
+	pg := &store.Postgres{Pool: pool}
+	if _, err = migrate.Up(ctx, pg.Pool); err != nil {
 		t.Fatal(err)
 	}
 	checkTitleReconcile(t, pg)

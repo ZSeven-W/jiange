@@ -135,8 +135,13 @@ func TestQueryPerfSmoke(t *testing.T) {
 	if len(out.Records) != 1000 {
 		t.Fatalf("expected 1000 records, got %d", len(out.Records))
 	}
-	if elapsed > 200*time.Millisecond {
-		t.Fatalf("10k-row query took %s (>200ms)", elapsed)
+	budget := 200 * time.Millisecond
+	if raceDetectorEnabled {
+		// Go's race detector adds 3-6x CPU overhead on shared CI runners.
+		budget = 2 * time.Second
+	}
+	if elapsed > budget {
+		t.Fatalf("10k-row query took %s (>%s)", elapsed, budget)
 	}
 	t.Logf("10k-row filter+sort took %s", elapsed)
 }

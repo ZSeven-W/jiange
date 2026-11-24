@@ -299,6 +299,11 @@ func TestSlidesSyncMultiReplicaFanout(t *testing.T) {
 	}
 	defer cBob.CloseNow()
 
+	// Wait for both sockets' initial presence frames so hubA and hubB have
+	// registered their local rooms before sending cross-replica events.
+	_ = readUntilType(t, ctx, cAlice, "presence")
+	_ = readUntilType(t, ctx, cBob, "presence")
+
 	// 1. Cross-replica cursor presence: Alice on hubA -> Bob on hubB.
 	if err := cAlice.Write(ctx, websocket.MessageText, []byte(`{"type":"cursor","pageId":42}`)); err != nil {
 		t.Fatal(err)

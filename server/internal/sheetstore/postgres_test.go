@@ -48,6 +48,11 @@ func postgresFixture(t *testing.T) (repositoryFixture, *pgxpool.Pool) {
 	if _, err = migrate.Up(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
+	// Replace the app's production sheet_* tables inside this throwaway test
+	// schema with the standalone sheetstore prototype schema.
+	if _, err = pool.Exec(ctx, `DROP TABLE IF EXISTS sheet_create_receipts, sheet_write_receipts, sheet_cells, sheet_columns, sheet_rows, sheet_worksheets, sheet_grants, sheet_workbooks CASCADE`); err != nil {
+		t.Fatal(err)
+	}
 	schemaSQL, err := os.ReadFile("schema.sql")
 	if err != nil {
 		t.Fatal(err)

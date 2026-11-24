@@ -15,17 +15,17 @@ jobs:
   build-ts-sdks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version: 22
           cache: pnpm
           registry-url: "https://registry.npmjs.org"
       - run: pnpm install --frozen-lockfile
       - run: pnpm -r build
       - run: pnpm test:sdk:pack
-      - run: pnpm test:sdk:coverage
+      - run: pnpm --workspace-concurrency=1 test:sdk:coverage
       - run: node benchmarks/run-benchmarks.mjs
       - name: Pack all 13 SDK tarballs
         run: |
@@ -41,7 +41,7 @@ jobs:
           for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
             pnpm --filter "@jiange/${pkg}" publish --access public --no-git-checks --provenance
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jiange-npm-sdks
           path: release-tarballs/*.tgz
@@ -70,10 +70,11 @@ jobs:
       run:
         working-directory: cli
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: cli/go.mod
+          cache: false
       - run: test -z "$(gofmt -l .)"
       - run: go vet ./...
       - run: go test -count=1 -race -cover ./...
@@ -87,7 +88,7 @@ jobs:
           mkdir -p dist
           go build -trimpath -ldflags="-s -w" -o "dist/jiange-${GOOS}-${GOARCH}${EXT}" ./cmd/jiange
         shell: bash
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: jiange-cli-${{ matrix.goos }}-${{ matrix.goarch }}
           path: cli/dist/
@@ -95,10 +96,11 @@ jobs:
   verify-go-sdks:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: sdk/go/go.mod
+          cache: false
       - working-directory: sdk/go
         run: |
           test -z "$(gofmt -l .)"
@@ -115,8 +117,8 @@ jobs:
     needs: [build-ts-sdks, build-go-cli, verify-go-sdks]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: release-assets
           merge-multiple: true

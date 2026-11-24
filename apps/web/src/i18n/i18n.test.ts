@@ -1,7 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { beforeEach } from "vitest";
 import { fileURLToPath } from "node:url";
 import { detectLocale, getLocale, setLocale, t } from "./core";
 import { en } from "./en";
@@ -62,6 +61,9 @@ describe("locale persistence", () => {
   beforeEach(() => {
     localStorage.setItem("jiange.locale", "zh-CN");
   });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   it("persists the choice and switches dictionaries", () => {
     setLocale("en");
     expect(getLocale()).toBe("en");
@@ -71,6 +73,11 @@ describe("locale persistence", () => {
   });
   it("falls back to browser detection without stored state", () => {
     localStorage.removeItem("jiange.locale");
-    expect(detectLocale()).toBe("en-US".startsWith("en") ? "en" : "zh-CN");
+    vi.stubGlobal("navigator", { languages: ["en-US"], language: "en-US" });
+    expect(detectLocale()).toBe("en");
+    vi.stubGlobal("navigator", { languages: ["zh-CN"], language: "zh-CN" });
+    expect(detectLocale()).toBe("zh-CN");
+    vi.stubGlobal("navigator", undefined);
+    expect(detectLocale()).toBe("zh-CN");
   });
 });
