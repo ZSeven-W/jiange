@@ -296,6 +296,16 @@ func exerciseWorkspaceSecurityPolicy(t *testing.T, st auditTestStore) {
 		if pol.WorkspaceID != ws.ID || pol.WatermarkEnabled || !pol.WatermarkShowUser || !pol.WatermarkShowEmail || !pol.WatermarkShowDate || pol.WatermarkOpacity != store.DefaultWatermarkOpacity {
 			t.Fatalf("default policy for %s = %+v", u.Email, pol)
 		}
+		if pol.DLPEnabled || pol.DLPKeywords == nil || len(pol.DLPKeywords) != 0 || pol.DLPAction != store.DLPActionWarn || !pol.DLPBlockPublicShare || pol.RetentionDays != 0 {
+			t.Fatalf("default DLP/retention policy for %s = %+v", u.Email, pol)
+		}
+		rawJSON, err := json.Marshal(pol)
+		if err != nil {
+			t.Fatalf("marshal default policy: %v", err)
+		}
+		if !strings.Contains(string(rawJSON), `"dlpKeywords":[]`) {
+			t.Fatalf("expected non-nil empty dlpKeywords JSON [], got %s", string(rawJSON))
+		}
 	}
 
 	// Outsider cannot read; nonexistent workspace returns ErrNotFound.
@@ -380,7 +390,101 @@ func exerciseWorkspaceSecurityPolicy(t *testing.T, st auditTestStore) {
 		t.Fatalf("member readBack = %+v, want %+v", readBack, updated3)
 	}
 
-	_ = fmt.Sprint(readBack)
+	// DLP + Data Retention validation failures must return ErrInvalidSecurityPolicy (wrapping ErrConflict).
+	badAction := "drop"
+	if _, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		DLPAction: &badAction,
+	}); !errors.Is(err, store.ErrInvalidSecurityPolicy) || !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("invalid dlpAction err = %v, want ErrInvalidSecurityPolicy", err)
+	}
+	for _, badDays := range []int{-1, 3651} {
+		d := badDays
+		if _, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+			RetentionDays: &d,
+		}); !errors.Is(err, store.ErrInvalidSecurityPolicy) {
+			t.Fatalf("invalid retentionDays=%d err = %v, want ErrInvalidSecurityPolicy", badDays, err)
+		}
+	}
+	tooManyKeywords := make([]string, store.MaxDLPKeywords+1)
+	for i := range tooManyKeywords {
+		tooManyKeywords[i] = fmt.Sprintf("kw-%03d", i)
+	}
+	if _, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		DLPKeywords: &tooManyKeywords,
+	}); !errors.Is(err, store.ErrInvalidSecurityPolicy) {
+		t.Fatalf("101 dlpKeywords err = %v, want ErrInvalidSecurityPolicy", err)
+	}
+	tooLongKeyword := []string{strings.Repeat("密", store.MaxDLPKeywordRunes+1)}
+	if _, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		DLPKeywords: &tooLongKeyword,
+	}); !errors.Is(err, store.ErrInvalidSecurityPolicy) {
+		t.Fatalf("121-rune dlpKeyword err = %v, want ErrInvalidSecurityPolicy", err)
+	}
+
+	// Valid DLP + retention full round-trip (including trim, blank drop, deduplication, and action normalization).
+	dlpOn := true
+	blockPublicFalse := false
+	actionBlock := " BLOCK "
+	days90 := 90
+	rawKeywords := []string{"  绝密  ", "", "   ", "内部机密", "绝密", `/1[3-9]\d{9}/`}
+	dlpSaved, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		DLPEnabled:          &dlpOn,
+		DLPKeywords:         &rawKeywords,
+		DLPAction:           &actionBlock,
+		DLPBlockPublicShare: &blockPublicFalse,
+		RetentionDays:       &days90,
+	})
+	if err != nil {
+		t.Fatalf("save DLP policy: %v", err)
+	}
+	wantKW := []string{"绝密", "内部机密", `/1[3-9]\d{9}/`}
+	if !dlpSaved.DLPEnabled || dlpSaved.DLPAction != store.DLPActionBlock || dlpSaved.DLPBlockPublicShare || dlpSaved.RetentionDays != 90 || strings.Join(dlpSaved.DLPKeywords, "|") != strings.Join(wantKW, "|") {
+		t.Fatalf("unexpected saved DLP policy: %+v", dlpSaved)
+	}
+	// Mutating returned slice must not corrupt store internals.
+	dlpSaved.DLPKeywords[0] = "tampered"
+
+	// Partial update preserves DLP + retention fields and max boundary values (100 keywords, 3650 days).
+	maxKeywords := make([]string, store.MaxDLPKeywords)
+	for i := range maxKeywords {
+		maxKeywords[i] = fmt.Sprintf("rule-%03d", i)
+	}
+	daysMax := store.MaxRetentionDays
+	blockPublicTrue := true
+	dlpBoundary, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, adminGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		DLPKeywords:         &maxKeywords,
+		DLPBlockPublicShare: &blockPublicTrue,
+		RetentionDays:       &daysMax,
+	})
+	if err != nil {
+		t.Fatalf("save boundary DLP policy: %v", err)
+	}
+	if !dlpBoundary.DLPEnabled || dlpBoundary.DLPAction != store.DLPActionBlock || !dlpBoundary.DLPBlockPublicShare || dlpBoundary.RetentionDays != store.MaxRetentionDays || len(dlpBoundary.DLPKeywords) != store.MaxDLPKeywords {
+		t.Fatalf("unexpected boundary DLP policy: %+v", dlpBoundary)
+	}
+
+	// Clearing keywords keeps non-nil empty JSON array [].
+	emptyKW := []string{"  ", ""}
+	daysZero := 0
+	dlpCleared, err := st.UpdateWorkspaceSecurityPolicyGuarded(ctx, ownerGuard, ws.ID, store.WorkspaceSecurityPolicyPatch{
+		DLPKeywords:   &emptyKW,
+		RetentionDays: &daysZero,
+	})
+	if err != nil {
+		t.Fatalf("clear DLP keywords: %v", err)
+	}
+	if dlpCleared.DLPKeywords == nil || len(dlpCleared.DLPKeywords) != 0 || dlpCleared.RetentionDays != 0 {
+		t.Fatalf("expected non-nil empty dlpKeywords & retentionDays=0, got %+v", dlpCleared)
+	}
+	readBack2, err := st.GetWorkspaceSecurityPolicy(ctx, member.ID, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !readBack2.DLPEnabled || readBack2.DLPAction != store.DLPActionBlock || !readBack2.DLPBlockPublicShare || readBack2.DLPKeywords == nil || len(readBack2.DLPKeywords) != 0 || readBack2.RetentionDays != 0 {
+		t.Fatalf("readBack2 DLP mismatch: %+v", readBack2)
+	}
+
+	_ = fmt.Sprint(readBack2)
 }
 
 func TestAuditLogMemory(t *testing.T) {

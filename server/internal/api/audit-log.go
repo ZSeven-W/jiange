@@ -149,6 +149,8 @@ func (s *Server) auditError(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "没有安全审计或策略管理权限")
 	case errors.Is(err, store.ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "not_found", "目标空间不存在")
+	case errors.Is(err, store.ErrInvalidSecurityPolicy):
+		httpx.Error(w, http.StatusBadRequest, "invalid_security_policy", "安全策略参数无效")
 	case errors.Is(err, store.ErrConflict):
 		httpx.Error(w, http.StatusConflict, "audit_conflict", "参数无效或存在冲突")
 	default:
@@ -414,18 +416,27 @@ func (s *Server) putWorkspaceSecurityPolicy(w http.ResponseWriter, r *http.Reque
 	if !httpx.Decode(w, r, &patch) {
 		return
 	}
+	if verr := validateSecurityPolicyPatchAPI(patch); verr != nil {
+		httpx.Error(w, http.StatusBadRequest, verr.code, verr.message)
+		return
+	}
 	policy, err := auditStore.UpdateWorkspaceSecurityPolicyGuarded(r.Context(), guard, wsID, patch)
 	if err != nil {
 		s.auditError(w, r, err)
 		return
 	}
 	s.recordAudit(r, wsID, "org.watermark_update", "workspace", wsID, policy.WatermarkText, map[string]any{
-		"watermarkEnabled":   policy.WatermarkEnabled,
-		"watermarkText":      policy.WatermarkText,
-		"watermarkShowUser":  policy.WatermarkShowUser,
-		"watermarkShowEmail": policy.WatermarkShowEmail,
-		"watermarkShowDate":  policy.WatermarkShowDate,
-		"watermarkOpacity":   policy.WatermarkOpacity,
+		"watermarkEnabled":    policy.WatermarkEnabled,
+		"watermarkText":       policy.WatermarkText,
+		"watermarkShowUser":   policy.WatermarkShowUser,
+		"watermarkShowEmail":  policy.WatermarkShowEmail,
+		"watermarkShowDate":   policy.WatermarkShowDate,
+		"watermarkOpacity":    policy.WatermarkOpacity,
+		"dlpEnabled":          policy.DLPEnabled,
+		"dlpKeywordCount":     len(policy.DLPKeywords),
+		"dlpAction":           policy.DLPAction,
+		"dlpBlockPublicShare": policy.DLPBlockPublicShare,
+		"retentionDays":       policy.RetentionDays,
 	})
 	httpx.JSON(w, http.StatusOK, policy)
 }

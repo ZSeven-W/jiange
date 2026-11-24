@@ -33,6 +33,8 @@ export interface AuditLogPage {
   actions: string[];
 }
 
+export type DlpAction = "warn" | "block";
+
 export interface WorkspaceSecurityPolicy {
   workspaceId: number;
   watermarkEnabled: boolean;
@@ -41,6 +43,11 @@ export interface WorkspaceSecurityPolicy {
   watermarkShowEmail: boolean;
   watermarkShowDate: boolean;
   watermarkOpacity: number;
+  dlpEnabled?: boolean;
+  dlpKeywords?: string[];
+  dlpAction?: DlpAction;
+  dlpBlockPublicShare?: boolean;
+  retentionDays?: number;
   updatedBy: number;
   updatedAt: string;
 }
@@ -52,6 +59,29 @@ export interface WorkspaceSecurityPolicyPatch {
   watermarkShowEmail?: boolean;
   watermarkShowDate?: boolean;
   watermarkOpacity?: number;
+  dlpEnabled?: boolean;
+  dlpKeywords?: string[];
+  dlpAction?: DlpAction;
+  dlpBlockPublicShare?: boolean;
+  retentionDays?: number;
+}
+
+export interface DlpMatch {
+  rule: string;
+  match: string;
+  snippet: string;
+}
+
+export interface DlpCheckPayload {
+  text: string;
+  keywords?: string[];
+  action?: DlpAction;
+}
+
+export interface DlpCheckResult {
+  matched: boolean;
+  action: DlpAction;
+  matches: DlpMatch[];
 }
 
 async function enterpriseRequest<T>(
@@ -142,6 +172,15 @@ export const enterpriseApi = {
       "PUT",
       `/api/workspaces/${wsId}/security-policy`,
       patch,
+      undefined,
+      userHeaders(userId),
+    ),
+
+  checkDlp: (wsId: number, payload: DlpCheckPayload, userId?: number) =>
+    enterpriseRequest<DlpCheckResult>(
+      "POST",
+      `/api/workspaces/${wsId}/dlp/check`,
+      payload,
       undefined,
       userHeaders(userId),
     ),

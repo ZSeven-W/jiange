@@ -16,6 +16,7 @@ export default defineConfig({
       "/api/sheets": { target: "http://localhost:8080", ws: true },
       "/api/slides": { target: "http://localhost:8080", ws: true },
       "/api": "http://localhost:8080",
+      "/scim": "http://localhost:8080",
       "/healthz": "http://localhost:8080",
     },
   },

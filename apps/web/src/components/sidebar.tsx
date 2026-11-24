@@ -4,7 +4,8 @@ import { OfflineCacheButton, PwaInstallButton } from "./offline-banner";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me } from "@/lib/api";
+import { ApiError, baseApi, docsApi, driveApi, extrasApi, type DocMeta, type Me, type Workspace } from "@/lib/api";
+import { useActiveWorkspace, workspacesApi } from "@/lib/workspace-switcher";
 import { go, nodeHref, type Route } from "@/lib/route";
 import { cn } from "@/lib/utils";
 import { ask, askText } from "@/components/ui/ask";
@@ -149,8 +150,53 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
     };
   }, [menu]);
   const [open, setOpen] = useState<Record<number, boolean>>({});
+  const [createdWorkspaces, setCreatedWorkspaces] = useState<Workspace[]>([]);
+  const [creatingWorkspace, setCreatingWorkspace] = useState(false);
+  const [wsError, setWsError] = useState("");
+  useEffect(() => {
+    setCreatedWorkspaces([]);
+    setWsError("");
+  }, [me.user.id]);
+  const workspaces = useMemo(() => {
+    const seen = new Set(me.workspaces.map((w) => w.id));
+    return [...me.workspaces, ...createdWorkspaces.filter((w) => !seen.has(w.id))];
+  }, [me.workspaces, createdWorkspaces]);
+  const switcherMe = useMemo(() => ({ user: me.user, workspaces }), [me.user, workspaces]);
+  const { activeWorkspace, activeWorkspaceId, setActiveWorkspace } = useActiveWorkspace(switcherMe);
+  const invalidateWorkspaceQueries = useCallback(() => {
+    for (const key of [["docs"], ["drive"], ["drive-nav"], ["pins"], ["favorites"], ["recent"], ["search"], ["shared"], ["wiki-spaces"], ["org"], ["workspaces"]]) {
+      void qc.invalidateQueries({ queryKey: key });
+    }
+  }, [qc]);
+  const handleSwitchWorkspace = (wsId: number) => {
+    setWsError("");
+    setActiveWorkspace(wsId);
+    setMenu(false);
+    invalidateWorkspaceQueries();
+  };
+  const handleCreateWorkspace = async () => {
+    if (creatingWorkspace) return;
+    setMenu(false);
+    setWsError("");
+    const raw = await askText(t("新建工作空间"), t("空间名称"));
+    const name = raw?.trim();
+    if (!name) return;
+    setCreatingWorkspace(true);
+    try {
+      const created = await workspacesApi.create(name);
+      setCreatedWorkspaces((prev) => (prev.some((w) => w.id === created.id) ? prev : [...prev, created]));
+      setActiveWorkspace(created.id);
+      invalidateWorkspaceQueries();
+      onWorkspacesChanged?.();
+    } catch (err) {
+      setWsError(err instanceof ApiError && err.message ? err.message : t("创建工作空间失败，请稍后重试"));
+    } finally {
+      setCreatingWorkspace(false);
+    }
+  };
   const create = useMutation({
-    mutationFn: (parent: Pick<DocMeta, "id" | "workspaceId"> | null = null) => docsApi.create("", parent?.id ?? null, parent?.workspaceId),
+    mutationFn: (parent: Pick<DocMeta, "id" | "workspaceId"> | null = null) =>
+      docsApi.create("", parent?.id ?? null, parent?.workspaceId ?? activeWorkspaceId ?? undefined),
     onSuccess: (d) => {
       setSection("documents", true);
       if (d.parentId) setOpen((o) => ({ ...o, [d.parentId!]: true }));
@@ -185,8 +231,10 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       }
     },
   });
-  const ws = me.workspaces[0];
-  const nonWikiDocs = useMemo(() => (docs.data ?? []).filter((d) => !d.wikiSpaceId), [docs.data]);
+  const nonWikiDocs = useMemo(
+    () => (docs.data ?? []).filter((d) => !d.wikiSpaceId && (activeWorkspaceId == null || d.workspaceId === activeWorkspaceId)),
+    [docs.data, activeWorkspaceId],
+  );
   const kids = useMemo(() => {
     const m = new Map<number | null, DocMeta[]>();
     const ids = new Set(nonWikiDocs.map((d) => d.id));
@@ -359,9 +407,39 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
       </div>
       <WorkspaceInvitations userId={me.user.id} onJoined={onWorkspacesChanged} />
       <div ref={accountMenu} className="relative border-t px-3 py-2">
+        {wsError && <p role="alert" className="mb-1 px-2 text-xs text-destructive">{wsError}</p>}
         {menu && <div className="absolute bottom-14 left-3 right-3 z-20 rounded-lg border bg-surface p-1 shadow-lg">
           <div className="px-3 py-2 text-xs text-subtle">{me.user.email}</div>
-          {me.workspaces.map((w) => <div key={w.id} className="flex items-center justify-between rounded-md bg-accent px-3 py-1.5 text-[13px] text-accent-foreground">{w.name} <span>✓</span></div>)}
+          <div className="max-h-48 space-y-0.5 overflow-y-auto" role="group" aria-label={t("工作空间列表")}>
+            {workspaces.map((w) => {
+              const isActive = w.id === activeWorkspaceId;
+              return (
+                <button
+                  key={w.id}
+                  type="button"
+                  data-switch-workspace={w.id}
+                  aria-pressed={isActive}
+                  onClick={() => handleSwitchWorkspace(w.id)}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 rounded-md px-3 py-1.5 text-left text-[13px] transition-colors",
+                    isActive ? "bg-accent font-medium text-accent-foreground" : "text-foreground hover:bg-hover",
+                  )}
+                >
+                  <span className="min-w-0 truncate">{w.name}</span>
+                  {isActive && <span className="shrink-0 text-primary" aria-hidden="true">✓</span>}
+                </button>
+              );
+            })}
+          </div>
+          <button
+            type="button"
+            data-create-workspace-btn
+            disabled={creatingWorkspace}
+            onClick={() => void handleCreateWorkspace()}
+            className="mt-1 flex w-full items-center gap-1.5 rounded-md px-3 py-1.5 text-left text-[13px] font-medium text-primary hover:bg-hover disabled:opacity-50"
+          >
+            <span>+ {t("新建工作空间")}</span>
+          </button>
           <button className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => { setMenu(false); openAISettings(); }} data-open-ai-settings><Sparkles size={14} className="text-primary" />{t("AI 设置")}</button>
           <button className="mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-[13px] hover:bg-hover" onClick={() => { setMenu(false); openAccountSecurity("mfa"); }} data-open-account-security><ShieldCheck size={14} className="text-primary" />{t("账号安全与令牌")}</button>
           <div className="mt-1 px-1" onClick={() => setMenu(false)}><OfflineCacheButton compact /></div>
@@ -371,7 +449,7 @@ export function Sidebar({ me, route, onLogout, onCollapse, onSearchRegistrar, ca
         <div className="flex items-center gap-1 rounded-md px-1 py-1.5 hover:bg-hover">
           <button onClick={() => setMenu((v) => !v)} aria-label={t("账号与空间")} aria-expanded={menu} className="flex min-w-0 flex-1 items-center gap-2 text-left">
             <Avatar name={me.user.name} color={colorFor(me.user.id - 1)} size={26} />
-            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium leading-tight">{me.user.name}</span><span className="block truncate text-[11px] leading-tight text-subtle">{ws?.name ?? t("我的空间")}</span></span>
+            <span className="min-w-0 flex-1"><span className="block truncate text-[13px] font-medium leading-tight">{me.user.name}</span><span className="block truncate text-[11px] leading-tight text-subtle" data-active-workspace-name>{activeWorkspace?.name ?? t("我的空间")}</span></span>
             <Chevron className="shrink-0 text-subtle" />
           </button>
           <div className="flex shrink-0 items-center gap-0.5">

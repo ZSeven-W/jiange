@@ -63,6 +63,9 @@ func (s *Server) putLinkAtRevision(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusServiceUnavailable, "unavailable", "服务暂不支持安全修改链接权限")
 		return
 	}
+	if !s.enforceDocShareDLP(w, r, d, in.Role) {
+		return
+	}
 	candidate := ""
 	if in.Role != "none" {
 		var err error

@@ -20,6 +20,11 @@ const samplePolicy: WorkspaceSecurityPolicy = {
   watermarkShowEmail: true,
   watermarkShowDate: true,
   watermarkOpacity: 0.1,
+  dlpEnabled: true,
+  dlpKeywords: ["绝密", "/\\b1[3-9]\\d{9}\\b/"],
+  dlpAction: "block",
+  dlpBlockPublicShare: true,
+  retentionDays: 180,
   updatedBy: 1,
   updatedAt: "2026-11-24T08:00:00Z",
 };
@@ -168,9 +173,81 @@ describe("OrgAuditPanel", () => {
     expect(html).toContain("全套件安全水印策略");
     expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-watermark-save=""/);
     expect(html).toContain("仅空间所有者或管理员可修改安全水印策略。");
+    expect(html).toContain('data-dlp-policy-card=""');
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-dlp-save=""/);
+    expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-dlp-test-btn=""/);
+    expect(html).toContain("仅空间所有者或管理员可修改企业 DLP 与保留策略。");
     expect(html).toContain('data-audit-forbidden=""');
     expect(html).not.toContain('data-audit-table=""');
     expect(html).not.toContain('data-audit-export=""');
+  });
+
+  it("renders Enterprise DLP & Retention card with presets, rule chips, FeishuSelect controls, live test box, and zero native select", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(workspaceSecurityPolicyQueryKey(10), samplePolicy);
+    qc.setQueryData(
+      auditLogsQueryKey(10, 1, { action: "", resourceType: "", q: "", offset: 0 }),
+      sampleAuditPage,
+    );
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <OrgAuditPanel
+          workspaceId={10}
+          userId={1}
+          userName="林晓"
+          userEmail="linxiao@corp.com"
+          canAdmin={true}
+        />
+      </QueryClientProvider>,
+    );
+
+    // Strictly zero native <select> elements anywhere in the panel
+    expect(html).not.toMatch(/<select[\s>]/i);
+
+    // DLP card container, header & save button
+    expect(html).toContain('data-dlp-policy-card=""');
+    expect(html).toContain("数据防泄漏（DLP）与保留策略");
+    expect(html).toContain("保存安全策略");
+    const dlpSaveBtn = html.match(/<button[^>]*data-dlp-save=""[^>]*>/)?.[0] ?? "";
+    expect(dlpSaveBtn).toContain('data-dlp-save=""');
+    expect(dlpSaveBtn).not.toContain(' disabled=""');
+
+    // Toggle switch
+    expect(html).toContain("启用企业 DLP 敏感词策略");
+    const dlpToggle = html.match(/<button[^>]*data-dlp-enabled-toggle=""[^>]*>/)?.[0] ?? "";
+    expect(dlpToggle).toContain('role="switch"');
+    expect(dlpToggle).toContain('aria-checked="true"');
+
+    // Rule input, add button, quick presets & rule chips
+    expect(html).toContain('data-dlp-rule-input=""');
+    expect(html).toContain("添加规则");
+    expect(html).toContain('data-dlp-preset="top-secret"');
+    expect(html).toContain('data-dlp-preset="confidential"');
+    expect(html).toContain('data-dlp-preset="pii-regex"');
+    expect(html).toContain("绝密");
+    expect(html).toContain("内部机密");
+    expect(html).toContain("身份证/手机号正则");
+    expect(html).toContain('data-dlp-rule-chip="绝密"');
+    expect(html).toContain('data-dlp-rule-chip="/\\b1[3-9]\\d{9}\\b/"');
+
+    // FeishuSelect controls for DLP action & retention days (no native <select>)
+    expect(html).toContain("命中处置动作");
+    expect(html).toContain("data-dlp-action-select");
+    expect(html).toContain("仅警告并记录审计");
+    expect(html).toContain("拦截对外公开分享");
+    expect(html).toContain("对外公开分享时自动扫描文档内容");
+    expect(html).toContain("回收站与审计数据保留周期");
+    expect(html).toContain("data-retention-days-select");
+    expect(html).toContain("永久保留");
+    expect(html).toContain("180 天");
+    expect(html).toContain("365 天");
+
+    // Live test sandbox
+    expect(html).toContain("规则实测");
+    expect(html).toContain('data-dlp-test-input=""');
+    expect(html).toContain('data-dlp-test-btn=""');
+    expect(html).toContain("立即检测");
   });
 
   it("localizes known audit action and resource labels and preserves unknown ones", () => {
@@ -179,6 +256,8 @@ describe("OrgAuditPanel", () => {
     expect(formatAuditActionLabel("doc.create")).toBe("创建文档");
     expect(formatAuditActionLabel("doc.delete")).toBe("删除文档");
     expect(formatAuditActionLabel("share.update")).toBe("变更共享权限");
+    expect(formatAuditActionLabel("dlp.share_blocked")).toBe("DLP 拦截公开分享");
+    expect(formatAuditActionLabel("dlp.share_warned")).toBe("DLP 敏感词告警");
     expect(formatAuditActionLabel("org.member_update")).toBe("变更成员角色");
     expect(formatAuditActionLabel("org.watermark_update")).toBe("变更水印策略");
     expect(formatAuditActionLabel("org.sso_update")).toBe("变更 SSO 配置");
@@ -213,6 +292,19 @@ describe("OrgAuditPanel", () => {
           },
         });
       }
+      if (url.includes("/dlp/check") && init?.method === "POST") {
+        return new Response(
+          JSON.stringify({
+            matched: true,
+            action: "block",
+            matches: [{ rule: "绝密", match: "绝密", snippet: "这是一份绝密报告" }],
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      }
       if (url.includes("/security-policy") && init?.method === "PUT") {
         return new Response(JSON.stringify(samplePolicy), {
           status: 200,
@@ -242,14 +334,46 @@ describe("OrgAuditPanel", () => {
     expect(calls[0].url).toContain("resourceType=doc");
     expect(calls[0].headers?.["X-Jiange-User-Id"]).toBe("1");
 
-    const updated = await enterpriseApi.updateSecurityPolicy(10, { watermarkEnabled: true, watermarkOpacity: 0.1 }, 1);
+    const updated = await enterpriseApi.updateSecurityPolicy(
+      10,
+      {
+        watermarkEnabled: true,
+        watermarkOpacity: 0.1,
+        dlpEnabled: true,
+        dlpKeywords: ["绝密"],
+        dlpAction: "block",
+        dlpBlockPublicShare: true,
+        retentionDays: 180,
+      },
+      1,
+    );
     expect(updated.watermarkEnabled).toBe(true);
+    expect(updated.dlpEnabled).toBe(true);
+    expect(updated.retentionDays).toBe(180);
     expect(calls[1].method).toBe("PUT");
-    expect(JSON.parse(calls[1].body!)).toEqual({ watermarkEnabled: true, watermarkOpacity: 0.1 });
+    expect(JSON.parse(calls[1].body!)).toEqual({
+      watermarkEnabled: true,
+      watermarkOpacity: 0.1,
+      dlpEnabled: true,
+      dlpKeywords: ["绝密"],
+      dlpAction: "block",
+      dlpBlockPublicShare: true,
+      retentionDays: 180,
+    });
+
+    const dlpCheck = await enterpriseApi.checkDlp(
+      10,
+      { text: "这是一份绝密报告", keywords: ["绝密"], action: "block" },
+      1,
+    );
+    expect(dlpCheck.matched).toBe(true);
+    expect(dlpCheck.matches).toHaveLength(1);
+    expect(calls[2].url).toBe("/api/workspaces/10/dlp/check");
+    expect(calls[2].method).toBe("POST");
 
     const exported = await enterpriseApi.exportAuditLogsCsv(10, { action: "auth.login" }, 1);
     expect(exported.filename).toBe("audit-logs-ws-10.csv");
-    expect(calls[2].url).toBe("/api/workspaces/10/audit-logs/export?action=auth.login");
+    expect(calls[3].url).toBe("/api/workspaces/10/audit-logs/export?action=auth.login");
 
     await expect(enterpriseApi.getSecurityPolicy(99, 1)).rejects.toBeInstanceOf(ApiError);
   });

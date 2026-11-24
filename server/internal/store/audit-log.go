@@ -25,6 +25,13 @@ const (
 	MaxWatermarkOpacity     = 0.25
 	MaxWatermarkTextRunes   = 80
 
+	DLPActionWarn      = "warn"
+	DLPActionBlock     = "block"
+	MaxDLPKeywords     = 100
+	MaxDLPKeywordRunes = 120
+	MinRetentionDays   = 0
+	MaxRetentionDays   = 3650
+
 	maxAuditActionRunes        = 100
 	maxAuditActorNameRunes     = 120
 	maxAuditActorEmailRunes    = 320
@@ -34,6 +41,9 @@ const (
 	maxAuditUserAgentRunes     = 512
 	maxAuditDetailBytes        = 16384
 )
+
+// ErrInvalidSecurityPolicy reports invalid DLP or data-retention policy values.
+var ErrInvalidSecurityPolicy = fmt.Errorf("store: invalid workspace security policy: %w", ErrConflict)
 
 // memEnterprise holds in-memory audit logs and workspace security policies for Memory store.
 type memEnterprise struct {
@@ -83,27 +93,37 @@ type AuditLogPage struct {
 }
 
 // WorkspaceSecurityPolicy configures enterprise suite-wide document security
-// controls such as diagonal user watermarks.
+// controls such as diagonal user watermarks, DLP sensitive-word rules, and data retention.
 type WorkspaceSecurityPolicy struct {
-	WorkspaceID        int64     `json:"workspaceId"`
-	WatermarkEnabled   bool      `json:"watermarkEnabled"`
-	WatermarkText      string    `json:"watermarkText"`
-	WatermarkShowUser  bool      `json:"watermarkShowUser"`
-	WatermarkShowEmail bool      `json:"watermarkShowEmail"`
-	WatermarkShowDate  bool      `json:"watermarkShowDate"`
-	WatermarkOpacity   float64   `json:"watermarkOpacity"`
-	UpdatedBy          int64     `json:"updatedBy"`
-	UpdatedAt          time.Time `json:"updatedAt"`
+	WorkspaceID         int64     `json:"workspaceId"`
+	WatermarkEnabled    bool      `json:"watermarkEnabled"`
+	WatermarkText       string    `json:"watermarkText"`
+	WatermarkShowUser   bool      `json:"watermarkShowUser"`
+	WatermarkShowEmail  bool      `json:"watermarkShowEmail"`
+	WatermarkShowDate   bool      `json:"watermarkShowDate"`
+	WatermarkOpacity    float64   `json:"watermarkOpacity"`
+	DLPEnabled          bool      `json:"dlpEnabled"`
+	DLPKeywords         []string  `json:"dlpKeywords"`
+	DLPAction           string    `json:"dlpAction"`
+	DLPBlockPublicShare bool      `json:"dlpBlockPublicShare"`
+	RetentionDays       int       `json:"retentionDays"`
+	UpdatedBy           int64     `json:"updatedBy"`
+	UpdatedAt           time.Time `json:"updatedAt"`
 }
 
 // WorkspaceSecurityPolicyPatch partially updates a workspace's security policy.
 type WorkspaceSecurityPolicyPatch struct {
-	WatermarkEnabled   *bool    `json:"watermarkEnabled,omitempty"`
-	WatermarkText      *string  `json:"watermarkText,omitempty"`
-	WatermarkShowUser  *bool    `json:"watermarkShowUser,omitempty"`
-	WatermarkShowEmail *bool    `json:"watermarkShowEmail,omitempty"`
-	WatermarkShowDate  *bool    `json:"watermarkShowDate,omitempty"`
-	WatermarkOpacity   *float64 `json:"watermarkOpacity,omitempty"`
+	WatermarkEnabled    *bool     `json:"watermarkEnabled,omitempty"`
+	WatermarkText       *string   `json:"watermarkText,omitempty"`
+	WatermarkShowUser   *bool     `json:"watermarkShowUser,omitempty"`
+	WatermarkShowEmail  *bool     `json:"watermarkShowEmail,omitempty"`
+	WatermarkShowDate   *bool     `json:"watermarkShowDate,omitempty"`
+	WatermarkOpacity    *float64  `json:"watermarkOpacity,omitempty"`
+	DLPEnabled          *bool     `json:"dlpEnabled,omitempty"`
+	DLPKeywords         *[]string `json:"dlpKeywords,omitempty"`
+	DLPAction           *string   `json:"dlpAction,omitempty"`
+	DLPBlockPublicShare *bool     `json:"dlpBlockPublicShare,omitempty"`
+	RetentionDays       *int      `json:"retentionDays,omitempty"`
 }
 
 // AuditLogStore persists enterprise security audit logs and workspace security policies.
@@ -123,14 +143,75 @@ var (
 // has not yet customized its security settings.
 func DefaultWorkspaceSecurityPolicy(wsID int64) WorkspaceSecurityPolicy {
 	return WorkspaceSecurityPolicy{
-		WorkspaceID:        wsID,
-		WatermarkEnabled:   false,
-		WatermarkText:      "",
-		WatermarkShowUser:  true,
-		WatermarkShowEmail: true,
-		WatermarkShowDate:  true,
-		WatermarkOpacity:   DefaultWatermarkOpacity,
+		WorkspaceID:         wsID,
+		WatermarkEnabled:    false,
+		WatermarkText:       "",
+		WatermarkShowUser:   true,
+		WatermarkShowEmail:  true,
+		WatermarkShowDate:   true,
+		WatermarkOpacity:    DefaultWatermarkOpacity,
+		DLPEnabled:          false,
+		DLPKeywords:         []string{},
+		DLPAction:           DLPActionWarn,
+		DLPBlockPublicShare: true,
+		RetentionDays:       0,
 	}
+}
+
+// NormalizeDLPAction validates and normalizes a DLP action string ("warn" | "block").
+func NormalizeDLPAction(raw string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case DLPActionWarn:
+		return DLPActionWarn, true
+	case DLPActionBlock:
+		return DLPActionBlock, true
+	default:
+		return "", false
+	}
+}
+
+// NormalizeDLPKeywords trims, drops blanks, deduplicates preserving order, and enforces
+// rule count (max 100) and per-rule rune length (1..120). Always returns a non-nil slice.
+func NormalizeDLPKeywords(raw []string) ([]string, error) {
+	out := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, entry := range raw {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		if utf8.RuneCountInString(trimmed) > MaxDLPKeywordRunes {
+			return nil, ErrInvalidSecurityPolicy
+		}
+		if _, dup := seen[trimmed]; dup {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, trimmed)
+		if len(out) > MaxDLPKeywords {
+			return nil, ErrInvalidSecurityPolicy
+		}
+	}
+	return out, nil
+}
+
+// ValidRetentionDays reports whether days is within [MinRetentionDays, MaxRetentionDays].
+func ValidRetentionDays(days int) bool {
+	return days >= MinRetentionDays && days <= MaxRetentionDays
+}
+
+func cloneSecurityPolicy(p WorkspaceSecurityPolicy) WorkspaceSecurityPolicy {
+	if len(p.DLPKeywords) == 0 {
+		p.DLPKeywords = []string{}
+	} else {
+		cp := make([]string, len(p.DLPKeywords))
+		copy(cp, p.DLPKeywords)
+		p.DLPKeywords = cp
+	}
+	if p.DLPAction == "" {
+		p.DLPAction = DLPActionWarn
+	}
+	return p
 }
 
 func clampAuditRunes(raw string, maxRunes int) string {
@@ -229,8 +310,8 @@ func normalizeAuditLimitOffset(filter AuditLogFilter) (int, int) {
 	return limit, offset
 }
 
-func applySecurityPolicyPatch(base WorkspaceSecurityPolicy, patch WorkspaceSecurityPolicyPatch, updatedBy int64, now time.Time) WorkspaceSecurityPolicy {
-	out := base
+func applySecurityPolicyPatch(base WorkspaceSecurityPolicy, patch WorkspaceSecurityPolicyPatch, updatedBy int64, now time.Time) (WorkspaceSecurityPolicy, error) {
+	out := cloneSecurityPolicy(base)
 	if patch.WatermarkEnabled != nil {
 		out.WatermarkEnabled = *patch.WatermarkEnabled
 	}
@@ -251,9 +332,35 @@ func applySecurityPolicyPatch(base WorkspaceSecurityPolicy, patch WorkspaceSecur
 	} else {
 		out.WatermarkOpacity = clampWatermarkOpacity(out.WatermarkOpacity)
 	}
+	if patch.DLPEnabled != nil {
+		out.DLPEnabled = *patch.DLPEnabled
+	}
+	if patch.DLPKeywords != nil {
+		clean, err := NormalizeDLPKeywords(*patch.DLPKeywords)
+		if err != nil {
+			return WorkspaceSecurityPolicy{}, err
+		}
+		out.DLPKeywords = clean
+	}
+	if patch.DLPAction != nil {
+		act, ok := NormalizeDLPAction(*patch.DLPAction)
+		if !ok {
+			return WorkspaceSecurityPolicy{}, ErrInvalidSecurityPolicy
+		}
+		out.DLPAction = act
+	}
+	if patch.DLPBlockPublicShare != nil {
+		out.DLPBlockPublicShare = *patch.DLPBlockPublicShare
+	}
+	if patch.RetentionDays != nil {
+		if !ValidRetentionDays(*patch.RetentionDays) {
+			return WorkspaceSecurityPolicy{}, ErrInvalidSecurityPolicy
+		}
+		out.RetentionDays = *patch.RetentionDays
+	}
 	out.UpdatedBy = updatedBy
 	out.UpdatedAt = now.UTC()
-	return out
+	return cloneSecurityPolicy(out), nil
 }
 
 func nullablePositiveID(id int64) any {
@@ -393,7 +500,24 @@ func (m *Memory) GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID in
 		return WorkspaceSecurityPolicy{}, ErrForbidden
 	}
 	if p, ok := m.enterprise.policies[wsID]; ok {
-		return p, nil
+		return cloneSecurityPolicy(p), nil
+	}
+	return DefaultWorkspaceSecurityPolicy(wsID), nil
+}
+
+// GetWorkspaceSecurityPolicySystem loads a workspace's security policy without
+// requiring workspace membership (used by server-side enforcement hooks such as DLP).
+func (m *Memory) GetWorkspaceSecurityPolicySystem(ctx context.Context, wsID int64) (WorkspaceSecurityPolicy, error) {
+	if err := ctx.Err(); err != nil {
+		return WorkspaceSecurityPolicy{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if wsID <= 0 || int(wsID) > len(m.workspaces) {
+		return WorkspaceSecurityPolicy{}, ErrNotFound
+	}
+	if p, ok := m.enterprise.policies[wsID]; ok {
+		return cloneSecurityPolicy(p), nil
 	}
 	return DefaultWorkspaceSecurityPolicy(wsID), nil
 }
@@ -412,12 +536,15 @@ func (m *Memory) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, guard
 	if !ok {
 		cur = DefaultWorkspaceSecurityPolicy(wsID)
 	}
-	next := applySecurityPolicyPatch(cur, patch, guard.UserID, guard.currentTime())
+	next, err := applySecurityPolicyPatch(cur, patch, guard.UserID, guard.currentTime())
+	if err != nil {
+		return WorkspaceSecurityPolicy{}, err
+	}
 	if err := driveMemoryEnd(ctx, guard, expires); err != nil {
 		return WorkspaceSecurityPolicy{}, err
 	}
-	m.enterprise.policies[wsID] = next
-	return next, nil
+	m.enterprise.policies[wsID] = cloneSecurityPolicy(next)
+	return cloneSecurityPolicy(next), nil
 }
 
 // --- Postgres implementation ---
@@ -570,11 +697,14 @@ func (p *Postgres) GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID 
 		var pol WorkspaceSecurityPolicy
 		e := tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
+			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
 			COALESCE(updated_by, 0), updated_at
 			FROM workspace_security_policies WHERE workspace_id=$1`, wsID).Scan(
 			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
 			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
-			&pol.WatermarkOpacity, &pol.UpdatedBy, &pol.UpdatedAt,
+			&pol.WatermarkOpacity,
+			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays,
+			&pol.UpdatedBy, &pol.UpdatedAt,
 		)
 		if errors.Is(e, pgx.ErrNoRows) {
 			out = DefaultWorkspaceSecurityPolicy(wsID)
@@ -583,7 +713,46 @@ func (p *Postgres) GetWorkspaceSecurityPolicy(ctx context.Context, userID, wsID 
 		if e != nil {
 			return e
 		}
-		out = pol
+		out = cloneSecurityPolicy(pol)
+		return nil
+	})
+	return out, err
+}
+
+// GetWorkspaceSecurityPolicySystem loads a workspace's security policy without
+// requiring workspace membership (used by server-side enforcement hooks such as DLP).
+func (p *Postgres) GetWorkspaceSecurityPolicySystem(ctx context.Context, wsID int64) (out WorkspaceSecurityPolicy, err error) {
+	if wsID <= 0 {
+		return out, ErrNotFound
+	}
+	err = pgx.BeginFunc(ctx, p.Pool, func(tx pgx.Tx) error {
+		var exists int
+		if e := tx.QueryRow(ctx, `SELECT 1 FROM workspaces WHERE id=$1`, wsID).Scan(&exists); e != nil {
+			if errors.Is(e, pgx.ErrNoRows) {
+				return ErrNotFound
+			}
+			return e
+		}
+		var pol WorkspaceSecurityPolicy
+		e := tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
+			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
+			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
+			COALESCE(updated_by, 0), updated_at
+			FROM workspace_security_policies WHERE workspace_id=$1`, wsID).Scan(
+			&pol.WorkspaceID, &pol.WatermarkEnabled, &pol.WatermarkText,
+			&pol.WatermarkShowUser, &pol.WatermarkShowEmail, &pol.WatermarkShowDate,
+			&pol.WatermarkOpacity,
+			&pol.DLPEnabled, &pol.DLPKeywords, &pol.DLPAction, &pol.DLPBlockPublicShare, &pol.RetentionDays,
+			&pol.UpdatedBy, &pol.UpdatedAt,
+		)
+		if errors.Is(e, pgx.ErrNoRows) {
+			out = DefaultWorkspaceSecurityPolicy(wsID)
+			return nil
+		}
+		if e != nil {
+			return e
+		}
+		out = cloneSecurityPolicy(pol)
 		return nil
 	})
 	return out, err
@@ -601,34 +770,47 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 		cur := DefaultWorkspaceSecurityPolicy(wsID)
 		e = tx.QueryRow(ctx, `SELECT workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date, watermark_opacity,
+			dlp_enabled, dlp_keywords, dlp_action, dlp_block_public_share, retention_days,
 			COALESCE(updated_by, 0), updated_at
 			FROM workspace_security_policies WHERE workspace_id=$1 FOR UPDATE`, wsID).Scan(
 			&cur.WorkspaceID, &cur.WatermarkEnabled, &cur.WatermarkText,
 			&cur.WatermarkShowUser, &cur.WatermarkShowEmail, &cur.WatermarkShowDate,
-			&cur.WatermarkOpacity, &cur.UpdatedBy, &cur.UpdatedAt,
+			&cur.WatermarkOpacity,
+			&cur.DLPEnabled, &cur.DLPKeywords, &cur.DLPAction, &cur.DLPBlockPublicShare, &cur.RetentionDays,
+			&cur.UpdatedBy, &cur.UpdatedAt,
 		)
 		if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 			return e
 		}
 
-		next := applySecurityPolicyPatch(cur, patch, guard.UserID, guard.currentTime())
+		next, e := applySecurityPolicyPatch(cur, patch, guard.UserID, guard.currentTime())
+		if e != nil {
+			return e
+		}
 		e = tx.QueryRow(ctx, `INSERT INTO workspace_security_policies (
 			workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date,
-			watermark_opacity, updated_by, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			watermark_opacity, dlp_enabled, dlp_keywords, dlp_action,
+			dlp_block_public_share, retention_days, updated_by, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 		ON CONFLICT (workspace_id) DO UPDATE SET
-			watermark_enabled    = EXCLUDED.watermark_enabled,
-			watermark_text       = EXCLUDED.watermark_text,
-			watermark_show_user  = EXCLUDED.watermark_show_user,
-			watermark_show_email = EXCLUDED.watermark_show_email,
-			watermark_show_date  = EXCLUDED.watermark_show_date,
-			watermark_opacity    = EXCLUDED.watermark_opacity,
-			updated_by           = EXCLUDED.updated_by,
-			updated_at           = EXCLUDED.updated_at
+			watermark_enabled      = EXCLUDED.watermark_enabled,
+			watermark_text         = EXCLUDED.watermark_text,
+			watermark_show_user    = EXCLUDED.watermark_show_user,
+			watermark_show_email   = EXCLUDED.watermark_show_email,
+			watermark_show_date    = EXCLUDED.watermark_show_date,
+			watermark_opacity      = EXCLUDED.watermark_opacity,
+			dlp_enabled            = EXCLUDED.dlp_enabled,
+			dlp_keywords           = EXCLUDED.dlp_keywords,
+			dlp_action             = EXCLUDED.dlp_action,
+			dlp_block_public_share = EXCLUDED.dlp_block_public_share,
+			retention_days         = EXCLUDED.retention_days,
+			updated_by             = EXCLUDED.updated_by,
+			updated_at             = EXCLUDED.updated_at
 		RETURNING workspace_id, watermark_enabled, watermark_text,
 			watermark_show_user, watermark_show_email, watermark_show_date,
-			watermark_opacity, COALESCE(updated_by, 0), updated_at`,
+			watermark_opacity, dlp_enabled, dlp_keywords, dlp_action,
+			dlp_block_public_share, retention_days, COALESCE(updated_by, 0), updated_at`,
 			next.WorkspaceID,
 			next.WatermarkEnabled,
 			next.WatermarkText,
@@ -636,16 +818,24 @@ func (p *Postgres) UpdateWorkspaceSecurityPolicyGuarded(ctx context.Context, gua
 			next.WatermarkShowEmail,
 			next.WatermarkShowDate,
 			next.WatermarkOpacity,
+			next.DLPEnabled,
+			next.DLPKeywords,
+			next.DLPAction,
+			next.DLPBlockPublicShare,
+			next.RetentionDays,
 			nullablePositiveID(next.UpdatedBy),
 			next.UpdatedAt,
 		).Scan(
 			&out.WorkspaceID, &out.WatermarkEnabled, &out.WatermarkText,
 			&out.WatermarkShowUser, &out.WatermarkShowEmail, &out.WatermarkShowDate,
-			&out.WatermarkOpacity, &out.UpdatedBy, &out.UpdatedAt,
+			&out.WatermarkOpacity,
+			&out.DLPEnabled, &out.DLPKeywords, &out.DLPAction, &out.DLPBlockPublicShare, &out.RetentionDays,
+			&out.UpdatedBy, &out.UpdatedAt,
 		)
 		if e != nil {
 			return e
 		}
+		out = cloneSecurityPolicy(out)
 		return drivePGEnd(ctx, guard, expires)
 	})
 	return out, orgPGError(err)

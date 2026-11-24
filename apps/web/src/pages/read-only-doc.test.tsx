@@ -229,4 +229,62 @@ describe("read-only document snapshots", () => {
     expect(html).not.toContain("javascript:");
     expect(html).toContain("图片不可用或需要登录：危险图");
   });
+
+  it("renders inline rich preview triggers for previewable attachments on public links and version previews", () => {
+    const previewableFormats = [
+      { id: "1:1", fileId: "101", name: "方案.pdf", mime: "application/pdf" },
+      { id: "1:2", fileId: "102", name: "需求.docx", mime: "application/octet-stream" },
+      { id: "1:3", fileId: "103", name: "预算.xlsx", mime: "application/octet-stream" },
+      { id: "1:4", fileId: "104", name: "汇报.pptx", mime: "application/octet-stream" },
+      { id: "1:5", fileId: "105", name: "说明.md", mime: "text/markdown" },
+      { id: "1:6", fileId: "106", name: "数据.csv", mime: "text/csv" },
+      { id: "1:7", fileId: "107", name: "脚本.ts", mime: "application/octet-stream" },
+      { id: "1:8", fileId: "108", name: "演示.mp4", mime: "video/mp4" },
+      { id: "1:9", fileId: "109", name: "录音.mp3", mime: "audio/mpeg" },
+      { id: "1:10", fileId: "110", name: "海报.png", mime: "image/png" },
+    ];
+    const view: DocView = {
+      blocks: [
+        ...previewableFormats.map((f) => b(f.id, "file", "", { fileId: f.fileId, name: f.name, mime: f.mime, size: "2048" })),
+        b("1:11", "file", "", { fileId: "111", name: "归档.zip", mime: "application/zip", size: "4096" }),
+        b("1:12", "file", "", { fileId: "../bad", name: "非法.pdf", mime: "application/pdf", size: "512" }),
+      ],
+    };
+
+    const publicHtml = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="share-tok" allowCopy={false} />);
+    expect((publicHtml.match(/data-public-file-preview="true"/g) ?? [])).toHaveLength(previewableFormats.length);
+    expect((publicHtml.match(/在线预览/g) ?? [])).toHaveLength(previewableFormats.length);
+    expect(publicHtml).toContain('href="/api/public/share-tok/files/101"');
+    expect(publicHtml).toContain('href="/api/public/share-tok/files/111"');
+    expect(publicHtml).not.toContain("../bad");
+    expect(publicHtml).not.toContain("下载已禁止");
+
+    const versionHtml = renderToStaticMarkup(<VersionView view={view} versionSeq={9} />);
+    expect((versionHtml.match(/data-public-file-preview="true"/g) ?? [])).toHaveLength(previewableFormats.length);
+    expect(versionHtml).toContain('href="/api/files/101?version=9"');
+  });
+
+  it("strictly disables inline rich preview and hides file URLs when disableFileDownloads is true", () => {
+    const view: DocView = {
+      blocks: [
+        b("1:1", "file", "", { fileId: "34", name: "机密报告.pdf", mime: "application/pdf", size: "10240" }),
+        b("1:2", "file", "", { fileId: "35", name: "财务模型.xlsx", mime: "application/octet-stream", size: "20480" }),
+      ],
+    };
+
+    const publicRestricted = renderToStaticMarkup(<ReadOnlyDoc view={view} publicToken="secret-tok" disableFileDownloads allowCopy={false} />);
+    expect(publicRestricted).not.toContain("data-public-file-preview");
+    expect(publicRestricted).not.toContain("data-file-preview");
+    expect(publicRestricted).not.toContain("在线预览");
+    expect(publicRestricted).not.toContain("/files/34");
+    expect(publicRestricted).not.toContain("/files/35");
+    expect(publicRestricted).toContain("下载已禁止");
+    expect(publicRestricted).toContain("下载已关闭");
+
+    const versionRestricted = renderToStaticMarkup(<VersionView view={view} disableFileDownloads versionSeq={42} />);
+    expect(versionRestricted).not.toContain("data-public-file-preview");
+    expect(versionRestricted).not.toContain("data-file-preview");
+    expect(versionRestricted).not.toContain("/files/34");
+    expect(versionRestricted).toContain("下载已禁止");
+  });
 });

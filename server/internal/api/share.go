@@ -267,6 +267,9 @@ func (s *Server) putLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if !s.enforceDocShareDLP(w, r, d, in.Role) {
+		return
+	}
 	l, err := s.Store.ChangeLinkRoleGuarded(r.Context(), guard, d.ID, in.Role, candidate)
 	if err != nil {
 		s.shareMutationError(w, r, err)

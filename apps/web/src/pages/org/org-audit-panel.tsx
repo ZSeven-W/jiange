@@ -1,20 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  CheckCircle2,
   Download,
   FileSearch,
+  Plus,
   RefreshCw,
   Save,
   Search,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Stamp,
+  X,
 } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import {
   enterpriseApi,
   type AuditLogEntry,
   type AuditLogPage,
+  type DlpAction,
+  type DlpCheckResult,
   type WorkspaceSecurityPolicy,
 } from "@/lib/enterprise-api";
 import {
@@ -30,6 +36,11 @@ import { t, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
 export const AUDIT_PAGE_SIZE = 20;
+export const MAX_DLP_KEYWORDS = 100;
+export const MAX_DLP_KEYWORD_RUNES = 120;
+export const DLP_ID_REGEX = "/\\b\\d{17}[\\dXx]\\b/";
+export const DLP_PHONE_REGEX = "/\\b1[3-9]\\d{9}\\b/";
+export const RETENTION_PRESET_DAYS = [0, 30, 90, 180, 365] as const;
 
 export const auditLogsQueryKey = (
   workspaceId: number,
@@ -56,6 +67,8 @@ export const KNOWN_AUDIT_ACTIONS = [
   "doc.restore",
   "share.update",
   "share.link_update",
+  "dlp.share_blocked",
+  "dlp.share_warned",
   "org.member_update",
   "org.member_invite",
   "org.member_remove",
@@ -101,6 +114,10 @@ export function formatAuditActionLabel(action: string): string {
       return t("变更共享权限");
     case "share.link_update":
       return t("变更链接共享");
+    case "dlp.share_blocked":
+      return t("DLP 拦截公开分享");
+    case "dlp.share_warned":
+      return t("DLP 敏感词告警");
     case "org.member_update":
       return t("变更成员角色");
     case "org.member_invite":
@@ -155,13 +172,18 @@ function actionBadgeTone(action: string): string {
   if (action.startsWith("auth.")) {
     return "bg-[#e1eaff] text-[#1456f0] dark:bg-[#1d3461] dark:text-[#6698ff]";
   }
-  if (action.endsWith(".delete") || action.endsWith(".remove")) {
+  if (action.endsWith(".delete") || action.endsWith(".remove") || action === "dlp.share_blocked") {
     return "bg-[#fde2e2] text-[#d83931] dark:bg-[#4c1d1d] dark:text-[#ff7875]";
   }
   if (action.startsWith("audit.")) {
     return "bg-[#f0e6ff] text-[#6425d0] dark:bg-[#2d1e4f] dark:text-[#b388ff]";
   }
-  if (action.startsWith("org.") || action.startsWith("share.") || action.includes("permissions")) {
+  if (
+    action.startsWith("org.") ||
+    action.startsWith("share.") ||
+    action.startsWith("dlp.") ||
+    action.includes("permissions")
+  ) {
     return "bg-[#fff3e0] text-[#c26a00] dark:bg-[#4a2f0b] dark:text-[#ffb74d]";
   }
   return "bg-[#e3f9e5] text-[#008026] dark:bg-[#143d1f] dark:text-[#52c41a]";
@@ -199,6 +221,13 @@ export function OrgAuditPanel({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  // DLP rule editor & live check sandbox state
+  const [dlpRuleInput, setDlpRuleInput] = useState("");
+  const [dlpTestInput, setDlpTestInput] = useState("");
+  const [testingDlp, setTestingDlp] = useState(false);
+  const [dlpTestResult, setDlpTestResult] = useState<DlpCheckResult | null>(null);
+  const [dlpTestError, setDlpTestError] = useState("");
+
   // Audit filter & pagination state
   const [searchInput, setSearchInput] = useState("");
   const [actionFilter, setActionFilter] = useState("");
@@ -208,6 +237,10 @@ export function OrgAuditPanel({
   // Reset local draft and filters when switching workspace
   useEffect(() => {
     setDraftOverride(null);
+    setDlpRuleInput("");
+    setDlpTestInput("");
+    setDlpTestResult(null);
+    setDlpTestError("");
     setSearchInput("");
     setActionFilter("");
     setResourceFilter("");
@@ -229,7 +262,7 @@ export function OrgAuditPanel({
     enabled: workspaceId > 0,
   });
 
-  const serverPolicy: WorkspaceSecurityPolicy = policyQuery.data ?? {
+  const serverPolicy: WorkspaceSecurityPolicy = {
     workspaceId,
     watermarkEnabled: false,
     watermarkText: "",
@@ -237,13 +270,28 @@ export function OrgAuditPanel({
     watermarkShowEmail: true,
     watermarkShowDate: true,
     watermarkOpacity: DEFAULT_WATERMARK_OPACITY,
+    dlpEnabled: false,
+    dlpKeywords: [],
+    dlpAction: "warn",
+    dlpBlockPublicShare: true,
+    retentionDays: 0,
     updatedBy: 0,
     updatedAt: "",
+    ...(policyQuery.data ?? {}),
   };
 
   const draft: WorkspaceSecurityPolicy = draftOverride
     ? { ...serverPolicy, ...draftOverride }
     : serverPolicy;
+
+  const dlpEnabled = Boolean(draft.dlpEnabled);
+  const dlpKeywords = draft.dlpKeywords ?? [];
+  const dlpAction: DlpAction = draft.dlpAction === "block" ? "block" : "warn";
+  const dlpBlockPublicShare = draft.dlpBlockPublicShare ?? true;
+  const retentionDays =
+    typeof draft.retentionDays === "number" && Number.isFinite(draft.retentionDays)
+      ? Math.max(0, Math.min(3650, Math.trunc(draft.retentionDays)))
+      : 0;
 
   const updateDraft = (patch: Partial<WorkspaceSecurityPolicy>) => {
     setDraftOverride((prev) => ({ ...(prev ?? {}), ...patch }));
@@ -301,6 +349,28 @@ export function OrgAuditPanel({
     [t],
   );
 
+  const dlpActionOptions = useMemo<FeishuSelectOption[]>(
+    () => [
+      { value: "warn", label: t("仅警告并记录审计") },
+      { value: "block", label: t("拦截对外公开分享") },
+    ],
+    [t],
+  );
+
+  const retentionOptions = useMemo<FeishuSelectOption[]>(() => {
+    const base: FeishuSelectOption[] = [
+      { value: "0", label: t("永久保留") },
+      { value: "30", label: t("30 天") },
+      { value: "90", label: t("90 天") },
+      { value: "180", label: t("180 天") },
+      { value: "365", label: t("365 天") },
+    ];
+    if (!RETENTION_PRESET_DAYS.includes(retentionDays as (typeof RETENTION_PRESET_DAYS)[number])) {
+      base.push({ value: String(retentionDays), label: t("{days} 天", { days: retentionDays }) });
+    }
+    return base;
+  }, [retentionDays, t]);
+
   const opacityPercent = Math.round(
     Math.min(MAX_WATERMARK_OPACITY, Math.max(MIN_WATERMARK_OPACITY, draft.watermarkOpacity)) * 100,
   );
@@ -326,19 +396,96 @@ export function OrgAuditPanel({
           watermarkShowEmail: draft.watermarkShowEmail,
           watermarkShowDate: draft.watermarkShowDate,
           watermarkOpacity: draft.watermarkOpacity,
+          dlpEnabled,
+          dlpKeywords,
+          dlpAction,
+          dlpBlockPublicShare,
+          retentionDays,
         },
         userId,
       );
       qc.setQueryData(policyKey, saved);
       setDraftOverride(null);
       await qc.invalidateQueries({ queryKey: ["workspace-audit-logs", workspaceId] });
-      setNotice(t("安全水印策略已保存并同步至全套件"));
+      setNotice(t("安全策略已保存并同步至全套件"));
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);
       else if (e instanceof Error) setError(e.message);
       else setError(t("保存失败"));
     } finally {
       setSavingPolicy(false);
+    }
+  };
+
+  const addDlpRules = (candidates: readonly string[]) => {
+    if (!canAdmin || savingPolicy) return;
+    const next = [...dlpKeywords];
+    const seen = new Set(next);
+    let added = false;
+    for (const raw of candidates) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+      if (Array.from(trimmed).length > MAX_DLP_KEYWORD_RUNES) {
+        setError(t("单条敏感词规则不能超过 120 个字符"));
+        return;
+      }
+      if (seen.has(trimmed)) continue;
+      if (next.length >= MAX_DLP_KEYWORDS) {
+        setError(t("敏感词规则最多支持 100 条"));
+        return;
+      }
+      seen.add(trimmed);
+      next.push(trimmed);
+      added = true;
+    }
+    if (added) {
+      setError("");
+      updateDraft({ dlpKeywords: next });
+      setDlpTestResult(null);
+    }
+  };
+
+  const handleAddRuleInput = () => {
+    const trimmed = dlpRuleInput.trim();
+    if (!trimmed) return;
+    addDlpRules([trimmed]);
+    setDlpRuleInput("");
+  };
+
+  const handleRemoveDlpRule = (rule: string) => {
+    if (!canAdmin || savingPolicy) return;
+    updateDraft({ dlpKeywords: dlpKeywords.filter((item) => item !== rule) });
+    setDlpTestResult(null);
+  };
+
+  const handleTestDlp = async () => {
+    if (!canAdmin || testingDlp || !workspaceId) return;
+    const text = dlpTestInput.trim();
+    if (!text) {
+      setDlpTestError(t("请输入待检测的测试文本"));
+      setDlpTestResult(null);
+      return;
+    }
+    setTestingDlp(true);
+    setDlpTestError("");
+    try {
+      const res = await enterpriseApi.checkDlp(
+        workspaceId,
+        {
+          text,
+          keywords: dlpKeywords,
+          action: dlpAction,
+        },
+        userId,
+      );
+      setDlpTestResult(res);
+    } catch (e) {
+      setDlpTestResult(null);
+      if (e instanceof ApiError) setDlpTestError(e.message);
+      else if (e instanceof Error) setDlpTestError(e.message);
+      else setDlpTestError(t("敏感词检测失败"));
+    } finally {
+      setTestingDlp(false);
     }
   };
 
@@ -601,7 +748,320 @@ export function OrgAuditPanel({
         </div>
       </section>
 
-      {/* Section 2: Enterprise Security Audit Logs */}
+      {/* Section 2: Enterprise DLP Sensitive-Word Guard & Data Retention Policy */}
+      <section className="rounded-lg border bg-surface p-4" data-dlp-policy-card="">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3">
+          <div>
+            <h2 className="flex items-center gap-1.5 text-[15px] font-semibold">
+              <ShieldCheck size={16} className="text-primary" aria-hidden />
+              {t("数据防泄漏（DLP）与保留策略")}
+            </h2>
+            <p className="mt-0.5 text-[12px] text-subtle">
+              {t("通过关键词与正则表达式自动识别文档敏感信息，拦截高风险公开外发，并统一配置回收站与审计数据保留周期。")}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void handleSavePolicy()}
+            disabled={!canAdmin || savingPolicy}
+            data-dlp-save=""
+            className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 text-[13px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <Save size={14} aria-hidden />
+            {savingPolicy ? t("保存中…") : t("保存安全策略")}
+          </button>
+        </div>
+
+        <div className="mt-4 space-y-4">
+          {/* DLP Enable Toggle */}
+          <div className="flex items-center justify-between gap-3 rounded-md border bg-background/60 px-3.5 py-2.5">
+            <div>
+              <p className="text-[13px] font-medium">{t("启用企业 DLP 敏感词策略")}</p>
+              <p className="text-[12px] text-subtle">
+                {t("开启后，对外公开分享文档时将自动扫描标题与正文内容，按处置动作记录告警或拦截外发")}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={dlpEnabled}
+              aria-label={t("启用企业 DLP 敏感词策略")}
+              disabled={!canAdmin || savingPolicy}
+              data-dlp-enabled-toggle=""
+              onClick={() => updateDraft({ dlpEnabled: !dlpEnabled })}
+              className={cn(
+                "relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                dlpEnabled ? "bg-primary" : "bg-[#c9cdd4] dark:bg-[#4e5259]",
+              )}
+            >
+              <span
+                className={cn(
+                  "inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform",
+                  dlpEnabled ? "translate-x-6" : "translate-x-1",
+                )}
+              />
+            </button>
+          </div>
+
+          {/* Keywords & Regex Rules Editor */}
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[12px]">
+              <label htmlFor="org-dlp-rule-input" className="font-medium text-foreground">
+                {t("敏感词与正则规则")}
+              </label>
+              <span className="font-mono text-subtle">
+                {dlpKeywords.length}/{MAX_DLP_KEYWORDS}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="org-dlp-rule-input"
+                type="text"
+                maxLength={MAX_DLP_KEYWORD_RUNES}
+                value={dlpRuleInput}
+                disabled={!canAdmin || savingPolicy}
+                onChange={(e) => setDlpRuleInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    handleAddRuleInput();
+                  }
+                }}
+                placeholder={t("输入关键词或 /正则表达式/，例如：绝密 或 /1[3-9][0-9]{9}/")}
+                data-dlp-rule-input=""
+                className="h-9 min-w-[240px] flex-1 rounded-md border bg-surface px-3 text-[13px] placeholder:text-subtle disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <button
+                type="button"
+                disabled={!canAdmin || savingPolicy || !dlpRuleInput.trim()}
+                onClick={handleAddRuleInput}
+                data-dlp-add-rule-btn=""
+                className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1 rounded-md border bg-surface px-3 text-[13px] font-medium transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Plus size={14} aria-hidden />
+                {t("添加规则")}
+              </button>
+            </div>
+
+            {/* Quick Presets */}
+            <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+              <span className="text-subtle">{t("快捷预设：")}</span>
+              <button
+                type="button"
+                disabled={!canAdmin || savingPolicy}
+                onClick={() => addDlpRules(["绝密"])}
+                data-dlp-preset="top-secret"
+                className="inline-flex h-6 cursor-pointer items-center rounded-full border bg-background px-2.5 text-[12px] text-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                + {t("绝密")}
+              </button>
+              <button
+                type="button"
+                disabled={!canAdmin || savingPolicy}
+                onClick={() => addDlpRules(["内部机密"])}
+                data-dlp-preset="confidential"
+                className="inline-flex h-6 cursor-pointer items-center rounded-full border bg-background px-2.5 text-[12px] text-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                + {t("内部机密")}
+              </button>
+              <button
+                type="button"
+                disabled={!canAdmin || savingPolicy}
+                onClick={() => addDlpRules([DLP_ID_REGEX, DLP_PHONE_REGEX])}
+                data-dlp-preset="pii-regex"
+                className="inline-flex h-6 cursor-pointer items-center rounded-full border bg-background px-2.5 text-[12px] text-foreground transition-colors hover:border-primary/50 hover:bg-primary/5 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                + {t("身份证/手机号正则")}
+              </button>
+            </div>
+
+            {/* Removable Rule Chips */}
+            <div className="flex min-h-[42px] flex-wrap items-center gap-1.5 rounded-md border bg-background/50 p-2">
+              {dlpKeywords.length === 0 ? (
+                <span className="px-1 text-[12px] text-subtle">
+                  {t("暂未配置敏感词规则，可手动添加关键词、/正则表达式/ 或点击上方快捷预设。")}
+                </span>
+              ) : (
+                dlpKeywords.map((rule) => {
+                  const isRegex = rule.length >= 2 && rule.startsWith("/") && rule.endsWith("/");
+                  return (
+                    <span
+                      key={rule}
+                      data-dlp-rule-chip={rule}
+                      className={cn(
+                        "inline-flex max-w-full items-center gap-1 rounded-full border px-2.5 py-0.5 text-[12px]",
+                        isRegex
+                          ? "border-[#c4b5fd] bg-[#f5f3ff] font-mono text-[#5b21b6] dark:border-[#4c1d95] dark:bg-[#2e1065]/60 dark:text-[#c4b5fd]"
+                          : "border-primary/25 bg-primary/8 text-primary",
+                      )}
+                    >
+                      <span className="truncate" title={rule}>
+                        {rule}
+                      </span>
+                      {canAdmin && (
+                        <button
+                          type="button"
+                          disabled={savingPolicy}
+                          onClick={() => handleRemoveDlpRule(rule)}
+                          aria-label={t("移除规则 {rule}", { rule })}
+                          className="ml-0.5 inline-flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-black/10 dark:hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
+                        >
+                          <X size={11} aria-hidden />
+                        </button>
+                      )}
+                    </span>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Action, Public Share Scan, and Retention Controls */}
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <p className="text-[12px] font-medium text-foreground">{t("命中处置动作")}</p>
+              <FeishuSelect
+                ariaLabel={t("命中处置动作")}
+                value={dlpAction}
+                options={dlpActionOptions}
+                disabled={!canAdmin || savingPolicy}
+                onChange={(val) =>
+                  updateDraft({ dlpAction: val === "block" ? "block" : "warn" })
+                }
+                className="h-9 w-full border"
+                menuMinWidth={200}
+                dataAttr={{ "data-dlp-action-select": true }}
+              />
+              <label className="mt-2 inline-flex cursor-pointer items-center gap-2 pt-0.5 text-[13px] select-none">
+                <input
+                  type="checkbox"
+                  checked={dlpBlockPublicShare}
+                  disabled={!canAdmin || savingPolicy}
+                  onChange={(e) => updateDraft({ dlpBlockPublicShare: e.target.checked })}
+                  data-dlp-block-public-share=""
+                  className="h-4 w-4 rounded border-border accent-primary"
+                />
+                <span>{t("对外公开分享时自动扫描文档内容")}</span>
+              </label>
+            </div>
+
+            <div className="space-y-1.5">
+              <p className="text-[12px] font-medium text-foreground">{t("回收站与审计数据保留周期")}</p>
+              <FeishuSelect
+                ariaLabel={t("回收站与审计数据保留周期")}
+                value={String(retentionDays)}
+                options={retentionOptions}
+                disabled={!canAdmin || savingPolicy}
+                onChange={(val) => {
+                  const parsed = Number.parseInt(val, 10);
+                  if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 3650) {
+                    updateDraft({ retentionDays: parsed });
+                  }
+                }}
+                className="h-9 w-full border"
+                menuMinWidth={180}
+                dataAttr={{ "data-retention-days-select": true }}
+              />
+              <p className="text-[11px] text-subtle">
+                {t("设置回收站文档与企业安全审计日志的合规保留期限，选择永久保留则不自动清理。")}
+              </p>
+            </div>
+          </div>
+
+          {/* Compact Rule Live Test Sandbox */}
+          <div className="space-y-2 rounded-md border bg-background/60 p-3" data-dlp-test-box="">
+            <div className="flex items-center justify-between text-[12px]">
+              <label htmlFor="org-dlp-test-input" className="font-medium text-foreground">
+                {t("规则实测")}
+              </label>
+              <span className="text-subtle">
+                {t("使用当前规则列表即时验证文本命中情况")}
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                id="org-dlp-test-input"
+                type="text"
+                value={dlpTestInput}
+                disabled={!canAdmin || testingDlp}
+                onChange={(e) => setDlpTestInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleTestDlp();
+                  }
+                }}
+                placeholder={t("输入测试文本，例如：内部机密项目联系人 13800138000")}
+                data-dlp-test-input=""
+                className="h-8 min-w-[220px] flex-1 rounded-md border bg-surface px-2.5 text-[13px] placeholder:text-subtle disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <button
+                type="button"
+                disabled={!canAdmin || testingDlp}
+                onClick={() => void handleTestDlp()}
+                data-dlp-test-btn=""
+                className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-3 text-[12px] font-medium transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Search size={13} aria-hidden />
+                {testingDlp ? t("检测中…") : t("立即检测")}
+              </button>
+            </div>
+
+            {dlpTestError && (
+              <p className="text-[12px] text-destructive" role="alert">
+                {dlpTestError}
+              </p>
+            )}
+
+            {dlpTestResult && (
+              <div className="pt-1" data-dlp-test-result="">
+                {dlpTestResult.matched ? (
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap items-center gap-1.5 text-[12px]">
+                      <span
+                        className={cn(
+                          "inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-medium",
+                          dlpTestResult.action === "block"
+                            ? "bg-[#fde2e2] text-[#d83931] dark:bg-[#4c1d1d] dark:text-[#ff7875]"
+                            : "bg-[#fff3e0] text-[#c26a00] dark:bg-[#4a2f0b] dark:text-[#ffb74d]",
+                        )}
+                      >
+                        <ShieldAlert size={12} aria-hidden />
+                        {t("命中 {count} 处敏感内容", { count: dlpTestResult.matches.length })}
+                      </span>
+                      {dlpTestResult.matches.map((m, idx) => (
+                        <span
+                          key={`${m.rule}-${idx}`}
+                          title={m.snippet}
+                          className="inline-flex items-center gap-1 rounded-full border border-[#f5c2c7] bg-[#fff5f5] px-2 py-0.5 text-[11px] text-[#b42318] dark:border-[#7f1d1d] dark:bg-[#3b1518] dark:text-[#fca5a5]"
+                        >
+                          <span className="font-mono">{m.rule}</span>
+                          <span>→</span>
+                          <span className="font-medium">{m.match}</span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="inline-flex items-center gap-1 text-[12px] font-medium text-[#008026] dark:text-[#52c41a]">
+                    <CheckCircle2 size={13} aria-hidden />
+                    {t("未命中敏感规则")}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          {!canAdmin && (
+            <p className="text-[12px] text-subtle">
+              {t("仅空间所有者或管理员可修改企业 DLP 与保留策略。")}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {/* Section 3: Enterprise Security Audit Logs */}
       <section className="rounded-lg border bg-surface p-4" data-audit-logs-section="">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3">
           <div>

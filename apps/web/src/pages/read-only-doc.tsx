@@ -10,8 +10,12 @@ import { codeLangLabel } from "@/editor/code-block-header";
 import { imageAlign } from "@/editor/image-block";
 import { FileCard } from "@/editor/file-card";
 import { coverMap, parseMerges } from "@/editor/table-ops";
+import { Eye } from "lucide-react";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Comment, DocView } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
+import { isRichPreviewable } from "@/components/rich-file-preview";
+import { AttachmentPreview } from "./attachment-preview";
 import { parseKey, type Doc } from "@jiange/collab";
 import { projectCommentAnchors } from "@/editor/comment-anchor";
 import { DiagramView } from "@/editor/diagram-view";
@@ -153,9 +157,14 @@ function formatSize(size: string | undefined): string {
 }
 
 /** Renders a materialized snapshot using the same block representations as the editor. */
-export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, imageVersionSeq, imageRecovery, onPreviewImage, commentDoc, comments = [], activeThread = null, onActivateComment, onCopyBlockLink }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void; commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void; onCopyBlockLink?: (blockId: string) => void }) {
+export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, allowCopy = true, imageVersionSeq, imageRecovery, onPreviewImage, commentDoc, comments = [], activeThread = null, onActivateComment, onCopyBlockLink }: { view: DocView; publicToken?: string; disableFileDownloads?: boolean; allowCopy?: boolean; imageVersionSeq?: number; imageRecovery?: number; onPreviewImage?: (src: string, name: string, mime?: string) => void; commentDoc?: Doc; comments?: readonly Comment[]; activeThread?: number | null; onActivateComment?: (id: number) => void; onCopyBlockLink?: (blockId: string) => void }) {
+  const { t } = useI18n();
   const [menuBlock, setMenuBlock] = useState<string | null>(null);
   const [touchBlock, setTouchBlock] = useState<string | null>(null);
+  const [previewFile, setPreviewFile] = useState<{ src: string; name: string; mime?: string } | null>(null);
+  useEffect(() => {
+    if (disableFileDownloads) setPreviewFile(null);
+  }, [disableFileDownloads]);
   const actions = (block: Block) => onCopyBlockLink && <span className={cn("pointer-events-none absolute -left-10 top-0 z-20 flex items-center opacity-0 group-hover/public-block:pointer-events-auto group-hover/public-block:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 sm:-left-14 [&_[data-block-handle]]:gap-0.5 [&_[data-block-handle]]:px-1", (menuBlock === block.id || touchBlock === block.id) && "pointer-events-auto opacity-100")}><BlockHandle type={block.type} open={menuBlock === block.id} onOpenChange={(open) => setMenuBlock(open ? block.id : null)} can={{ link: true }} onAction={(action) => { if (action.kind === "link") onCopyBlockLink(block.id); }}/></span>;
   const touch = (event: React.PointerEvent<HTMLDivElement>, id: string) => { if (event.pointerType === "touch" && event.target instanceof Element && event.target.closest("[data-public-block]")?.getAttribute("data-public-block") === id && !event.target.closest("a,button,input,textarea,video,audio,iframe")) setTouchBlock(id); };
   const children = new Map<string, Block[]>();
@@ -207,7 +216,44 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
         case "image": content = <ReadOnlyImage key={`${block.id}:${block.props.fileId ?? ""}:${block.props.url ?? ""}:${imageVersionSeq ?? ""}`} block={block} publicToken={publicToken} versionSeq={imageVersionSeq} recovery={imageRecovery} disableFileDownloads={disableFileDownloads} onPreview={onPreviewImage} activeComment={activeBlockComment} />; break;
         case "file": {
           const href = disableFileDownloads ? undefined : fileURL(block.props.fileId, publicToken, imageVersionSeq);
-          content = <FileCard fileId={block.props.fileId} name={block.props.name} size={block.props.size} canDownload={!!href} href={href} />; break;
+          const name = block.props.name || t("附件");
+          const mime = block.props.mime;
+          const previewable = !!href && !disableFileDownloads && isRichPreviewable(name, mime);
+          const openPreview = previewable
+            ? () => setPreviewFile({ src: href, name, mime })
+            : undefined;
+          content = (
+            <div className="my-1 flex flex-wrap items-center gap-2" data-readonly-file-row>
+              <FileCard
+                fileId={block.props.fileId}
+                name={block.props.name}
+                size={block.props.size}
+                canDownload={!!href}
+                href={href}
+                onPreview={openPreview}
+              />
+              {previewable && (
+                <button
+                  type="button"
+                  data-public-file-preview
+                  onClick={openPreview}
+                  className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-[#DEE0E3] bg-surface px-3 text-[12px] font-medium text-primary transition-colors hover:border-primary/40 hover:bg-accent dark:border-border"
+                >
+                  <Eye size={14} />
+                  <span>{t("在线预览")}</span>
+                </button>
+              )}
+              {disableFileDownloads && (
+                <span
+                  data-public-file-disabled
+                  className="inline-flex h-7 shrink-0 items-center rounded-md bg-muted/60 px-2.5 text-[12px] text-subtle"
+                >
+                  {t("下载已禁止")}
+                </span>
+              )}
+            </div>
+          );
+          break;
         }
         case "video": content = <VideoBlockView url={block.props.url} fileId={block.props.fileId} name={block.props.name} title={block.props.title} publicToken={publicToken} versionSeq={imageVersionSeq} disableFileDownloads={disableFileDownloads} readOnly />; break;
         case "audio": content = <AudioBlockView url={block.props.url} fileId={block.props.fileId} name={block.props.name} title={block.props.title} publicToken={publicToken} versionSeq={imageVersionSeq} disableFileDownloads={disableFileDownloads} readOnly />; break;
@@ -241,5 +287,19 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, i
       return <div key={block.id} data-readonly-block={block.type} data-public-block={onCopyBlockLink ? block.id : undefined} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} onPointerDown={(event) => touch(event, block.id)} className={cn(onCopyBlockLink && "group/public-block relative", activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{actions(block)}{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
     });
   }
-  return <div data-readonly-doc>{renderChildren("0:0")}</div>;
+  return (
+    <div data-readonly-doc>
+      {renderChildren("0:0")}
+      {previewFile && !disableFileDownloads && (
+        <AttachmentPreview
+          src={previewFile.src}
+          name={previewFile.name}
+          mime={previewFile.mime}
+          allowCopy={allowCopy}
+          allowPrint={!disableFileDownloads}
+          onClose={() => setPreviewFile(null)}
+        />
+      )}
+    </div>
+  );
 }

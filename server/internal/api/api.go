@@ -70,6 +70,18 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.health)
+	mux.HandleFunc("GET /api/openapi.json", s.getOpenAPISpec)
+	mux.HandleFunc("GET /scim/v2/ServiceProviderConfig", s.scimServiceProviderConfig)
+	mux.HandleFunc("GET /scim/v2/Users", s.scimListUsers)
+	mux.HandleFunc("POST /scim/v2/Users", s.scimCreateUser)
+	mux.HandleFunc("GET /scim/v2/Users/{uid}", s.scimGetUser)
+	mux.HandleFunc("PATCH /scim/v2/Users/{uid}", s.scimPatchUser)
+	mux.HandleFunc("DELETE /scim/v2/Users/{uid}", s.scimDeleteUser)
+	mux.HandleFunc("GET /scim/v2/Groups", s.scimListGroups)
+	mux.HandleFunc("POST /scim/v2/Groups", s.scimCreateGroup)
+	mux.HandleFunc("GET /scim/v2/Groups/{gid}", s.scimGetGroup)
+	mux.HandleFunc("PATCH /scim/v2/Groups/{gid}", s.scimPatchGroup)
+	mux.HandleFunc("DELETE /scim/v2/Groups/{gid}", s.scimDeleteGroup)
 	mux.HandleFunc("POST /api/auth/register", s.register)
 	mux.HandleFunc("POST /api/auth/login", s.login)
 	mux.HandleFunc("POST /api/auth/logout", s.logout)
@@ -313,6 +325,8 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/sheets/{id}/defined-names":           s.putSheetDefinedNames,
 
 		// 企业组织架构（成员角色 / 部门 / 用户组）
+		"GET /api/workspaces":                                         s.listMyWorkspaces,
+		"POST /api/workspaces":                                        s.createWorkspace,
 		"GET /api/workspaces/{wsId}/org":                              s.getWorkspaceOrg,
 		"POST /api/workspaces/{wsId}/members":                         s.upsertWorkspaceMember,
 		"DELETE /api/workspaces/{wsId}/invitations/{inviteId}":        s.revokeWorkspaceInvitation,
@@ -343,6 +357,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/workspaces/{wsId}/audit-logs/export":    s.exportWorkspaceAuditLogs,
 		"GET /api/workspaces/{wsId}/security-policy":        s.getWorkspaceSecurityPolicy,
 		"PUT /api/workspaces/{wsId}/security-policy":        s.putWorkspaceSecurityPolicy,
+		"POST /api/workspaces/{wsId}/dlp/check":             s.checkWorkspaceDLP,
 
 		// 开放平台（PAT 个人访问令牌、空间事件 Webhook）与二步验证（TOTP MFA）
 		"GET /api/me/tokens":                                   s.listMyPATs,

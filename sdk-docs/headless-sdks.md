@@ -123,7 +123,7 @@ void blockId;
 
 ---
 
-## 3. `@jiange/sheet-sdk` — 电子表格与 144 函数增量公式引擎
+## 3. `@jiange/sheet-sdk` — 电子表格与 148 函数增量公式引擎
 
 - **安装**：`npm install @jiange/sheet-sdk`（仅依赖 `@jiange/ooxml`，72.6 KB gzip）
 - **常用子路径**：`.`、`./workbook`、`./ai-tools`、`./formula-engine`、`./formula-functions`、`./formula-ast`、`./worker`、`./xlsx`、`./xlsx-read`、`./workbook-xlsx`、`./csv`、`./tsv`、`./numfmt`、`./rules`、`./analytics`、`./collab`
@@ -136,7 +136,7 @@ void blockId;
 - **导出与历史**：`toXlsx()`、`toXlsxAsync()`（DEFLATE + `sharedStrings.xml`）、`toCsv(sheetName?)`、`toTsv(sheetName?)`、`toSnapshot()`、`undo(token?)` / `redo()`。
 - **AI 原语**：`inspect(options?)`、`query(params?)`、`apply(ops, options?)`、`verify()`、`createSheetTools(wb)`。
 
-### 3.2 AST + DAG 增量公式引擎（144 个内置 Excel 函数）
+### 3.2 AST + DAG 增量公式引擎（148 个内置函数）
 
 `SUPPORTED_FORMULA_FUNCTIONS` 共内置 **144** 个高频函数，支持整列/整行引用（`A:A`、`1:1`）、命名区域（`wb.defineName`）、自定义函数（`wb.registerFunction`）、双向溯源（`wb.getPrecedents` / `wb.getDependents`）、动态数组（`FILTER`、`SORT`、`SORTBY`、`UNIQUE`、`SEQUENCE`）与 `#SPILL!` / `#CYCLE!` 诊断：
 

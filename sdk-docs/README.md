@@ -32,11 +32,11 @@ flowchart TB
   end
 
   subgraph L1["L1 独立 Headless AI-Native SDK (按需单包安装)"]
-    SHEET["@jiange/sheet-sdk (72.6 KB)<br/>Workbook · 144 公式 · Worker · XLSX/CSV"]
+    SHEET["@jiange/sheet-sdk (72.6 KB)<br/>Workbook · 148 公式 · Worker · XLSX/CSV"]
     DOC["@jiange/doc-sdk (58.1 KB)<br/>Document · MD/HTML/DOCX · 修订/批注"]
     SLIDES["@jiange/slides-sdk (25.8 KB)<br/>Presentation · PPTX · SVG · 版面诊断"]
     BOARD["@jiange/whiteboard-sdk (36.8 KB)<br/>Board · Mermaid · DAG 布局 · XMind/SVG"]
-    BASE["@jiange/base-sdk (14.7 KB · 0 依赖)<br/>Base · 18 字段 · 35 公式 · 仪表盘 · CSV"]
+    BASE["@jiange/base-sdk (14.7 KB · 0 依赖)<br/>Base · 23 字段 · 7 视图 · 仪表盘 · CSV"]
   end
 
   subgraph L2["L2 WebGPU / WebGL2 + 虚拟列表 UI 层 (Zero Canvas 2D)"]
@@ -85,11 +85,11 @@ flowchart TB
 | --- | --- | --- | ---: | ---: | --- |
 | [`@jiange/ooxml`](../packages/ooxml/README.md) | L0 | `0` | 4.9 KB | 17.5 KB | 同步 STORE / 异步 DEFLATE ZIP + 防 DTD 有界 XML |
 | [`@jiange/collab`](../packages/collab/README.md) | L0 | `0` | 35.1 KB | 144.9 KB | 文档 CRDT、`SyncClient`、`UndoManager` + `./table`、`./ws`、`./storage`、`./ai-agent` |
-| [`@jiange/sheet-sdk`](../packages/sheet-sdk/README.md) | L1 | `@jiange/ooxml` | 72.6 KB | 348.7 KB | `Workbook`、AST+DAG 增量公式（144 函数 + `#SPILL!` + Worker）、DEFLATE XLSX/CSV、`createSheetTools` |
+| [`@jiange/sheet-sdk`](../packages/sheet-sdk/README.md) | L1 | `@jiange/ooxml` | 72.6 KB | 348.7 KB | `Workbook`、AST+DAG 增量公式（148 函数 + `#SPILL!` + Worker）、DEFLATE XLSX/CSV、`createSheetTools` |
 | [`@jiange/doc-sdk`](../packages/doc-sdk/README.md) | L1 | `@jiange/collab`, `@jiange/ooxml` | 58.1 KB | 234.7 KB | `Document`、Markdown/HTML/DOCX(DEFLATE) 双向、大纲章节、保样式替换、批注修订、`createDocTools` |
-| [`@jiange/slides-sdk`](../packages/slides-sdk/README.md) | L1 | `@jiange/ooxml` | 25.8 KB | 111.8 KB | `Presentation`、主题/富段落/原生表格/图表/嵌入媒体、DEFLATE PPTX、16:9 SVG、`verify()`、`createSlidesTools` |
+| [`@jiange/slides-sdk`](../packages/slides-sdk/README.md) | L1 | `@jiange/ooxml` | 25.8 KB | 111.8 KB | `Presentation`、主题/富段落/原生表格/图表/音视频媒体与图片裁剪、DEFLATE PPTX、16:9 SVG、`verify()`、`createSlidesTools` |
 | [`@jiange/whiteboard-sdk`](../packages/whiteboard-sdk/README.md) | L1 | `@jiange/ooxml` | 36.8 KB | 160.7 KB | `Board`、Mermaid 双向、DAG 自动布局、对齐分布、SVG、DEFLATE XMind、拓扑 `verify()`、`createWhiteboardTools` |
-| [`@jiange/base-sdk`](../packages/base-sdk/README.md) | L1 | **`0`** | 14.7 KB | 68.8 KB | `Base`、18 种字段、拓扑 `[Field]` 公式（35 函数）、`link`/`lookup`、查询、仪表盘、CSV、`createBaseTools` |
+| [`@jiange/base-sdk`](../packages/base-sdk/README.md) | L1 | **`0`** | 14.7 KB | 68.8 KB | `Base`、23 种字段、7 种视图、拓扑 `[Field]` 公式、`link`/`lookup`、多级分组、仪表盘、CSV、`createBaseTools` |
 | [`@jiange/render-gpu`](../packages/render-gpu/README.md) | L2 | **`0`** | 17.5 KB | 78.5 KB | WebGPU → WebGL2 → Headless、4 条 SDF/GlyphAtlas 管线、`FenwickVirtualizer`、`VirtualList1D`/`VirtualGrid2D`、`SpatialIndex`、`InstanceBatch` |
 | [`@jiange/sheet-ui`](../packages/sheet-ui/README.md) | L2 | `sheet-sdk`, `render-gpu` | 7.4 KB | 30.6 KB | 4 象限冻结 GPU 渲染 + 池化文本层 + 单例 IME 编辑器 + `mountSheetView` / `./react` / `<jiange-sheet>` |
 | [`@jiange/doc-ui`](../packages/doc-ui/README.md) | L2 | `doc-sdk`, `render-gpu` | 2.8 KB | 9.7 KB | `VirtualList1D` + 动态块高追踪 + 大纲跳转 + `mountDocView` / `./react` / `<jiange-doc>` |
