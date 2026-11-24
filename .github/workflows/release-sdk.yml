@@ -29,10 +29,11 @@ jobs:
       - run: node benchmarks/run-benchmarks.mjs
       - name: Pack all 13 SDK tarballs
         run: |
-          mkdir -p release-tarballs
+          mkdir -p "$PWD/release-tarballs"
           for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
-            pnpm --filter "@jiange/${pkg}" pack --pack-destination ../../release-tarballs
+            pnpm --filter "@jiange/${pkg}" pack --pack-destination "$PWD/release-tarballs"
           done
+          ls -la "$PWD/release-tarballs"
       - name: Publish npm packages on sdk-v* tags (when NPM_TOKEN is configured)
         if: startsWith(github.ref, 'refs/tags/sdk-v') && env.NODE_AUTH_TOKEN != ''
         env:
