@@ -94,6 +94,12 @@ spec:
                   name: {{ include "jiange.secretName" . }}
                   key: metrics-token
                   optional: true
+            - name: JIANGE_OCR_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "jiange.secretName" . }}
+                  key: ocr-api-key
+                  optional: true
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}

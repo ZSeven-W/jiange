@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ReadOnlyDoc } from "./read-only-doc";
+import { preloadReadOnlyRenderers, ReadOnlyDoc } from "./read-only-doc";
 import { VersionView } from "./version-panel";
 import type { DocView } from "@/lib/api";
 import type { Comment } from "@/lib/api";
@@ -14,6 +14,10 @@ const b = (id: string, type: string, text = "", props: Record<string, string> = 
 });
 
 describe("read-only document snapshots", () => {
+  beforeAll(async () => {
+    await preloadReadOnlyRenderers();
+  });
+
   it("renders a mind map or ink even when the flowchart has no ordinary nodes", () => {
     const mind = b("1:1", "flowchart", "", { "fc.m.root": JSON.stringify({ parent: null, order: 0, text: "项目计划", x: 0, y: 0 }), "fc.m.child": JSON.stringify({ parent: "root", order: 0, text: "设计评审" }), "fc.mc.root": "1" });
     const ink = b("1:2", "flowchart", "", { "fc.s.ink": JSON.stringify({ points: [{ x: 0, y: 0 }, { x: 40, y: 30 }], color: "#3370ff", width: 3 }) });

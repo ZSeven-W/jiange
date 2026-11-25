@@ -12,9 +12,15 @@ if [ -z "${JIANGE_ADDR:-}" ]; then
 	export JIANGE_ADDR
 fi
 
-export JIANGE_BLOB_DIR="${JIANGE_BLOB_DIR:-/data/blobs}"
+# Default to local disk blobs only when S3/MinIO is not configured.
+if [ -z "${JIANGE_S3_ENDPOINT:-}" ] && [ -z "${JIANGE_BLOB_DIR:-}" ]; then
+	export JIANGE_BLOB_DIR="/data/blobs"
+fi
+if [ -n "${JIANGE_BLOB_DIR:-}" ]; then
+	mkdir -p "$JIANGE_BLOB_DIR"
+fi
+
 export JIANGE_SECURE_COOKIES="${JIANGE_SECURE_COOKIES:-true}"
 export JIANGE_AUTO_VERSION_EVERY="${JIANGE_AUTO_VERSION_EVERY:-0}"
-mkdir -p "$JIANGE_BLOB_DIR"
 
 exec /usr/local/bin/jiange

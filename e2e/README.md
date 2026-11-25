@@ -10,6 +10,7 @@ Automated end-to-end browser regression tests covering Jiange's full-stack authe
 | `tests/suite-editors.spec.ts` | Document title + collaborative body persistence across reload, Spreadsheet cell values + formula (`=A1+A2`) persistence, Base grid + persistent record creation, Slides canvas rendering + save, Global Search lookup |
 | `tests/enterprise-admin.spec.ts` | `/healthz`, `/readyz`, `/metrics`, `/api/openapi.json` (350+ operations), `/scim/v2/{ServiceProviderConfig,Schemas,ResourceTypes}`, Org Security & Audit DLP + Require MFA persistence & reset, SSO OIDC & SAML 2.0 modal, Developer OpenAPI 3.1 explorer & SCIM 2.0 reference table |
 | `tests/offline-and-i18n.spec.ts` | Chinese ↔ English locale toggle across sidebar and Organization tabs, browser offline mode banner & cache drawer resilience, online recovery |
+| `tests/wave4-security-and-storage.spec.ts` | Forgot Password & Reset Confirm UI (`POST /api/auth/password-reset/request` non-enumeration), `#/login` post-auth hash normalization, Account Security Active Sessions (`GET /api/me/sessions` + `当前设备` badge) & Change Password (`POST /api/me/password` + old/new login check), Org Storage Quota (`413 storage_quota_exceeded` + unlimited reset), Attachment Full-Text Reindex, instant Global Enforced-MFA banner toggle without reload, and Workspace Ownership Transfer (`[data-transfer-owner]`) |
 
 Every spec registers a fresh timestamped user so tests are isolated and idempotent against any PostgreSQL database.
 

@@ -129,11 +129,11 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
 
   return (
     <div
-      className="pointer-events-none absolute left-1/2 top-2.5 z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 flex-col items-center gap-1.5"
+      className="pointer-events-none absolute inset-x-3 top-2.5 z-20 flex flex-col items-center gap-1.5"
       onPointerDown={(e) => e.stopPropagation()}
     >
       <div
-        className="pointer-events-auto flex max-w-full items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-lg border border-[#dee0e3] bg-white/95 px-2.5 py-1 text-[12px] text-[#4e5969] shadow-[0_4px_16px_rgba(31,35,41,0.12)] backdrop-blur-xs [&>*]:shrink-0"
+        className="pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-x-1.5 gap-y-1 rounded-lg border border-[#dee0e3] bg-white/95 px-2 py-1 text-[12px] text-[#4e5969] shadow-[0_4px_16px_rgba(31,35,41,0.12)] backdrop-blur-xs [&>*]:shrink-0 [&>*]:whitespace-nowrap"
         role="group"
         aria-label={groupAriaLabel}
       >
@@ -233,7 +233,7 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
         <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
         <div className="flex items-center gap-0.5" role="group" aria-label={t("对象对齐到页面")}>{alignments.map(([alignment, label, Icon]) => <button key={alignment} type="button" aria-label={label} title={label} onClick={() => onAlign(alignment)} className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Icon size={13} /></button>)}</div>
         <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
-        <button type="button" onClick={onDelete} title={deleteLabel} aria-label={deleteLabel} className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={13} /><span>{t("删除")}</span></button>
+        <button type="button" onClick={onDelete} title={deleteLabel} aria-label={deleteLabel} className="flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={13} /><span>{t("删除")}</span></button>
       </div>
 
       {image && cropOpen && (
@@ -410,12 +410,15 @@ export function SlideMultiShapeControls({
   const canDistribute = count >= 3;
   return (
     <div
-      data-slides-multi-controls
-      role="group"
-      aria-label={t("多选对象操作")}
+      className="pointer-events-none absolute inset-x-3 top-2.5 z-20 flex justify-center"
       onPointerDown={(e) => e.stopPropagation()}
-      className="pointer-events-auto absolute left-1/2 top-2.5 z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-lg border border-[#dee0e3] bg-white/95 px-2.5 py-1 text-[12px] text-[#4e5969] shadow-[0_4px_16px_rgba(31,35,41,0.12)] backdrop-blur-xs [&>*]:shrink-0"
     >
+      <div
+        data-slides-multi-controls
+        role="group"
+        aria-label={t("多选对象操作")}
+        className="pointer-events-auto flex w-fit max-w-full flex-wrap items-center justify-center gap-x-1.5 gap-y-1 rounded-lg border border-[#dee0e3] bg-white/95 px-2 py-1 text-[12px] text-[#4e5969] shadow-[0_4px_16px_rgba(31,35,41,0.12)] backdrop-blur-xs [&>*]:shrink-0 [&>*]:whitespace-nowrap"
+      >
       <span className="rounded bg-[#e8efff] px-1.5 py-0.5 text-[11px] font-medium text-[#3370ff]">
         {t("已选 {count} 项", { count })}
       </span>
@@ -487,11 +490,12 @@ export function SlideMultiShapeControls({
         onClick={onDelete}
         title={t("批量删除")}
         aria-label={t("批量删除")}
-        className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"
+        className="flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"
       >
         <Trash2 size={13} />
         <span>{t("批量删除")}</span>
       </button>
+      </div>
     </div>
   );
 }

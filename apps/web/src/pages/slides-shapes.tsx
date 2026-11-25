@@ -170,7 +170,8 @@ export function SlideShapes({
     const item = previewMap?.get(shape.id) ?? shape;
     const isSelected = selectedSet.has(item.id);
     const isSingleSelected = singleSelectedId === item.id;
-    const placeholder = item.kind === "text" ? slidePresetPlaceholder(item.id) : null;
+    const presetPlaceholder = item.kind === "text" ? slidePresetPlaceholder(item.id) : null;
+    const placeholder = presetPlaceholder ? t(presetPlaceholder) : null;
     const textStyle = { color: item.color, fontSize: `${(item.fontSize ?? 24) / 9.6}cqw`, fontWeight: item.bold ? 700 : 400, textAlign: item.align ?? "left" } as const;
     const shapeAnim = animations?.[item.id];
     const isPreviewingAnim = previewAnimShapeId === item.id && !!shapeAnim;
@@ -321,19 +322,20 @@ export function SlideShapes({
         </div>
       );
     }
+    const presetControlLabel = item.kind === "text" ? slidePresetControlLabel(item.id, !!item.text) : null;
     const shapeAriaLabel = item.kind === "text"
-      ? (editingText ? "移动文本框" : slidePresetControlLabel(item.id, !!item.text) ?? "文本框")
+      ? (editingText ? t("移动文本框") : presetControlLabel ? t(presetControlLabel) : t("文本框"))
       : item.kind === "image"
-        ? "幻灯片图片"
+        ? t("幻灯片图片")
         : item.kind === "video"
           ? t("幻灯片视频")
           : item.kind === "audio"
             ? t("幻灯片音频")
             : item.kind === "table"
-              ? "幻灯片表格"
+              ? t("幻灯片表格")
               : item.kind === "chart"
-                ? (item.chart?.title ? `幻灯片图表 ${item.chart.title}` : "幻灯片图表")
-                : `图形 ${item.kind}`;
+                ? (item.chart?.title ? t("幻灯片图表 {title}", { title: item.chart.title }) : t("幻灯片图表"))
+                : t("图形 {kind}", { kind: item.kind });
     return <div key={item.id} data-slide-object data-slide-shape-id={item.id} className={`absolute ${editingText ? "outline outline-2 outline-[#3370ff] outline-offset-2" : ""}`} style={style}>
     <button type="button" disabled={!editable} aria-label={shapeAriaLabel} aria-pressed={isSelected} className={editingText ? "absolute z-10 grid h-5 w-8 touch-none place-items-center rounded border border-[#c9cdd4] bg-white text-[#646a73]" : `h-full w-full touch-none ${isSelected ? "outline outline-2 outline-[#3370ff] outline-offset-2" : "hover:outline hover:outline-1 hover:outline-[#3370ff]"}`} style={editingText ? { left: "50%", top: 0, marginTop: -20 / Math.max(scale, 0.1), transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})` } : undefined}
       onDoubleClick={() => {
@@ -465,8 +467,8 @@ export function SlideShapes({
     {editable && shapeAnim && (
       <span
         data-slide-anim-badge={shapeAnim.order}
-        aria-label={`元素动画顺序 ${shapeAnim.order}`}
-        title={`动画 #${shapeAnim.order}`}
+        aria-label={t("元素动画顺序 {order}", { order: shapeAnim.order })}
+        title={t("动画 #{order}", { order: shapeAnim.order })}
         className="pointer-events-none absolute left-0 top-0 z-20 grid size-5 place-items-center rounded-full bg-[#3370ff] text-[10px] font-semibold tabular-nums text-white shadow-sm ring-2 ring-white"
         style={{
           transform: `translate(-40%, -40%) scale(${1 / Math.max(scale, 0.1)})`,
@@ -482,7 +484,7 @@ export function SlideShapes({
       onPointerUp={(event) => { const d = lineDrag.current; if (!d || d.pointer !== event.pointerId || d.shape.id !== shape.id || d.endpoint !== endpoint) return; if (event.clientX !== d.startX || event.clientY !== d.startY) onChange?.(moveSlideLineEndpoint(d.shape, endpoint, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); lineDrag.current = null; setPreviewSingle(null); }}
       onPointerCancel={(event) => { if (lineDrag.current?.pointer === event.pointerId) { lineDrag.current = null; setPreviewSingle(null); } }} onLostPointerCapture={(event) => { if (lineDrag.current?.pointer === event.pointerId) { lineDrag.current = null; setPreviewSingle(null); } }}
       onKeyDown={(event) => { const delta: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }; const move = delta[event.key]; const rect = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]")?.getBoundingClientRect(); if (!move || !rect?.width || !rect.height) return; event.preventDefault(); onChange?.(moveSlideLineEndpoint(shape, endpoint, move[0] * rect.width / 100, move[1] * rect.height / 100, rect.width, rect.height)); }}><span className="size-2 rounded-full border border-[#3370ff] bg-white shadow-sm"/></button>)}
-    {editable && isSingleSelected && !line && handles.map((handle) => <button key={handle.id} type="button" aria-label={`调整图形${handle.label}边界`} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: handle.left, top: handle.top, transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: handle.cursor }}
+    {editable && isSingleSelected && !line && handles.map((handle) => <button key={handle.id} type="button" aria-label={t("调整图形{edge}边界", { edge: t(handle.label) })} className="absolute z-10 grid size-6 touch-none place-items-center" style={{ left: handle.left, top: handle.top, transform: `translate(-50%, -50%) scale(${1 / Math.max(scale, 0.1)})`, cursor: handle.cursor }}
       onPointerDown={(event) => { const canvas = event.currentTarget.closest<HTMLElement>("[data-slides-canvas]"); if (!canvas) return; const rect = canvas.getBoundingClientRect(); if (!rect.width || !rect.height) return; event.preventDefault(); event.stopPropagation(); event.currentTarget.setPointerCapture(event.pointerId); resizing.current = { shape, handle: handle.id, startX: event.clientX, startY: event.clientY, width: rect.width, height: rect.height }; }}
       onPointerMove={(event) => { const d = resizing.current; if (!d || d.shape.id !== shape.id || d.handle !== handle.id) return; setPreviewSingle(resizeSlideShape(d.shape, d.handle, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); }}
       onPointerUp={(event) => { const d = resizing.current; if (!d || d.shape.id !== shape.id || d.handle !== handle.id) return; if (event.clientX !== d.startX || event.clientY !== d.startY) onChange?.(resizeSlideShape(d.shape, d.handle, event.clientX - d.startX, event.clientY - d.startY, d.width, d.height)); resizing.current = null; setPreviewSingle(null); }}

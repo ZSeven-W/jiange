@@ -131,3 +131,19 @@ JIANGE_BLOB_DIR="/data/blobs" \
 ```
 
 > **Tip:** Scale replicas down to `0` (or pause writes) before running `jiange restore` against a live production database to avoid concurrent write conflicts.
+
+---
+
+## 6. Attachment Full-Text & OCR Index Backfill
+
+Existing attachments uploaded prior to enabling full-text indexing or OCR can be backfilled from the CLI (for all workspaces or a single workspace ID):
+
+```bash
+DATABASE_URL="postgres://jiange:...@postgres:5432/jiange?sslmode=require" \
+JIANGE_S3_ENDPOINT="http://minio.storage.svc:9000" \
+JIANGE_S3_ACCESS_KEY="<access-key>" \
+JIANGE_S3_SECRET_KEY="<secret-key>" \
+  jiange reindex-attachments            # optional: pass <workspaceId>
+```
+
+To enable OCR for images and image-only scanned PDFs, configure `config.ocr.*` (`JIANGE_OCR_URL`, `JIANGE_OCR_MODE=openai` or default JSON, `JIANGE_OCR_MODEL`, `JIANGE_OCR_TIMEOUT_SECONDS`, or `JIANGE_OCR_TESSERACT=1`) and secret key `ocr-api-key` (`JIANGE_OCR_API_KEY`). Workspace admins can also trigger workspace-scoped reindexing directly from **Organization -> Security & Audit -> Storage & Attachment Index**.

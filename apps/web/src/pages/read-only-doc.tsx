@@ -1,8 +1,3 @@
-import { boardContentBounds, FlowSvg } from "@/editor/flowchart/flowchart-block";
-import { readBoardFramesFromProps } from "@/editor/flowchart/board-frames";
-import { readMindLayoutFromProps } from "@/editor/flowchart/mindmap-layouts";
-import { readWhiteboardExtrasFromProps } from "@/editor/flowchart/whiteboard-extras";
-import { readFlow } from "@/editor/flowchart/model";
 import { tableCellAlign, tableCellFill, tableCellHasRichMarks, tableCellRich, tableDataOf } from "@/editor/table-cells";
 import { renderTableRichSpans } from "@/editor/table-rich-render";
 import { calloutStyle } from "@/editor/block-styles";
@@ -11,15 +6,13 @@ import { imageAlign } from "@/editor/image-block";
 import { FileCard } from "@/editor/file-card";
 import { coverMap, parseMerges } from "@/editor/table-ops";
 import { Eye } from "lucide-react";
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Comment, DocView } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { isRichPreviewable } from "@/components/rich-file-preview";
 import { AttachmentPreview } from "./attachment-preview";
 import { parseKey, type Doc } from "@jiange/collab";
 import { projectCommentAnchors } from "@/editor/comment-anchor";
-import { DiagramView } from "@/editor/diagram-view";
-import { MathView } from "@/editor/math-view";
 import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";
 import { isDocumentReferenceMarks, safeURL } from "@/lib/safe-url";
@@ -30,6 +23,97 @@ import { AudioBlockView, CountdownBlockView, PollBlockView, TabsBlockView, Video
 import { columnWeights, COLUMN_WIDTHS } from "@/editor/column-widths";
 import { useTableStickyHeader } from "@/editor/table-sticky-header";
 import { parseTableWidths, visibleTableWidths } from "@/editor/table-widths";
+
+type DiagramViewComponent = typeof import("@/editor/diagram-view").DiagramView;
+type MathViewComponent = typeof import("@/editor/math-view").MathView;
+interface FlowchartRuntime {
+  boardContentBounds: typeof import("@/editor/flowchart/flowchart-block").boardContentBounds;
+  FlowSvg: typeof import("@/editor/flowchart/flowchart-block").FlowSvg;
+  readBoardFramesFromProps: typeof import("@/editor/flowchart/board-frames").readBoardFramesFromProps;
+  readMindLayoutFromProps: typeof import("@/editor/flowchart/mindmap-layouts").readMindLayoutFromProps;
+  readWhiteboardExtrasFromProps: typeof import("@/editor/flowchart/whiteboard-extras").readWhiteboardExtrasFromProps;
+  readFlow: typeof import("@/editor/flowchart/model").readFlow;
+}
+
+let loadedDiagramView: DiagramViewComponent | null = null;
+const loadDiagramView = () =>
+  import("@/editor/diagram-view").then((mod) => {
+    loadedDiagramView = mod.DiagramView;
+    return { default: mod.DiagramView };
+  });
+const LazyDiagramView = lazy(loadDiagramView);
+
+let loadedMathView: MathViewComponent | null = null;
+const loadMathView = () =>
+  import("@/editor/math-view").then((mod) => {
+    loadedMathView = mod.MathView;
+    return { default: mod.MathView };
+  });
+const LazyMathView = lazy(loadMathView);
+
+let loadedFlowchartRuntime: FlowchartRuntime | null = null;
+const loadFlowchartRuntime = () =>
+  Promise.all([
+    import("@/editor/flowchart/flowchart-block"),
+    import("@/editor/flowchart/board-frames"),
+    import("@/editor/flowchart/mindmap-layouts"),
+    import("@/editor/flowchart/whiteboard-extras"),
+    import("@/editor/flowchart/model"),
+  ]).then(([flowBlock, boardFrames, mindLayouts, whiteboardExtras, flowModel]) => {
+    loadedFlowchartRuntime = {
+      boardContentBounds: flowBlock.boardContentBounds,
+      FlowSvg: flowBlock.FlowSvg,
+      readBoardFramesFromProps: boardFrames.readBoardFramesFromProps,
+      readMindLayoutFromProps: mindLayouts.readMindLayoutFromProps,
+      readWhiteboardExtrasFromProps: whiteboardExtras.readWhiteboardExtrasFromProps,
+      readFlow: flowModel.readFlow,
+    };
+    return { default: ReadOnlyFlowchartLoaded };
+  });
+const LazyReadOnlyFlowBlock = lazy(loadFlowchartRuntime);
+
+/** Preloads lazy block renderers (used by synchronous SSR snapshot tests). */
+export function preloadReadOnlyRenderers(): Promise<void> {
+  return Promise.all([loadDiagramView(), loadMathView(), loadFlowchartRuntime()]).then(() => undefined);
+}
+
+if (import.meta.env.MODE === "test") {
+  void loadDiagramView().catch(() => {});
+  void loadMathView().catch(() => {});
+  void loadFlowchartRuntime().catch(() => {});
+}
+
+function ReadOnlyMath({ src, inline = false }: { src: string; inline?: boolean }) {
+  const { t } = useI18n();
+  if (loadedMathView) {
+    const Comp = loadedMathView;
+    return <Comp src={src} />;
+  }
+  return (
+    <Suspense
+      fallback={
+        inline
+          ? <span className="inline-block h-[1em] w-8 align-middle rounded bg-muted/60" aria-hidden="true" />
+          : <span className="text-[13px] not-italic text-subtle">{t("加载中…")}</span>
+      }
+    >
+      <LazyMathView src={src} />
+    </Suspense>
+  );
+}
+
+function ReadOnlyDiagram({ src }: { src: string }) {
+  const { t } = useI18n();
+  if (loadedDiagramView) {
+    const Comp = loadedDiagramView;
+    return <Comp src={src} />;
+  }
+  return (
+    <Suspense fallback={<span className="block text-center text-[13px] text-subtle">{t("加载中…")}</span>}>
+      <LazyDiagramView src={src} />
+    </Suspense>
+  );
+}
 
 type Block = DocView["blocks"][number];
 type Span = Block["spans"][number];
@@ -63,7 +147,7 @@ function RichText({ spans, flags, activeThread, onActivateComment }: { spans: Sp
   return <>{runs.map((span, i) => {
     const { text, marks } = span;
     const wrap = (content: ReactNode) => span.anchor == null ? <span key={i}>{content}</span> : <span key={i} role="button" tabIndex={0} data-comment-anchor={span.anchor} className={cn("cursor-pointer border-b-2 border-[#F5B1E5] focus-visible:outline-2 focus-visible:outline-primary", activeThread === span.anchor ? "bg-[#FBDC8D]" : "bg-[#FFF3D6]")} onClick={(event) => { if (!(event.target instanceof Element) || !event.target.closest("a")) onActivateComment?.(span.anchor!); }} onKeyDown={(event) => { if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); onActivateComment?.(span.anchor!); } }}>{content}</span>;
-    if (marks.math) return wrap(<span className="mx-0.5 not-italic"><MathView src={marks.math} /></span>);
+    if (marks.math) return wrap(<span className="mx-0.5 not-italic"><ReadOnlyMath src={marks.math} inline /></span>);
     const style: CSSProperties = { color: marks.color || undefined, background: marks.bg || undefined };
     if (marks.underline || marks.strike) style.textDecoration = [marks.underline && "underline", marks.strike && "line-through"].filter(Boolean).join(" ");
     const classes = cn(marks.bold && "font-semibold", marks.italic && "italic", marks.code && "rounded-[4px] bg-[#F2F3F5] px-1 py-px font-mono text-[0.88em] text-[#D83931]", marks.mention && "rounded bg-accent px-0.5 font-medium text-primary");
@@ -104,8 +188,9 @@ function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDo
 }
 
 /** Folding a shared mind map changes only this reader's view. */
-function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; publicToken?: string; versionSeq?: number }) {
+function ReadOnlyFlowchartLoaded({ block, publicToken, versionSeq }: { block: Block; publicToken?: string; versionSeq?: number }) {
   const { t } = useI18n();
+  const { boardContentBounds, FlowSvg, readBoardFramesFromProps, readMindLayoutFromProps, readWhiteboardExtrasFromProps, readFlow } = loadedFlowchartRuntime!;
   const graph = readFlow(block.props);
   const frames = readBoardFramesFromProps(block.props);
   const mindLayout = readMindLayoutFromProps(block.props);
@@ -135,6 +220,34 @@ function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; p
   const height = Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360));
   const sizing = { "--flow-min-width": `${minWidth}px`, "--flow-min-height": `${minHeight}px` } as CSSProperties;
   return <div data-flowchart className="my-2"><div ref={scroll} data-flow-scroll role="region" aria-label={t("图形预览，可滚动查看")} tabIndex={0} className="overflow-auto rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }}>{hasContent ? <div className="h-full min-h-[var(--flow-min-height)] min-w-[var(--flow-min-width)] sm:min-h-0 sm:min-w-0" style={sizing}><FlowSvg graph={display} frames={frames} votes={extras.votes} mindStructure={mindLayout.structure} mindRelations={mindLayout.relations} mindBoundaries={extras.mindBoundaries} mindSummaries={extras.mindSummaries} mindBadges={extras.mindBadges} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, versionSeq) ?? ""} onMindFold={(id) => setOverrides((previous) => ({ ...previous, [id]: !collapsed.has(id) }))} /></div> : <span className="grid h-full place-items-center text-[13px] text-subtle">{t("空白流程图")}</span>}</div>{overflow && <p className="mt-1 text-right text-[12px] text-subtle sm:hidden">{t("滑动查看完整图形")}</p>}</div>;
+}
+
+function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; publicToken?: string; versionSeq?: number }) {
+  const { t } = useI18n();
+  if (loadedFlowchartRuntime) {
+    return <ReadOnlyFlowchartLoaded block={block} publicToken={publicToken} versionSeq={versionSeq} />;
+  }
+  const height = Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360));
+  return (
+    <Suspense
+      fallback={
+        <div data-flowchart className="my-2">
+          <div
+            data-flow-scroll
+            role="region"
+            aria-label={t("图形预览，可滚动查看")}
+            tabIndex={0}
+            className="grid place-items-center overflow-auto rounded-lg border border-[#DEE0E3] text-[13px] text-subtle dark:border-border"
+            style={{ height }}
+          >
+            {t("加载中…")}
+          </div>
+        </div>
+      }
+    >
+      <LazyReadOnlyFlowBlock block={block} publicToken={publicToken} versionSeq={versionSeq} />
+    </Suspense>
+  );
 }
 
 function ReadOnlyTable({ data, merges, widths, fillProps = {}, header = true, headerColumn = false, activeComment = false }: { data?: string; merges?: string; widths?: string; fillProps?: Record<string, string>; header?: boolean; headerColumn?: boolean; activeComment?: boolean }) {
@@ -205,8 +318,8 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, a
         case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[3px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
         case "code": content = <div className="my-2 rounded-md bg-[#F5F6F7] dark:bg-[#23262a]"><div className="px-3.5 pt-2 text-[12px] text-subtle">{codeLangLabel(block.props.lang)}</div><pre className={cn("px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", block.props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>{rich}</pre></div>; break;
         case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-[15px]" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
-        case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">{t("空公式")}</span>}</div>; break;
-        case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">{t("空流程图")}</span>}</div>; break;
+        case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <ReadOnlyMath src={text} /> : <span className="not-italic text-subtle">{t("空公式")}</span>}</div>; break;
+        case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <ReadOnlyDiagram src={text} /> : <span className="text-[13px] text-subtle">{t("空流程图")}</span>}</div>; break;
         case "flowchart": content = <ReadOnlyFlowchart block={block} publicToken={publicToken} versionSeq={imageVersionSeq} />; break;
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} widths={block.props.tableWidths} fillProps={block.props} header={block.props.tableHeader !== "none"} headerColumn={block.props.tableHeaderColumn === "column"} activeComment={activeBlockComment} />; break;
         case "columns": {

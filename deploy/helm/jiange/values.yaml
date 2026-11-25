@@ -46,6 +46,15 @@ config:
   linkPreviewAllowCidrs: ""
   # Leave empty in multi-replica deployments and use S3/MinIO below.
   blobDir: ""
+  # Optional remote OpenAI-compatible embedding model name (JIANGE_AI_EMBEDDING_MODEL).
+  aiEmbeddingModel: ""
+  # Optional OCR connector for images & scanned PDFs (JIANGE_OCR_*).
+  ocr:
+    url: ""
+    mode: ""
+    model: ""
+    timeoutSeconds: ""
+    tesseract: ""
   s3:
     endpoint: "http://minio:9000"
     bucket: "jiange"
@@ -53,7 +62,7 @@ config:
 secrets:
   # Recommended for production: reference a pre-existing Secret (ExternalSecrets,
   # SealedSecrets, Vault) containing keys: database-url, secret-key,
-  # s3-access-key, s3-secret-key, and optionally metrics-token.
+  # s3-access-key, s3-secret-key, and optionally metrics-token / ocr-api-key.
   existingSecret: ""
   databaseUrl: "postgres://jiange:change-me@postgres:5432/jiange?sslmode=require"
   # 32+ character secret used for JIANGE_SECRET_KEY (encrypts AI keys, SSO, webhooks).
@@ -62,6 +71,8 @@ secrets:
   s3SecretKey: ""
   # Optional Bearer token required to scrape /metrics (JIANGE_METRICS_TOKEN).
   metricsToken: ""
+  # Optional API key for remote OCR / Vision endpoint (JIANGE_OCR_API_KEY).
+  ocrApiKey: ""
 
 # Extra environment variables passed directly to the Jiange container.
 extraEnv: []

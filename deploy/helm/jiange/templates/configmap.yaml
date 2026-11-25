@@ -19,6 +19,26 @@ data:
   {{- if .Values.config.blobDir }}
   JIANGE_BLOB_DIR: {{ .Values.config.blobDir | quote }}
   {{- end }}
+  {{- if .Values.config.aiEmbeddingModel }}
+  JIANGE_AI_EMBEDDING_MODEL: {{ .Values.config.aiEmbeddingModel | quote }}
+  {{- end }}
+  {{- if .Values.config.ocr }}
+  {{- if .Values.config.ocr.url }}
+  JIANGE_OCR_URL: {{ .Values.config.ocr.url | quote }}
+  {{- end }}
+  {{- if .Values.config.ocr.mode }}
+  JIANGE_OCR_MODE: {{ .Values.config.ocr.mode | quote }}
+  {{- end }}
+  {{- if .Values.config.ocr.model }}
+  JIANGE_OCR_MODEL: {{ .Values.config.ocr.model | quote }}
+  {{- end }}
+  {{- if .Values.config.ocr.timeoutSeconds }}
+  JIANGE_OCR_TIMEOUT_SECONDS: {{ .Values.config.ocr.timeoutSeconds | quote }}
+  {{- end }}
+  {{- if .Values.config.ocr.tesseract }}
+  JIANGE_OCR_TESSERACT: {{ .Values.config.ocr.tesseract | quote }}
+  {{- end }}
+  {{- end }}
   {{- if .Values.config.s3.endpoint }}
   JIANGE_S3_ENDPOINT: {{ .Values.config.s3.endpoint | quote }}
   JIANGE_S3_BUCKET: {{ .Values.config.s3.bucket | quote }}
