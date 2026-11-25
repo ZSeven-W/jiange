@@ -4,11 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/ZSeven-W/jiange/server/internal/migrate"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func checkBaseHourlyDateAndFieldRestore(t *testing.T, st Store) {
@@ -156,13 +160,32 @@ func TestPostgresBaseHourlyDateAndFieldRestore(t *testing.T) {
 		t.Skip("JIANGE_TEST_DATABASE_URL not set")
 	}
 	ctx := context.Background()
-	st, err := NewPostgres(ctx, dsn)
+	admin, err := pgxpool.New(ctx, dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
-	if _, err := migrate.Up(ctx, st.Pool); err != nil {
+	schema := fmt.Sprintf("jiange_restore_%d", time.Now().UnixNano())
+	quoted := pgx.Identifier{schema}.Sanitize()
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+quoted); err != nil {
+		admin.Close()
 		t.Fatal(err)
 	}
-	checkBaseHourlyDateAndFieldRestore(t, st)
+	defer func() {
+		_, _ = admin.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+quoted+" CASCADE")
+		admin.Close()
+	}()
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.ConnConfig.RuntimeParams["search_path"] = schema
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	if _, err := migrate.Up(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	checkBaseHourlyDateAndFieldRestore(t, &Postgres{Pool: pool})
 }

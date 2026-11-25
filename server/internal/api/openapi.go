@@ -721,7 +721,23 @@ func oaOpsAuthAndPAT() []oaRoute {
 			Summary: "Finish WebAuthn Passkey passwordless login",
 			Desc:    "Verifies the authenticator assertion signature (ES256/RS256) and signCount, issuing an authenticated session cookie.",
 			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"challenge": {Type: "string"}, "credentialId": {Type: "string"}, "clientDataJSON": {Type: "string"}, "authenticatorData": {Type: "string"}, "signature": {Type: "string"}}, "challenge", "credentialId", "clientDataJSON", "authenticatorData", "signature"), "WebAuthn assertion"),
-			Resps:   map[string]oaResp{"200": oaJSONResp("Authenticated user", "User"), "401": oaErrResp("Invalid passkey assertion")},
+			Resps:   map[string]oaResp{"200": oaJSONResp("Authenticated user", "User"), "401": oaErrResp("Invalid passkey assertion"), "429": oaErrResp("Rate limit exceeded")},
+			Public:  true,
+		},
+		{
+			Method: "POST", Path: "/api/auth/password-reset/request", Tag: "Auth & MFA", OpID: "requestPasswordReset",
+			Summary: "Request a password reset email",
+			Desc:    "Generates a single-use 30-minute reset token and delivers it via the workspace's configured SMTP channel. Always returns 200 to prevent account enumeration.",
+			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"email": {Type: "string", Description: "Registered account email", Example: "user@example.com"}}, "email"), "Password reset request"),
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("Reset request accepted", map[string]any{"type": "object"}), "429": oaErrResp("Rate limit exceeded")},
+			Public:  true,
+		},
+		{
+			Method: "POST", Path: "/api/auth/password-reset/confirm", Tag: "Auth & MFA", OpID: "confirmPasswordReset",
+			Summary: "Confirm password reset with one-time token",
+			Desc:    "Consumes a valid single-use reset token, updates the user's password hash, and revokes all existing sessions.",
+			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"token": {Type: "string", Description: "One-time reset token"}, "newPassword": {Type: "string", Description: "New password (8-256 chars)"}}, "token", "newPassword"), "Password reset confirmation"),
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("Password reset succeeded", map[string]any{"type": "object"}), "400": oaErrResp("Invalid or expired reset token"), "429": oaErrResp("Rate limit exceeded")},
 			Public:  true,
 		},
 		{
@@ -784,6 +800,35 @@ func oaOpsAuthAndPAT() []oaRoute {
 			Desc:    "Verifies the CBOR attestationObject and COSE public key (ES256/RS256) and saves the passkey.",
 			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"name": {Type: "string"}, "challenge": {Type: "string"}, "clientDataJSON": {Type: "string"}, "attestationObject": {Type: "string"}}, "challenge", "clientDataJSON", "attestationObject"), "WebAuthn attestation"),
 			Resps:   map[string]oaResp{"201": oaJSONInlineResp("Registered passkey", map[string]any{"type": "object"}), "400": oaErrResp("Invalid attestation")},
+		},
+		{
+			Method: "POST", Path: "/api/me/password", Tag: "Auth & MFA", OpID: "changeMyPassword",
+			Summary: "Change authenticated user's password",
+			Desc:    "Verifies the current password, updates the password hash, and optionally revokes all other active sessions.",
+			Body: oaJSONBody(oaObjSchema(map[string]oaProp{
+				"currentPassword":     {Type: "string"},
+				"newPassword":         {Type: "string"},
+				"revokeOtherSessions": {Type: "boolean", Example: true},
+			}, "currentPassword", "newPassword"), "Password change request"),
+			Resps: map[string]oaResp{"200": oaJSONInlineResp("Password updated", map[string]any{"type": "object"}), "400": oaErrResp("Weak password"), "401": oaErrResp("Current password mismatch")},
+		},
+		{
+			Method: "GET", Path: "/api/me/sessions", Tag: "Auth & MFA", OpID: "listMySessions",
+			Summary: "List active login sessions and devices",
+			Desc:    "Returns active sessions for the authenticated user with user-agent, IP address, timestamps, and current-session marker (never exposes session tokens).",
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("Active sessions list", map[string]any{"type": "object"}), "401": oaErrResp("Unauthorized")},
+		},
+		{
+			Method: "DELETE", Path: "/api/me/sessions/{sid}", Tag: "Auth & MFA", OpID: "revokeMySession",
+			Summary: "Revoke a specific active session",
+			Desc:    "Terminates the specified session belonging to the authenticated user immediately.",
+			Resps:   map[string]oaResp{"204": oaPlainResp("Session revoked"), "404": oaErrResp("Session not found")},
+		},
+		{
+			Method: "POST", Path: "/api/me/sessions/revoke-others", Tag: "Auth & MFA", OpID: "revokeOtherMySessions",
+			Summary: "Revoke all other active sessions",
+			Desc:    "Signs out all other devices/browsers belonging to the authenticated user while keeping the current session.",
+			Resps:   map[string]oaResp{"200": oaJSONInlineResp("Count of revoked sessions", map[string]any{"type": "object"}), "401": oaErrResp("Unauthorized")},
 		},
 		{
 			Method: "GET", Path: "/api/me/tokens", Tag: "Personal Access Tokens", OpID: "listMyPATs",
@@ -2564,6 +2609,22 @@ func oaOpsAI() []oaRoute {
 			Resps: map[string]oaResp{"200": oaJSONInlineResp("AI generated response", map[string]any{"type": "object"}), "400": oaErrResp("AI not configured or invalid request"), "429": oaErrResp("Rate limit exceeded")},
 		},
 		{
+			Method: "POST", Path: "/api/ai/doc/stream", Tag: "AI Suite", OpID: "aiDocStream",
+			Summary: "Stream single-document AI writing & Q&A completion (SSE)",
+			Desc:    "Validates document view & copy permissions, rate limits, and personal AI provider settings, then streams incremental `delta` chunks followed by `done` (or `error`) Server-Sent Events.",
+			Body: oaJSONBody(oaObjSchema(map[string]oaProp{
+				"docId":    {Type: "integer", Example: 42},
+				"messages": {Type: "array", ItemsType: "object"},
+			}, "docId", "messages"), "Single-document streaming AI request"),
+			Resps: map[string]oaResp{
+				"200": oaPlainResp("text/event-stream SSE token stream (`delta`, `done`, `error`)"),
+				"400": oaErrResp("Invalid docId or messages"),
+				"403": oaErrResp("Insufficient permission or copy-restricted document"),
+				"412": oaErrResp("Personal AI provider not configured"),
+				"429": oaErrResp("Rate limit exceeded"),
+			},
+		},
+		{
 			Method: "POST", Path: "/api/ai/ask-workspace", Tag: "AI Suite", OpID: "aiAskWorkspace",
 			Summary: "Ask Workspace Knowledge Base (RAG Q&A)",
 			Desc:    "Retrieves permission-filtered documents and indexed attachments via hybrid semantic+lexical RAG and synthesizes a cited answer.",
@@ -3071,6 +3132,38 @@ func oaOpsSecurityWebhooksNotif() []oaRoute {
 			Desc:    "Purges audit logs and trashed documents older than the workspace's configured `retentionDays` (supports dry-run preview).",
 			Body:    oaJSONBody(oaObjSchema(map[string]oaProp{"dryRun": {Type: "boolean", Description: "Preview purge counts without deleting", Example: false}}), "Retention run options"),
 			Resps:   map[string]oaResp{"200": oaJSONResp("Retention purge summary", "RetentionPurgeResult"), "400": oaErrResp("Retention policy disabled"), "403": oaErrResp("Workspace admin required")},
+		},
+		{
+			Method: "GET", Path: "/api/workspaces/{wsId}/storage", Tag: "Security & Audit", OpID: "getWorkspaceStorage",
+			Summary: "Get workspace storage usage and attachment index coverage",
+			Desc:    "Returns total attachment bytes used, configured storage quota (0 = unlimited), breakdown by node kind, top 10 largest attachments, and full-text index count.",
+			Resps: map[string]oaResp{
+				"200": oaJSONInlineResp("Workspace storage usage", map[string]any{"type": "object"}),
+				"403": oaErrResp("Workspace admin required"),
+			},
+		},
+		{
+			Method: "PUT", Path: "/api/workspaces/{wsId}/storage/quota", Tag: "Security & Audit", OpID: "putWorkspaceStorageQuota",
+			Summary: "Update workspace storage quota",
+			Desc:    "Sets the workspace attachment storage quota in bytes (0 = unlimited). Uploads exceeding the quota fail with HTTP 413 storage_quota_exceeded.",
+			Body: oaJSONBody(oaObjSchema(map[string]oaProp{
+				"quotaBytes": {Type: "integer", Description: "Quota in bytes (0 for unlimited)", Example: 1073741824},
+			}, "quotaBytes"), "Storage quota update"),
+			Resps: map[string]oaResp{
+				"200": oaJSONInlineResp("Updated workspace storage usage", map[string]any{"type": "object"}),
+				"400": oaErrResp("Invalid quota value"),
+				"403": oaErrResp("Workspace admin required"),
+			},
+		},
+		{
+			Method: "POST", Path: "/api/workspaces/{wsId}/attachments/reindex", Tag: "Security & Audit", OpID: "reindexWorkspaceAttachments",
+			Summary: "Backfill attachment full-text and OCR index for workspace",
+			Desc:    "Re-extracts searchable text (including configured OCR for images and scanned PDFs) for existing attachments in the workspace.",
+			Resps: map[string]oaResp{
+				"200": oaJSONInlineResp("Attachment reindex statistics", map[string]any{"type": "object"}),
+				"403": oaErrResp("Workspace admin required"),
+				"503": oaErrResp("Blob storage not configured"),
+			},
 		},
 		{
 			Method: "GET", Path: "/api/workspaces/{wsId}/sso/providers", Tag: "Security & Audit", OpID: "listWorkspaceSSOProviders",

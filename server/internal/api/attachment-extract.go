@@ -5,19 +5,29 @@ import (
 	"bytes"
 	"compress/zlib"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"encoding/xml"
+	"errors"
+	"fmt"
 	"html"
 	"io"
 	"mime"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/ZSeven-W/jiange/server/internal/blob"
 	"github.com/ZSeven-W/jiange/server/internal/store"
 )
 
@@ -25,6 +35,12 @@ const (
 	maxExtractedAttachmentBytes = 256 << 10 // 256 KiB UTF-8 safe cap
 	maxAttachmentZipEntryBytes  = 16 << 20  // 16 MiB per zip entry safety cap
 	maxAttachmentPDFStreamBytes = 8 << 20   // 8 MiB per inflated PDF stream safety cap
+	maxOCRAttachmentBytes       = 10 << 20  // 10 MiB safety cap for OCR requests
+	maxOCRResponseBytes         = 2 << 20   // 2 MiB OCR HTTP response cap
+	maxReindexBlobBytes         = 20 << 20  // 20 MiB per attachment read cap during backfill reindex
+	defaultOCRTimeoutSeconds    = 15
+	maxOCRTimeoutSeconds        = 120
+	defaultOpenAIOCRModel       = "gpt-4o-mini"
 )
 
 var (
@@ -37,11 +53,21 @@ var (
 )
 
 // ExtractAttachmentText extracts searchable full text from common office, PDF,
-// and plain-text / source-code attachments using pure Go stdlib only.
+// plain-text / source-code, and (when OCR is configured) image/scanned-PDF
+// attachments using pure Go stdlib only.
 // Extracted text is normalized and capped cleanly at 256 KiB on a UTF-8 rune boundary.
 func ExtractAttachmentText(filename, mimeType string, data []byte) (string, string) {
+	return ExtractAttachmentTextWithContext(context.Background(), filename, mimeType, data)
+}
+
+// ExtractAttachmentTextWithContext extracts searchable full text with a caller
+// context that bounds optional external OCR or local tesseract invocations.
+func ExtractAttachmentTextWithContext(ctx context.Context, filename, mimeType string, data []byte) (string, string) {
 	if len(data) == 0 {
 		return "", ""
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))
 	mediaType := ""
@@ -71,8 +97,12 @@ func ExtractAttachmentText(filename, mimeType string, data []byte) (string, stri
 		return "", "pptx"
 
 	case ext == ".pdf" || mediaType == "application/pdf" || bytes.HasPrefix(bytes.TrimLeft(data, " \t\r\n"), []byte("%PDF-")):
-		if text := extractPDFText(data); text != "" {
-			return finalizeExtractedText(text), "pdf"
+		if text := finalizeExtractedText(extractPDFText(data)); text != "" {
+			return text, "pdf"
+		}
+		// Scanned / image-only PDF fallback via configured OCR connector.
+		if ocrText := extractOCRText(ctx, filename, "application/pdf", data, false); ocrText != "" {
+			return finalizeExtractedText(ocrText), "pdf+ocr"
 		}
 		return "", "pdf"
 	}
@@ -91,6 +121,13 @@ func ExtractAttachmentText(filename, mimeType string, data []byte) (string, stri
 		}
 	}
 
+	if imgMIME, ok := ocrImageMIME(ext, mediaType, data); ok {
+		if ocrText := extractOCRText(ctx, filename, imgMIME, data, true); ocrText != "" {
+			return finalizeExtractedText(ocrText), "ocr"
+		}
+		return "", ""
+	}
+
 	if isPlainTextAttachment(ext, mediaType) {
 		isHTML := ext == ".html" || ext == ".htm" || mediaType == "text/html"
 		if text := extractPlainText(data, isHTML); text != "" {
@@ -100,6 +137,87 @@ func ExtractAttachmentText(filename, mimeType string, data []byte) (string, stri
 	}
 
 	return "", ""
+}
+
+// AttachmentReindexStats summarizes a workspace or global attachment full-text backfill run.
+type AttachmentReindexStats struct {
+	WorkspaceID int64 `json:"workspaceId,omitempty"`
+	Scanned     int   `json:"scanned"`
+	Indexed     int   `json:"indexed"`
+	Skipped     int   `json:"skipped"`
+	Failed      int   `json:"failed"`
+}
+
+// ReindexAttachments backfills attachment_text_index for all attachments in wsID
+// (or across all workspaces when wsID == 0, e.g. from the CLI).
+func ReindexAttachments(ctx context.Context, st store.Store, blobs blob.Store, wsID int64) (AttachmentReindexStats, error) {
+	stats := AttachmentReindexStats{WorkspaceID: wsID}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if st == nil {
+		return stats, errors.New("store not configured")
+	}
+	if blobs == nil {
+		return stats, errors.New("blob store not configured")
+	}
+	sqs, ok := st.(store.StorageQuotaStore)
+	if !ok {
+		return stats, errors.New("storage quota store not supported")
+	}
+	ats, ok := st.(store.AttachmentTextStore)
+	if !ok {
+		return stats, errors.New("attachment text index store not supported")
+	}
+
+	items, err := sqs.ListAttachmentsForReindex(ctx, wsID, 10000)
+	if err != nil {
+		return stats, err
+	}
+
+	for _, item := range items {
+		if err := ctx.Err(); err != nil {
+			return stats, err
+		}
+		stats.Scanned++
+
+		rc, err := blobs.Get(ctx, item.ObjectKey)
+		if err != nil {
+			stats.Failed++
+			continue
+		}
+		data, readErr := io.ReadAll(io.LimitReader(rc, maxReindexBlobBytes+1))
+		_ = rc.Close()
+		if readErr != nil {
+			stats.Failed++
+			continue
+		}
+		if len(data) == 0 || len(data) > maxReindexBlobBytes {
+			stats.Skipped++
+			continue
+		}
+
+		text, extractor := ExtractAttachmentTextWithContext(ctx, item.Name, item.MIME, data)
+		if strings.TrimSpace(text) == "" {
+			stats.Skipped++
+			continue
+		}
+
+		if err := ats.UpsertAttachmentText(ctx, store.AttachmentTextEntry{
+			AttachmentID:  item.AttachmentID,
+			DocID:         item.DocID,
+			WorkspaceID:   item.WorkspaceID,
+			Filename:      item.Name,
+			Mime:          item.MIME,
+			ExtractedText: text,
+			Extractor:     extractor,
+		}); err != nil {
+			stats.Failed++
+			continue
+		}
+		stats.Indexed++
+	}
+	return stats, nil
 }
 
 // indexAttachmentText extracts full text from an uploaded attachment and
@@ -112,7 +230,7 @@ func (s *Server) indexAttachmentText(ctx context.Context, att store.FileMeta, ws
 	if !ok {
 		return
 	}
-	text, extractor := ExtractAttachmentText(att.Name, att.Mime, data)
+	text, extractor := ExtractAttachmentTextWithContext(ctx, att.Name, att.Mime, data)
 	if strings.TrimSpace(text) == "" {
 		return
 	}
@@ -128,6 +246,266 @@ func (s *Server) indexAttachmentText(ctx context.Context, att store.FileMeta, ws
 	if err != nil && s.Log != nil {
 		s.Log.Warn("attachment text index upsert failed", "attachmentId", att.ID, "docId", att.DocID, "err", err)
 	}
+}
+
+// --- OCR Connector (HTTP JSON / OpenAI Vision / optional local tesseract) ---
+
+type ocrConfig struct {
+	URL           string
+	APIKey        string
+	Model         string
+	Mode          string
+	TesseractMode string
+	Timeout       time.Duration
+}
+
+func loadOCRConfig() ocrConfig {
+	timeoutSec := defaultOCRTimeoutSeconds
+	if raw := strings.TrimSpace(os.Getenv("JIANGE_OCR_TIMEOUT_SECONDS")); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			timeoutSec = min(parsed, maxOCRTimeoutSeconds)
+		}
+	}
+	return ocrConfig{
+		URL:           strings.TrimSpace(os.Getenv("JIANGE_OCR_URL")),
+		APIKey:        strings.TrimSpace(os.Getenv("JIANGE_OCR_API_KEY")),
+		Model:         strings.TrimSpace(os.Getenv("JIANGE_OCR_MODEL")),
+		Mode:          strings.ToLower(strings.TrimSpace(os.Getenv("JIANGE_OCR_MODE"))),
+		TesseractMode: strings.ToLower(strings.TrimSpace(os.Getenv("JIANGE_OCR_TESSERACT"))),
+		Timeout:       time.Duration(timeoutSec) * time.Second,
+	}
+}
+
+func ocrImageMIME(ext, mediaType string, data []byte) (string, bool) {
+	switch mediaType {
+	case "image/png", "image/jpeg", "image/webp", "image/tiff", "image/gif":
+		return mediaType, true
+	case "image/jpg":
+		return "image/jpeg", true
+	}
+	switch ext {
+	case ".png":
+		return "image/png", true
+	case ".jpg", ".jpeg":
+		return "image/jpeg", true
+	case ".webp":
+		return "image/webp", true
+	case ".tif", ".tiff":
+		return "image/tiff", true
+	case ".gif":
+		return "image/gif", true
+	}
+	if len(data) >= 4 {
+		detected := strings.ToLower(http.DetectContentType(data))
+		switch detected {
+		case "image/png", "image/jpeg", "image/webp", "image/gif":
+			return detected, true
+		}
+	}
+	return "", false
+}
+
+func extractOCRText(ctx context.Context, filename, mediaType string, data []byte, allowTesseract bool) string {
+	if len(data) == 0 || len(data) > maxOCRAttachmentBytes {
+		return ""
+	}
+	if ctx.Err() != nil {
+		return ""
+	}
+	cfg := loadOCRConfig()
+	if cfg.URL != "" {
+		if text := callHTTPOCR(ctx, cfg, filename, mediaType, data); strings.TrimSpace(text) != "" {
+			return text
+		}
+	}
+	if allowTesseract && (cfg.TesseractMode == "1" || cfg.TesseractMode == "true" || cfg.TesseractMode == "auto") {
+		if text := callTesseractOCR(ctx, cfg, data); strings.TrimSpace(text) != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func validateOCRURL(raw string) (*url.URL, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u == nil {
+		return nil, false
+	}
+	scheme := strings.ToLower(u.Scheme)
+	if (scheme != "http" && scheme != "https") || u.Host == "" || u.User != nil {
+		return nil, false
+	}
+	return u, true
+}
+
+func callHTTPOCR(ctx context.Context, cfg ocrConfig, filename, mediaType string, data []byte) string {
+	parsedURL, ok := validateOCRURL(cfg.URL)
+	if !ok {
+		return ""
+	}
+
+	b64 := base64.StdEncoding.EncodeToString(data)
+	isOpenAI := cfg.Mode == "openai" || strings.HasSuffix(strings.TrimRight(strings.ToLower(parsedURL.Path), "/"), "/chat/completions")
+
+	var payload any
+	if isOpenAI {
+		model := cfg.Model
+		if model == "" {
+			model = defaultOpenAIOCRModel
+		}
+		dataURI := fmt.Sprintf("data:%s;base64,%s", mediaType, b64)
+		payload = map[string]any{
+			"model":       model,
+			"temperature": 0,
+			"messages": []map[string]any{
+				{
+					"role": "user",
+					"content": []map[string]any{
+						{
+							"type": "text",
+							"text": "Extract and transcribe all visible text verbatim. Return plain text only without commentary.",
+						},
+						{
+							"type": "image_url",
+							"image_url": map[string]string{
+								"url": dataURI,
+							},
+						},
+					},
+				},
+			},
+		}
+	} else {
+		body := map[string]any{
+			"filename":   filename,
+			"mime":       mediaType,
+			"dataBase64": b64,
+		}
+		if cfg.Model != "" {
+			body["model"] = cfg.Model
+		}
+		payload = body
+	}
+
+	rawBody, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+
+	reqCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, parsedURL.String(), bytes.NewReader(rawBody))
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if cfg.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+cfg.APIKey)
+	}
+
+	client := &http.Client{
+		Timeout: cfg.Timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ""
+	}
+
+	respBytes, err := io.ReadAll(io.LimitReader(resp.Body, maxOCRResponseBytes))
+	if err != nil || len(respBytes) == 0 {
+		return ""
+	}
+
+	var parsed struct {
+		Text    string `json:"text"`
+		Choices []struct {
+			Message struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(respBytes, &parsed); err != nil {
+		return ""
+	}
+	if strings.TrimSpace(parsed.Text) != "" {
+		return parsed.Text
+	}
+	if len(parsed.Choices) > 0 && len(parsed.Choices[0].Message.Content) > 0 {
+		var strContent string
+		if err := json.Unmarshal(parsed.Choices[0].Message.Content, &strContent); err == nil {
+			return strContent
+		}
+		var parts []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(parsed.Choices[0].Message.Content, &parts); err == nil {
+			var b strings.Builder
+			for _, p := range parts {
+				if strings.TrimSpace(p.Text) != "" {
+					if b.Len() > 0 {
+						b.WriteByte('\n')
+					}
+					b.WriteString(p.Text)
+				}
+			}
+			return b.String()
+		}
+	}
+	return ""
+}
+
+func callTesseractOCR(ctx context.Context, cfg ocrConfig, data []byte) string {
+	bin, err := exec.LookPath("tesseract")
+	if err != nil || bin == "" {
+		return ""
+	}
+	runLang := func(lang string) (string, error) {
+		cmdCtx, cancel := context.WithTimeout(ctx, cfg.Timeout)
+		defer cancel()
+		cmd := exec.CommandContext(cmdCtx, bin, "stdin", "stdout", "-l", lang)
+		cmd.Stdin = bytes.NewReader(data)
+		var out bytes.Buffer
+		cmd.Stdout = &limitedBuffer{buf: &out, max: maxExtractedAttachmentBytes * 2}
+		cmd.Stderr = io.Discard
+		if err := cmd.Run(); err != nil {
+			return "", err
+		}
+		return out.String(), nil
+	}
+	if text, err := runLang("chi_sim+eng"); err == nil && strings.TrimSpace(text) != "" {
+		return text
+	}
+	if text, err := runLang("eng"); err == nil {
+		return text
+	}
+	return ""
+}
+
+type limitedBuffer struct {
+	buf *bytes.Buffer
+	max int
+}
+
+func (l *limitedBuffer) Write(p []byte) (int, error) {
+	if l.buf.Len() >= l.max {
+		return len(p), nil
+	}
+	rem := l.max - l.buf.Len()
+	if len(p) > rem {
+		l.buf.Write(p[:rem])
+		return len(p), nil
+	}
+	return l.buf.Write(p)
 }
 
 func isPlainTextAttachment(ext, mediaType string) bool {

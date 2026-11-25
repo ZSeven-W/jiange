@@ -41,11 +41,11 @@
 | **多维表格 Base** | 多表与跨表双向关联、**23 种字段类型**（含货币、进度、自动编号、动作按钮、地理位置、公式、关联、查找）、**7 种视图**（网格、看板、甘特+依赖连线、日历、画册、**层级树视图**、条件分支公开表单）、最多 3 级嵌套分组、多步自动化工作流、数据仪表盘、多角色细粒度行/列 RBAC、XLSX/CSV 导入导出、**AI 按列批量填充** |
 | **幻灯片 Slides** | WebGPU/WebGL2 画布、**母版与品牌套件（Master Brand Kit）**、文本/图形/表格/图表/视频/音频形状、图片裁剪、元素逐项动画与页面切换、演讲者模式（激光笔/画笔批注 + 基于 WebSocket 的**观众实时跟随放映**）、页/元素批注评论、版本历史、离线页面草稿合并、PPTX 导入导出与 PDF 打印 |
 | **画板与脑图 Board & MindMap** | 无限画布、流程图与泳道、头脑风暴便签/荧光笔/圆点投票/倒计时/小地图/分组框架、多结构思维导图、外框/概要/徽章、与大纲双向同步、Mermaid/XMind/SVG/PNG 导出 |
-| **知识库、云盘与全文检索 Wiki & Drive** | **多工作空间全生命周期**（创建、一键切换、重命名、所有权转让、成员退出、删除）、独立知识库空间与多级目录、快捷方式、**跨空间移动（个人/共享/跨工作区）**、**全格式在线预览**（图片缩放旋转、PDF、音视频、代码/Markdown/CSV、`.docx`/`.xlsx`/`.pptx`，含公开只读文档附件富预览）、**纯 Go 附件正文全文抽取与索引**（PDF 含 `FlateDecode`/UTF-16BE、DOCX、XLSX、PPTX、文本/代码自动入库并接入全局搜索） |
-| **AI 原生工作区 Workspace AI** | **混合语义向量 + BM25 RAG 全空间知识库问答**（128 维本地向量 + 可选远端 `/embeddings` + 权限隔离 + 文档与 PDF/Office 附件引用溯源）、**SSE 逐字流式输出**（`POST /api/ai/workspace-ask/stream`）、单文档 AI 写作、表格 AI 公式生成、多维表格 AI 批量填充、OpenAI / Anthropic 兼容多模型接入（无密钥时自动降级本地引擎） |
-| **企业身份与目录同步 Enterprise IAM** | **OIDC / OAuth2 + SAML 2.0 SP**（Metadata XML、AuthnRequest、原生 XML-DSig RSA/ECDSA 验签与 XXE/XSW 防护）、**SCIM 2.0（RFC 7644 完整实现）**（`ServiceProviderConfig`、`Schemas`、`ResourceTypes`、`Users`/`Groups` 全量 `PUT`/`PATCH`/`DELETE`/筛选/分页）、**LDAP v3 / 企业微信 / 钉钉主动拉取与定时同步**（原生 ASN.1 BER 客户端 + 加密凭据）、**TOTP MFA + 8 组恢复码 + 工作空间强制 MFA 策略**、**WebAuthn / Passkeys（FIDO2 ES256/RS256）无密码登录** |
-| **安全合规与开放生态 Governance & Open** | **企业 DLP 敏感词与安全 RE2 正则防泄漏**（覆盖 Doc / Sheet / Base / Slides / Survey，拦截/告警公开分享与 CSV/公开附件导出）、**数据保留周期策略与后台定时/手动清扫**、全套件防泄密水印、公开分享密码、企业安全审计日志与 CSV 导出、**OpenAPI 3.1.0 全量契约（351 个接口 100% 路由覆盖校验 + 27 数据模型 + 交互式开发者门户）**、**PAT 个人访问令牌**、**全部 6 类空间事件 HMAC-SHA256 Webhook**、**外部通知渠道**（SMTP / 飞书 / 钉钉 / 企微 / Slack） |
-| **高可用、国际化与云原生 Scale & Ops** | **4 大实时协同 Hub 全量多副本水平扩展**（Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 均基于 Postgres `LISTEN/NOTIFY` 跨节点广播）、**全仓中/英双语完整国际化**（4,470 条词条，0 处用户可见遗漏）、PWA + IndexedDB 离线体验、`/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`、SHA-256 校验全量备份恢复 CLI（`jiange backup` / `jiange restore`）、生产级 **Helm Chart** 与 **Kustomize** 清单 |
+| **知识库、云盘与全文检索 Wiki & Drive** | **多工作空间全生命周期**（创建、一键切换、重命名、所有权转让 UI/API、成员退出、删除）、独立知识库空间与多级目录、快捷方式、**跨空间移动（个人/共享/跨工作区）**、**空间存储用量看板与配额拦截（HTTP 413）**、**全格式在线预览**（图片缩放旋转、PDF、音视频、代码/Markdown/CSV、`.docx`/`.xlsx`/`.pptx`，含公开只读文档附件富预览）、**纯 Go 附件正文全文抽取 + 可插拔 OCR（HTTP / OpenAI Vision / `tesseract`）+ 存量附件一键/CLI 回填重建索引** |
+| **AI 原生工作区 Workspace AI** | **混合语义向量 + BM25 RAG 全空间知识库问答**（128 维本地向量 + 可选远端 `/embeddings` + 权限隔离 + 文档与 PDF/Office/OCR 附件引用溯源）、**全空间与单文档双路 SSE 逐字流式输出**（`POST /api/ai/workspace-ask/stream` · `POST /api/ai/doc/stream`）、表格 AI 公式生成、多维表格 AI 批量填充、OpenAI / Anthropic 兼容多模型接入（无密钥时自动降级本地引擎） |
+| **企业身份与目录同步 Enterprise IAM** | **OIDC / OAuth2 + SAML 2.0 SP**（Metadata XML、AuthnRequest、原生 XML-DSig RSA/ECDSA 验签与 XXE/XSW 防护）、**SCIM 2.0（RFC 7644 完整实现）**（`ServiceProviderConfig`、`Schemas`、`ResourceTypes`、`Users`/`Groups` 全量 `PUT`/`PATCH`/`DELETE`/筛选/分页）、**LDAP v3 / 企业微信 / 钉钉主动拉取与定时同步**（原生 ASN.1 BER 客户端 + 加密凭据）、**TOTP MFA + 8 组恢复码 + 工作空间强制 MFA 策略与全局顶部引导横幅**、**WebAuthn / Passkeys（FIDO2 ES256/RS256）无密码登录**、**账号安全自助闭环**（登录/MFA/Passkey/公开链接防爆破限流、修改密码、SMTP 忘记/重置密码、活跃登录设备列表与远程踢出） |
+| **安全合规与开放生态 Governance & Open** | **企业 DLP 敏感词与安全 RE2 正则防泄漏**（覆盖 Doc / Sheet / Base / Slides / Survey，拦截/告警公开分享与 CSV/公开附件导出）、**数据保留周期策略与后台定时/手动清扫**、全套件防泄密水印、公开分享密码、企业安全审计日志与 CSV 导出、**OpenAPI 3.1.0 全量契约（361 个接口 100% 路由覆盖校验 + 27 数据模型 + 交互式开发者门户）**、**PAT 个人访问令牌**、**全部 6 类空间事件 HMAC-SHA256 Webhook**、**外部通知渠道**（SMTP / 飞书 / 钉钉 / 企微 / Slack） |
+| **高可用、国际化与云原生 Scale & Ops** | **4 大实时协同 Hub 全量多副本水平扩展**（Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 均基于 Postgres `LISTEN/NOTIFY` 跨节点广播）、**全仓中/英双语完整国际化**（5,332 条词条，0 处用户可见遗漏）、**路由级 `React.lazy` + Rollup 分包**（主包 308 KB / gzip 84 KB）、PWA + IndexedDB 离线编辑与重连自动合并（Doc / Base / Sheet / Slides）、`/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`、SHA-256 校验全量备份恢复 CLI（`jiange backup` / `restore` / `reindex-attachments`）、生产级 **Helm Chart** 与 **Kustomize** 清单 |
 
 ---
 
@@ -116,12 +116,13 @@ cd server && go run ./cmd/jiange         # :8080, runs migrations (0001..0091) o
 pnpm --filter @jiange/web dev            # http://localhost:5173 (proxies /api & /scim -> :8080)
 ```
 
-数据备份与恢复 / Portable Backup & Restore (SHA-256 verified):
+数据备份恢复与附件全文索引回填 / Backup, Restore & Attachment Index Backfill:
 
 ```bash
 cd server
 go run ./cmd/jiange backup /path/to/jiange-backup.tar.gz
 go run ./cmd/jiange restore /path/to/jiange-backup.tar.gz
+go run ./cmd/jiange reindex-attachments [workspaceId]
 ```
 
 体验零构建 WebGPU/WebGL2 + 虚拟列表 UI SDK Playground：
@@ -131,7 +132,7 @@ pnpm -r build
 node examples/ui-playground/serve.mjs    # http://127.0.0.1:4173
 ```
 
-环境变量 / Env: `DATABASE_URL`, `JIANGE_ADDR` (default `:8080`), `JIANGE_SESSION_TTL` (default `720h`), `JIANGE_SECURE_COOKIES=true` behind HTTPS, `JIANGE_SECRET_KEY` (AES-256-GCM sealing for AI keys / SSO secrets / LDAP-WeCom-DingTalk connector credentials / Webhook & Notification channel secrets), `JIANGE_METRICS_TOKEN` (optional Bearer token guarding `/metrics`), `JIANGE_AI_EMBEDDING_MODEL` (optional remote `/embeddings` model name), `JIANGE_BLOB_DIR` (local disk blob dir, overrides S3 when set).
+环境变量 / Env: `DATABASE_URL`, `JIANGE_ADDR` (default `:8080`), `JIANGE_SESSION_TTL` (default `720h`), `JIANGE_SECURE_COOKIES=true` behind HTTPS, `JIANGE_SECRET_KEY` (AES-256-GCM sealing for AI keys / SSO secrets / LDAP-WeCom-DingTalk connector credentials / Webhook & Notification channel secrets), `JIANGE_METRICS_TOKEN` (optional Bearer token guarding `/metrics`), `JIANGE_AI_EMBEDDING_MODEL` (optional remote `/embeddings` model name), `JIANGE_OCR_URL` / `JIANGE_OCR_MODE` / `JIANGE_OCR_API_KEY` / `JIANGE_OCR_TESSERACT` (optional OCR for images & scanned PDFs), `JIANGE_BLOB_DIR` (local disk blob dir, overrides S3 when set).
 
 文档待确认操作的安全停止默认关闭。部署时先应用数据库迁移、升级并排空所有旧的文档写入实例，再设置 `JIANGE_ENABLE_CONDITIONAL_CANCEL=true`；启用后不能让不支持停止屏障的旧实例重新写入。详见 [docs/deploy.md](docs/deploy.md) 与 [deploy/README.md](deploy/README.md)。
 
@@ -144,7 +145,7 @@ Set `JIANGE_S3_ENDPOINT` (e.g. `http://localhost:9000`), `JIANGE_S3_ACCESS_KEY`,
 ```bash
 pnpm lint:names                          # 全仓 kebab-case 路径校验（1,960+ 追踪路径）
 pnpm -r build && pnpm -r typecheck       # 全部 13 个 SDK/UI 包 + apps/web 构建与类型校验
-pnpm test                                # 全仓 Vitest 单测（apps/web 313 文件 / 1,805 用例）
+pnpm test                                # 全仓 Vitest 单测（apps/web 313 文件 / 1,814 用例）
 pnpm test:sdk:coverage                   # 全部 13 个 TS SDK/UI 包 100/100/100/100 V8 覆盖率门禁
 pnpm test:sdk:pack                       # 真实 pnpm pack 隔离 Node ESM 与 NodeNext 类型验证
 pnpm test:e2e                            # Playwright 全套浏览器端到端回归（登录/空间/四件套/管理台/双语/离线）
@@ -163,21 +164,22 @@ go test ./collab -run '^$' -fuzz '^FuzzDecode$' -fuzztime 30s
 
 ## 核心认证、可观测与开放 API / Auth, Ops & Open API
 
-完整 351 个接口契约可直接访问 `GET /api/openapi.json` 或在管理后台「开发者 / API」页签交互式浏览与复制 cURL。
+完整 361 个接口契约可直接访问 `GET /api/openapi.json` 或在管理后台「开发者 / API」页签交互式浏览与复制 cURL。
 
 | Method | Path | 说明 |
 |---|---|---|
 | GET | `/healthz` · `/readyz` · `/metrics` | 存活探针、DB/存储就绪探针与 Prometheus 0.0.4 监控指标 |
-| GET | `/api/openapi.json` | 完整 OpenAPI 3.1.0 规范（351 接口、27 数据模型） |
+| GET | `/api/openapi.json` | 完整 OpenAPI 3.1.0 规范（361 接口、27 数据模型） |
 | GET/POST/PUT/PATCH/DELETE | `/scim/v2/{ServiceProviderConfig,Schemas,ResourceTypes,Users,Groups}` | RFC 7643/7644 SCIM 2.0 组织成员与群组同步（`admin` 作用域 PAT） |
-| POST | `/api/auth/register` · `/api/auth/login` · `/api/auth/mfa/verify` | 注册、密码登录（含 TOTP/恢复码二步挑战与强制 MFA 策略） |
+| POST | `/api/auth/register` · `/api/auth/login` · `/api/auth/mfa/verify` · `/api/auth/password-reset/{request,confirm}` | 注册、密码登录（含限流、TOTP/恢复码二步挑战与强制 MFA 策略）及 SMTP 密码重置 |
 | POST | `/api/auth/passkey/login/{begin,finish}` | WebAuthn / Passkeys（FIDO2 ES256/RS256）无密码登录 |
 | GET/POST | `/api/auth/sso/{slug}/{start,callback,metadata.xml,acs}` | 企业 OIDC / OAuth2 与 SAML 2.0 SP 单点登录 |
-| GET | `/api/me` · `/api/me/passkeys` · `/api/me/tokens` | 当前用户（支持 Cookie 或 `Authorization: Bearer jg_pat_...` PAT）、通行密钥与令牌管理 |
+| GET/POST/DELETE | `/api/me` · `/api/me/password` · `/api/me/sessions` · `/api/me/passkeys` · `/api/me/tokens` | 当前用户、修改密码、活跃设备会话管理/踢出、通行密钥与 PAT 令牌 |
 | GET/POST/PATCH/DELETE | `/api/workspaces` · `/api/workspaces/{wsId}` | 多工作空间创建、切换、重命名、所有权转让（`/transfer-owner`）、退出（`/leave`）与删除 |
+| GET/PUT/POST | `/api/workspaces/{wsId}/storage` · `/storage/quota` · `/attachments/reindex` | 空间存储用量看板、配额上限（413 拦截）与存量附件全文/OCR 回填重建索引 |
 | POST | `/api/workspaces/{wsId}/org/sync-sources/{sourceId}/pull` | 触发 LDAP v3 / 企业微信 / 钉钉主动目录拉取（支持 Dry-Run） |
 | POST | `/api/workspaces/{wsId}/dlp/check` · `/retention/run` | 企业 DLP 敏感词/正则实时试测与数据保留周期即时清理 |
-| POST | `/api/ai/ask-workspace` · `/api/ai/workspace-ask/stream` | 混合语义向量 RAG 全空间问答（支持 SSE 流式输出与附件内容引用） |
+| POST | `/api/ai/ask-workspace` · `/api/ai/workspace-ask/stream` · `/api/ai/doc/stream` | 混合语义向量 RAG 全空间问答与单文档 AI 写作（均支持 SSE 逐字流式输出） |
 | GET/POST | `/api/workspaces/{wsId}/webhooks` · `/notification-channels` | 全部 6 类空间事件 HMAC-SHA256 Webhook 与外部通知渠道（SMTP/飞书/钉钉/企微/Slack） |
 
 会话：32 字节随机 token，仅存 SHA-256 哈希；Cookie `HttpOnly; SameSite=Lax`。密码：PBKDF2-HMAC-SHA256（600k 次，Go 标准库 `crypto/pbkdf2`）。写请求必须为 `application/json`（配合 SameSite 防 CSRF，SAML HTTP-POST ACS 与带自定义头的上传端点除外）。

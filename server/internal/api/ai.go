@@ -297,42 +297,61 @@ type aiProviderError struct {
 
 func (e aiProviderError) Error() string { return e.message }
 
+type resolvedAIProvider struct {
+	provider string
+	base     string
+	model    string
+	key      string
+}
+
+func (s *Server) resolveAIProvider(ctx context.Context, userID int64) (resolvedAIProvider, error) {
+	cur, err := s.Store.AISettings(ctx, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return resolvedAIProvider{}, errAINotConfigured
+	}
+	if err != nil {
+		return resolvedAIProvider{}, err
+	}
+	if len(s.AISecret) != 32 {
+		return resolvedAIProvider{}, aiProviderError{http.StatusServiceUnavailable, "ai_secret_missing", "服务器未配置 JIANGE_SECRET_KEY，无法读取已保存的 API Key"}
+	}
+	key, err := openAIKey(s.AISecret, userID, cur.APIKeyCipher)
+	if err != nil {
+		return resolvedAIProvider{}, aiProviderError{http.StatusConflict, "ai_key_unreadable", "已保存的 API Key 无法解密（服务端密钥可能已更换），请在 AI 设置中重新填写"}
+	}
+	provider, _ := normalizeProvider(cur.Provider)
+	base, ok := s.normalizeAIBase(cur.BaseURL, provider)
+	if !ok {
+		return resolvedAIProvider{}, aiProviderError{http.StatusBadRequest, "invalid_base_url", "接口地址无效，请在 AI 设置中修改"}
+	}
+	model := strings.TrimSpace(cur.Model)
+	if model == "" {
+		_, model = aiDefaults(provider)
+	}
+	return resolvedAIProvider{provider: provider, base: base, model: model, key: key}, nil
+}
+
 // callAI sends one chat completion with the caller's own settings.
 func (s *Server) callAI(ctx context.Context, userID int64, messages []aiMessage) (string, error) {
 	return s.callAIWithImage(ctx, userID, messages, nil)
 }
 
 func (s *Server) callAIWithImage(ctx context.Context, userID int64, messages []aiMessage, image *aiInputImage) (string, error) {
-	cur, err := s.Store.AISettings(ctx, userID)
-	if errors.Is(err, store.ErrNotFound) {
-		return "", errAINotConfigured
-	}
+	cfg, err := s.resolveAIProvider(ctx, userID)
 	if err != nil {
 		return "", err
 	}
-	if len(s.AISecret) != 32 {
-		return "", aiProviderError{http.StatusServiceUnavailable, "ai_secret_missing", "服务器未配置 JIANGE_SECRET_KEY，无法读取已保存的 API Key"}
-	}
-	key, err := openAIKey(s.AISecret, userID, cur.APIKeyCipher)
-	if err != nil {
-		return "", aiProviderError{http.StatusConflict, "ai_key_unreadable", "已保存的 API Key 无法解密（服务端密钥可能已更换），请在 AI 设置中重新填写"}
-	}
-	provider, _ := normalizeProvider(cur.Provider)
-	base, ok := s.normalizeAIBase(cur.BaseURL, provider)
-	if !ok {
-		return "", aiProviderError{http.StatusBadRequest, "invalid_base_url", "接口地址无效，请在 AI 设置中修改"}
-	}
 	var req *http.Request
 	if image != nil {
-		req, err = aiVisionRequest(ctx, base, key, cur.Model, provider, messages, *image)
-	} else if provider == "anthropic" {
-		req, err = anthropicRequest(ctx, base, key, cur.Model, messages)
+		req, err = aiVisionRequest(ctx, cfg.base, cfg.key, cfg.model, cfg.provider, messages, *image)
+	} else if cfg.provider == "anthropic" {
+		req, err = anthropicRequest(ctx, cfg.base, cfg.key, cfg.model, messages)
 	} else {
-		body, _ := json.Marshal(map[string]any{"model": cur.Model, "messages": messages, "max_tokens": 2048, "temperature": 0.3})
-		req, err = http.NewRequestWithContext(ctx, http.MethodPost, base+"/chat/completions", bytes.NewReader(body))
+		body, _ := json.Marshal(map[string]any{"model": cfg.model, "messages": messages, "max_tokens": 2048, "temperature": 0.3})
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, cfg.base+"/chat/completions", bytes.NewReader(body))
 		if err == nil {
 			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Authorization", "Bearer "+key)
+			req.Header.Set("Authorization", "Bearer "+cfg.key)
 		}
 	}
 	if err != nil {
@@ -358,7 +377,7 @@ func (s *Server) callAIWithImage(ctx context.Context, userID int64, messages []a
 	case res.StatusCode >= 300:
 		return "", aiProviderError{http.StatusBadGateway, "ai_failed", fmt.Sprintf("AI 服务返回错误（HTTP %d）", res.StatusCode)}
 	}
-	if provider == "anthropic" {
+	if cfg.provider == "anthropic" {
 		return parseAnthropic(raw)
 	}
 	var out struct {
@@ -400,49 +419,200 @@ func (s *Server) testAISettings(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
 }
 
-// docAI runs a completion on behalf of a document the caller may read and copy.
-func (s *Server) docAI(w http.ResponseWriter, r *http.Request) {
-	d, ok := s.need(w, r, store.RoleView)
+type docAIRequest struct {
+	DocID    int64       `json:"docId,omitempty"`
+	Messages []aiMessage `json:"messages"`
+}
+
+func (s *Server) prepareDocAIRequest(w http.ResponseWriter, r *http.Request) (store.User, []aiMessage, bool) {
+	u, ok := UserFrom(r.Context())
 	if !ok {
-		return
+		httpx.Error(w, http.StatusUnauthorized, "unauthorized", "login required")
+		return store.User{}, nil, false
 	}
-	if !store.DocumentCopyAllowed(d, d.Role) {
-		httpx.Error(w, http.StatusForbidden, "copy_restricted", "该文档禁止复制内容，不能发送给 AI")
-		return
+
+	var d store.DocMeta
+	var in docAIRequest
+	if r.PathValue("id") != "" {
+		d, ok = s.need(w, r, store.RoleView)
+		if !ok {
+			return store.User{}, nil, false
+		}
+		if !store.DocumentCopyAllowed(d, d.Role) {
+			httpx.Error(w, http.StatusForbidden, "copy_restricted", "该文档禁止复制内容，不能发送给 AI")
+			return store.User{}, nil, false
+		}
+		if !httpx.Decode(w, r, &in) {
+			return store.User{}, nil, false
+		}
+	} else {
+		if !httpx.Decode(w, r, &in) {
+			return store.User{}, nil, false
+		}
+		if in.DocID <= 0 {
+			httpx.Error(w, http.StatusBadRequest, "invalid_doc_id", "文档 ID 无效")
+			return store.User{}, nil, false
+		}
+		var err error
+		d, err = s.Store.GetDoc(r.Context(), u.ID, in.DocID)
+		if errors.Is(err, store.ErrNotFound) {
+			httpx.Error(w, http.StatusNotFound, "not_found", "document not found")
+			return store.User{}, nil, false
+		}
+		if err != nil {
+			s.fail(w, r, err)
+			return store.User{}, nil, false
+		}
+		if store.RoleRank(d.Role) < store.RoleRank(store.RoleView) {
+			httpx.Error(w, http.StatusForbidden, "forbidden", "需要"+store.RoleView+"权限")
+			return store.User{}, nil, false
+		}
+		if !store.DocumentCopyAllowed(d, d.Role) {
+			httpx.Error(w, http.StatusForbidden, "copy_restricted", "该文档禁止复制内容，不能发送给 AI")
+			return store.User{}, nil, false
+		}
 	}
-	var in struct {
-		Messages []aiMessage `json:"messages"`
-	}
-	if !httpx.Decode(w, r, &in) {
-		return
-	}
+
 	if len(in.Messages) == 0 || len(in.Messages) > aiMaxMessages {
 		httpx.Error(w, http.StatusBadRequest, "invalid_messages", "消息数量无效")
-		return
+		return store.User{}, nil, false
 	}
 	total := 0
 	for _, m := range in.Messages {
 		if m.Role != "system" && m.Role != "user" && m.Role != "assistant" {
 			httpx.Error(w, http.StatusBadRequest, "invalid_messages", "消息角色无效")
-			return
+			return store.User{}, nil, false
 		}
 		total += utf8.RuneCountInString(m.Content)
 	}
 	if total == 0 || total > aiMaxInputChars {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "ai_input_too_large", fmt.Sprintf("发送给 AI 的内容需在 1-%d 字之间", aiMaxInputChars))
-		return
+		return store.User{}, nil, false
 	}
-	u, _ := UserFrom(r.Context())
 	if !s.aiRate.allow(u.ID, s.now()) {
 		httpx.Error(w, http.StatusTooManyRequests, "ai_rate_limited", "请求过于频繁，请稍后再试")
+		return store.User{}, nil, false
+	}
+	return u, in.Messages, true
+}
+
+func aiStreamErrorPayload(err error) map[string]string {
+	var pe aiProviderError
+	switch {
+	case errors.Is(err, errAINotConfigured):
+		return map[string]string{"code": "ai_not_configured", "error": "ai_not_configured", "message": "尚未配置 AI，请在「设置 → AI」中填写 API Key"}
+	case errors.As(err, &pe):
+		code, msg := pe.code, pe.message
+		if code == "ai_failed" {
+			switch {
+			case strings.Contains(msg, "HTTP 401") || strings.Contains(msg, "HTTP 403"):
+				code = "ai_auth_failed"
+				msg = "API Key 无效或没有该模型的权限"
+			case strings.Contains(msg, "HTTP 429"):
+				code = "ai_rate_limited"
+				msg = "AI 服务限流或额度不足，请稍后重试"
+			}
+		}
+		return map[string]string{"code": code, "error": code, "message": msg}
+	default:
+		return map[string]string{"code": "ai_failed", "error": "ai_failed", "message": "AI 请求失败，请稍后重试"}
+	}
+}
+
+// docAI runs a completion on behalf of a document the caller may read and copy.
+func (s *Server) docAI(w http.ResponseWriter, r *http.Request) {
+	u, messages, ok := s.prepareDocAIRequest(w, r)
+	if !ok {
 		return
 	}
-	text, err := s.callAI(r.Context(), u.ID, in.Messages)
+	text, err := s.callAI(r.Context(), u.ID, messages)
 	if err != nil {
 		s.aiError(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]string{"text": text})
+}
+
+// aiDocStream streams a single-document AI completion over Server-Sent Events
+// (POST /api/ai/doc/stream). Pre-flight auth, permission, copy-restriction,
+// validation, rate-limit, and provider checks return standard JSON errors before
+// SSE headers are written.
+func (s *Server) aiDocStream(w http.ResponseWriter, r *http.Request) {
+	u, messages, ok := s.prepareDocAIRequest(w, r)
+	if !ok {
+		return
+	}
+	cfg, err := s.resolveAIProvider(r.Context(), u.ID)
+	if err != nil {
+		s.aiError(w, r, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	rc := http.NewResponseController(w)
+	var fullBuf strings.Builder
+	emitDelta := func(chunk string) error {
+		if chunk == "" {
+			return nil
+		}
+		fullBuf.WriteString(chunk)
+		return writeSSEEvent(w, rc, "delta", map[string]string{"text": chunk})
+	}
+
+	streamed, aiErr := s.streamAI(r.Context(), u.ID, messages, emitDelta)
+	if aiErr != nil {
+		if r.Context().Err() != nil {
+			return
+		}
+		if !streamed {
+			payload := aiStreamErrorPayload(aiErr)
+			switch payload["code"] {
+			case "ai_blocked_address", "ai_auth_failed", "ai_rate_limited", "ai_unreachable":
+				_ = writeSSEEvent(w, rc, "error", payload)
+				return
+			}
+			// Graceful fallback for proxies that reject stream=true before emitting tokens.
+			text, callErr := s.callAI(r.Context(), u.ID, messages)
+			if callErr == nil && strings.TrimSpace(text) != "" {
+				if err := streamTextChunks(r.Context(), strings.TrimSpace(text), 24, emitDelta); err != nil {
+					return
+				}
+				streamed = true
+			} else {
+				if r.Context().Err() != nil {
+					return
+				}
+				if callErr != nil {
+					payload = aiStreamErrorPayload(callErr)
+				}
+				_ = writeSSEEvent(w, rc, "error", payload)
+				return
+			}
+		} else {
+			_ = writeSSEEvent(w, rc, "error", aiStreamErrorPayload(aiErr))
+			return
+		}
+	}
+
+	if !streamed {
+		_ = writeSSEEvent(w, rc, "error", map[string]string{
+			"code":    "ai_bad_response",
+			"error":   "ai_bad_response",
+			"message": "AI 流式响应未返回文本内容",
+		})
+		return
+	}
+
+	_ = writeSSEEvent(w, rc, "done", map[string]string{
+		"text":     strings.TrimSpace(fullBuf.String()),
+		"provider": cfg.provider,
+		"model":    cfg.model,
+	})
 }
 
 // anthropicRequest builds a Messages API call: system prompts go to the top-level

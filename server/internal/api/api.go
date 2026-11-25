@@ -101,6 +101,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/mfa/verify", s.verifyMFALogin)
 	mux.HandleFunc("POST /api/auth/passkey/login/begin", s.beginPasskeyLogin)
 	mux.HandleFunc("POST /api/auth/passkey/login/finish", s.finishPasskeyLogin)
+	mux.HandleFunc("POST /api/auth/password-reset/request", s.requestPasswordReset)
+	mux.HandleFunc("POST /api/auth/password-reset/confirm", s.confirmPasswordReset)
 	mux.Handle("GET /api/me", s.requireUser(http.HandlerFunc(s.me)))
 	mux.Handle("GET /api/link-preview", s.requireUser(http.HandlerFunc(s.linkPreview)))
 	mux.Handle("GET /api/docs", s.requireUser(http.HandlerFunc(s.listDocs)))
@@ -309,6 +311,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/docs/{id}/ai":            s.docAI,
 		"POST /api/ai/ask-workspace":        s.aiAskWorkspace,
 		"POST /api/ai/workspace-ask/stream": s.aiWorkspaceAskStream,
+		"POST /api/ai/doc/stream":           s.aiDocStream,
 		"POST /api/ai/sheet-assist":         s.aiSheetAssist,
 		"POST /api/ai/base-fill":            s.aiBaseFill,
 
@@ -377,6 +380,9 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/workspaces/{wsId}/security-policy":        s.putWorkspaceSecurityPolicy,
 		"POST /api/workspaces/{wsId}/dlp/check":             s.checkWorkspaceDLP,
 		"POST /api/workspaces/{wsId}/retention/run":         s.runWorkspaceRetention,
+		"GET /api/workspaces/{wsId}/storage":                s.getWorkspaceStorage,
+		"PUT /api/workspaces/{wsId}/storage/quota":          s.putWorkspaceStorageQuota,
+		"POST /api/workspaces/{wsId}/attachments/reindex":   s.reindexWorkspaceAttachments,
 
 		// 开放平台（PAT 个人访问令牌、空间事件 Webhook）与二步验证（TOTP MFA）
 		"GET /api/me/tokens":                                   s.listMyPATs,
@@ -390,6 +396,10 @@ func (s *Server) Handler() http.Handler {
 		"DELETE /api/me/passkeys/{pid}":                        s.deleteMyPasskey,
 		"POST /api/me/passkeys/register/begin":                 s.beginPasskeyRegister,
 		"POST /api/me/passkeys/register/finish":                s.finishPasskeyRegister,
+		"POST /api/me/password":                                s.changePassword,
+		"GET /api/me/sessions":                                 s.listMySessions,
+		"DELETE /api/me/sessions/{sid}":                        s.revokeMySession,
+		"POST /api/me/sessions/revoke-others":                  s.revokeOtherMySessions,
 		"GET /api/workspaces/{wsId}/webhooks":                  s.listWorkspaceWebhooks,
 		"POST /api/workspaces/{wsId}/webhooks":                 s.createWorkspaceWebhook,
 		"PATCH /api/workspaces/{wsId}/webhooks/{wid}":          s.updateWorkspaceWebhook,
@@ -530,11 +540,13 @@ func (s *Server) requireUser(next http.Handler) http.Handler {
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		u, err := s.Store.SessionUser(r.Context(), auth.HashToken(c.Value), s.now())
+		sessionHash := auth.HashToken(c.Value)
+		u, err := s.Store.SessionUser(r.Context(), sessionHash, s.now())
 		if err != nil {
 			httpx.Error(w, http.StatusUnauthorized, "unauthorized", "session expired")
 			return
 		}
+		s.touchSessionMeta(r, sessionHash)
 		ctx := context.WithValue(r.Context(), userKey, u)
 		ctx = store.WithActor(ctx, store.Actor{UserID: u.ID, Kind: "user"})
 		next.ServeHTTP(w, r.WithContext(ctx))
@@ -570,6 +582,9 @@ func validEmail(e string) bool {
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	var c credentials
 	if !httpx.Decode(w, r, &c) {
+		return
+	}
+	if !s.authRateLimit(w, r, authRateBucketRegister, "", authRateRegisterMaxIP, 0, authRateRegisterWindow) {
 		return
 	}
 	c.Email = strings.TrimSpace(c.Email)
@@ -608,6 +623,9 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	var c credentials
 	if !httpx.Decode(w, r, &c) {
+		return
+	}
+	if !s.authRateLimit(w, r, authRateBucketLogin, c.Email, authRateLoginMaxIP, authRateLoginMaxAccount, authRateLoginWindow) {
 		return
 	}
 	u, err := s.Store.UserByEmail(r.Context(), strings.TrimSpace(c.Email))
@@ -682,6 +700,7 @@ func (s *Server) startSession(w http.ResponseWriter, r *http.Request, uid int64)
 		s.fail(w, r, err)
 		return false
 	}
+	s.recordSessionMeta(r, h)
 	http.SetCookie(w, s.cookie(tok, int(s.SessionTTL.Seconds())))
 	return true
 }

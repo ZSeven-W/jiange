@@ -76,6 +76,9 @@ func (s *Server) uploadImportImage(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	if !s.enforceWorkspaceStorageQuota(r.Context(), w, d.WorkspaceID, int64(len(body))) {
+		return
+	}
 	key := fmt.Sprintf("docs/%d/%s", d.ID, tok)
 	if err = s.Blobs.Put(r.Context(), key, mime, body); err != nil {
 		s.fail(w, r, err)

@@ -31,10 +31,10 @@ export function JoinLink({ token, userId }: { token: string; userId: number }) {
         }
         setErr(
           error instanceof ApiError && error.status === 404
-            ? "链接已失效，或当前账号不在允许的访问范围内"
+            ? t("链接已失效，或当前账号不在允许的访问范围内")
             : error instanceof ApiError && error.status === 401
-              ? "登录状态已失效，请重新登录"
-              : "暂时无法打开链接，请稍后重试",
+              ? t("登录状态已失效，请重新登录")
+              : t("暂时无法打开链接，请稍后重试"),
         );
       });
     return () => { active = false; controller.abort(); };
@@ -53,5 +53,5 @@ export function JoinLink({ token, userId }: { token: string; userId: number }) {
       </div>
     );
   }
-  return <div className="grid flex-1 place-items-center px-6 text-center text-muted-foreground"><div>{err || "正在打开分享的文档…"}{err && <div><button type="button" onClick={() => setAttempt((value) => value + 1)} className="mt-3 rounded border px-3 py-1.5 text-[13px] text-foreground hover:bg-hover">重试</button></div>}</div></div>;
+  return <div className="grid flex-1 place-items-center px-6 text-center text-muted-foreground"><div>{err || t("正在打开分享的文档…")}{err && <div><button type="button" onClick={() => setAttempt((value) => value + 1)} className="mt-3 rounded border px-3 py-1.5 text-[13px] text-foreground hover:bg-hover">{t("重试")}</button></div>}</div></div>;
 }

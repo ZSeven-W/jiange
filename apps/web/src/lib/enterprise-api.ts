@@ -94,6 +94,41 @@ export interface RetentionPurgeStats {
   ranAt: string;
 }
 
+export interface StorageKindBreakdown {
+  kind: string;
+  count: number;
+  bytes: number;
+}
+
+export interface StorageTopAttachment {
+  id: number;
+  docId: number;
+  docTitle: string;
+  docKind: string;
+  name: string;
+  mime: string;
+  size: number;
+  createdAt: string;
+}
+
+export interface WorkspaceStorageUsage {
+  workspaceId: number;
+  usedBytes: number;
+  quotaBytes: number;
+  attachmentCount: number;
+  indexedCount: number;
+  byKind: StorageKindBreakdown[];
+  topAttachments: StorageTopAttachment[];
+}
+
+export interface AttachmentReindexStats {
+  workspaceId?: number;
+  scanned: number;
+  indexed: number;
+  skipped: number;
+  failed: number;
+}
+
 async function enterpriseRequest<T>(
   method: string,
   path: string,
@@ -199,6 +234,33 @@ export const enterpriseApi = {
     enterpriseRequest<RetentionPurgeStats>(
       "POST",
       `/api/workspaces/${wsId}/retention/run`,
+      {},
+      undefined,
+      userHeaders(userId),
+    ),
+
+  getWorkspaceStorage: (wsId: number, userId?: number, signal?: AbortSignal) =>
+    enterpriseRequest<WorkspaceStorageUsage>(
+      "GET",
+      `/api/workspaces/${wsId}/storage`,
+      undefined,
+      signal,
+      userHeaders(userId),
+    ),
+
+  updateWorkspaceStorageQuota: (wsId: number, quotaBytes: number, userId?: number) =>
+    enterpriseRequest<WorkspaceStorageUsage>(
+      "PUT",
+      `/api/workspaces/${wsId}/storage/quota`,
+      { quotaBytes },
+      undefined,
+      userHeaders(userId),
+    ),
+
+  reindexWorkspaceAttachments: (wsId: number, userId?: number) =>
+    enterpriseRequest<AttachmentReindexStats>(
+      "POST",
+      `/api/workspaces/${wsId}/attachments/reindex`,
       {},
       undefined,
       userHeaders(userId),

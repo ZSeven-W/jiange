@@ -1,9 +1,17 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PublicSSOProvider } from "@/lib/sso-api";
+import { MY_SESSIONS_QUERY_KEY, type UserSession } from "@/lib/account-security-api";
+import { AccountSecurityHost, parseUserAgentSummary } from "@/components/account-security-dialog";
 import { t } from "@/lib/i18n";
-import { formatSSOErrorMessage, LoginPage, readSSOErrorFromLocation } from "./login";
+import {
+  formatSSOErrorMessage,
+  LoginPage,
+  normalizePostLoginHash,
+  readResetTokenFromLocation,
+  readSSOErrorFromLocation,
+} from "./login";
 
 describe("LoginPage SSO integration", () => {
   it("omits SSO section when no public providers are enabled", () => {
@@ -131,5 +139,164 @@ describe("LoginPage Passkey integration", () => {
     );
     expect(html).not.toContain("data-passkey-login-btn");
     expect(html).not.toContain("使用通行密钥（Passkey）登录");
+  });
+});
+
+describe("LoginPage Password Reset & Hash Normalization", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("renders Forgot Password trigger in login mode and omits it in register mode", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+
+    const loginHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage initialMode="login" />
+      </QueryClientProvider>,
+    );
+    expect(loginHtml).toContain("data-forgot-password-btn");
+    expect(loginHtml).toContain("忘记密码？");
+    expect(loginHtml).not.toMatch(/<select[\s>]/i);
+
+    const registerHtml = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage initialMode="register" />
+      </QueryClientProvider>,
+    );
+    expect(registerHtml).not.toContain("data-forgot-password-btn");
+  });
+
+  it("renders Forgot Password request form", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage initialMode="forgot" />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("data-password-reset-request-form");
+    expect(html).toContain("找回密码");
+    expect(html).toContain("data-reset-email-input");
+    expect(html).toContain("data-reset-request-submit-btn");
+    expect(html).toContain("已有重置口令？立即重设");
+    expect(html).not.toMatch(/<select[\s>]/i);
+  });
+
+  it("auto-enters Reset Confirm mode and pre-fills token when initialResetToken is provided", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    qc.setQueryData(["public-sso-providers"], [] satisfies PublicSSOProvider[]);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <LoginPage initialResetToken="reset-tok-999" />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("data-password-reset-confirm-form");
+    expect(html).toContain("重设登录密码");
+    expect(html).toContain('value="reset-tok-999"');
+    expect(html).toContain("data-reset-new-password-input");
+    expect(html).toContain("data-reset-confirm-password-input");
+    expect(html).toContain("确认重设密码");
+    expect(html).not.toMatch(/<select[\s>]/i);
+  });
+
+  it("extracts reset_token from both search and hash query strings", () => {
+    expect(readResetTokenFromLocation("?reset_token=abc123", "")).toBe("abc123");
+    expect(readResetTokenFromLocation("", "#/login?reset_token=tok_xyz")).toBe("tok_xyz");
+    expect(readResetTokenFromLocation("", "#/?foo=1&reset_token=tok_456")).toBe("tok_456");
+    expect(readResetTokenFromLocation("", "#/login")).toBe("");
+  });
+
+  it("normalizes #/login and #/login?... hashes to #/ while preserving deep links", () => {
+    const replaceState = vi.fn();
+    const fakeWindow = {
+      location: { hash: "#/login" },
+      history: { replaceState },
+    };
+    vi.stubGlobal("window", fakeWindow);
+
+    normalizePostLoginHash();
+    expect(replaceState).toHaveBeenCalledWith(null, "", "#/");
+
+    replaceState.mockClear();
+    fakeWindow.location.hash = "#/login?reset_token=abc";
+    normalizePostLoginHash();
+    expect(replaceState).toHaveBeenCalledWith(null, "", "#/");
+
+    replaceState.mockClear();
+    fakeWindow.location.hash = "#/doc/42";
+    normalizePostLoginHash();
+    expect(replaceState).not.toHaveBeenCalled();
+  });
+});
+
+describe("AccountSecurityHost password and sessions tabs", () => {
+  it("renders password change tab with default revoke-other-sessions checkbox and zero selects", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <AccountSecurityHost initialOpen={true} initialTab="password" />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain('data-security-tab="password"');
+    expect(html).toContain('data-security-tab="sessions"');
+    expect(html).toContain("data-password-security-panel");
+    expect(html).toContain("data-password-change-form");
+    expect(html).toContain("同时退出其他设备登录");
+    expect(html).toContain("checked");
+    expect(html).not.toMatch(/<select[\s>]/i);
+  });
+
+  it("renders active sessions tab with parsed UA labels, current badge, and revoke buttons", () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const sessions: UserSession[] = [
+      {
+        id: 101,
+        userId: 1,
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Chrome/128.0.0.0 Safari/537.36",
+        ipAddress: "203.0.113.10",
+        createdAt: "2026-11-25T08:00:00Z",
+        lastSeenAt: "2026-11-25T09:45:00Z",
+        expiresAt: "2026-12-02T08:00:00Z",
+        current: true,
+      },
+      {
+        id: 102,
+        userId: 1,
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148 Safari/604.1",
+        ipAddress: "198.51.100.77",
+        createdAt: "2026-11-24T12:00:00Z",
+        lastSeenAt: "2026-11-25T07:30:00Z",
+        expiresAt: "2026-12-01T12:00:00Z",
+        current: false,
+      },
+    ];
+    qc.setQueryData<UserSession[]>(MY_SESSIONS_QUERY_KEY, sessions);
+
+    const html = renderToStaticMarkup(
+      <QueryClientProvider client={qc}>
+        <AccountSecurityHost initialOpen={true} initialTab="sessions" />
+      </QueryClientProvider>,
+    );
+    expect(html).toContain("data-sessions-security-panel");
+    expect(html).toContain("共 2 台活跃设备");
+    expect(html).toContain("Chrome · macOS");
+    expect(html).toContain("Safari · iPhone");
+    expect(html).toContain("203.0.113.10");
+    expect(html).toContain("198.51.100.77");
+    expect(html).toContain("data-current-session-badge");
+    expect(html).toContain("当前设备");
+    expect(html).toContain("data-revoke-other-sessions-btn");
+    expect(html).toContain('data-session-revoke-btn="102"');
+    expect(html).not.toMatch(/<select[\s>]/i);
+
+    expect(parseUserAgentSummary("", t)).toEqual({ label: "未知设备", isMobile: false });
+    expect(parseUserAgentSummary("Mozilla/5.0 (Windows NT 10.0) Edg/128.0", t)).toEqual({
+      label: "Edge · Windows",
+      isMobile: false,
+    });
   });
 });

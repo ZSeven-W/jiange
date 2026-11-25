@@ -8,8 +8,13 @@ import (
 )
 
 type session struct {
-	userID  int64
-	expires time.Time
+	id         int64
+	userID     int64
+	expires    time.Time
+	userAgent  string
+	ipAddress  string
+	createdAt  time.Time
+	lastSeenAt time.Time
 }
 
 // Memory is a thread-safe in-memory Store for tests and local experiments.
@@ -32,6 +37,7 @@ type Memory struct {
 	notifChannels     memNotifChannels
 	mfa               memMFA
 	sessions          map[string]session
+	sessionSeq        int64
 	d                 memDocs
 	sh                memShare
 	b                 memBase
@@ -119,7 +125,15 @@ func (m *Memory) UserByEmail(_ context.Context, email string) (User, error) {
 func (m *Memory) CreateSession(_ context.Context, h []byte, uid int64, exp time.Time) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.sessions[string(h)] = session{uid, exp}
+	m.sessionSeq++
+	now := time.Now()
+	m.sessions[string(h)] = session{
+		id:         m.sessionSeq,
+		userID:     uid,
+		expires:    exp,
+		createdAt:  now,
+		lastSeenAt: now,
+	}
 	return nil
 }
 

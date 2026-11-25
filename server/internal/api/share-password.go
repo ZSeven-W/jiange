@@ -244,6 +244,9 @@ func (s *Server) putLinkPassword(w http.ResponseWriter, r *http.Request) {
 func (s *Server) verifyPublicLinkPassword(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	tok := r.PathValue("token")
+	if !s.authRateLimit(w, r, authRateBucketPublicPassword, clientIP(r)+":"+tok, authRatePublicPasswordMaxIP, authRatePublicPasswordMaxToken, authRatePublicPasswordWindow) {
+		return
+	}
 	docID, _, err := s.Store.DocByToken(r.Context(), tok)
 	if errors.Is(err, store.ErrNotFound) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "链接已失效")

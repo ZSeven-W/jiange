@@ -251,6 +251,9 @@ func (s *Server) maybeStartMFAChallenge(w http.ResponseWriter, r *http.Request, 
 // records an auth.mfa_login audit event, and returns meResponse.
 func (s *Server) verifyMFALogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if !s.authRateLimit(w, r, authRateBucketMFA, "", authRateMFAMaxIP, 0, authRateMFAWindow) {
+		return
+	}
 	var req mfaVerifyLoginRequest
 	if !httpx.Decode(w, r, &req) {
 		return

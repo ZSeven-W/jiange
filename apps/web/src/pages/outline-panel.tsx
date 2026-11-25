@@ -236,10 +236,11 @@ export function OutlinePanel({
 
 /** 飞书式图片大图预览遮罩。 */
 export function ImagePreview({ src, alt, allowCopy = true, allowPrint = true, onClose }: { src: string; alt: string; allowCopy?: boolean; allowPrint?: boolean; onClose: () => void }) {
+  const { t } = useI18n();
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/80" onClick={onClose} onCopy={(event) => { if (!allowCopy) event.preventDefault(); }} onCut={(event) => { if (!allowCopy) event.preventDefault(); }} data-image-preview>
       <img src={src} alt={alt} draggable={allowPrint} data-document-print-restricted={!allowPrint ? "true" : undefined} onContextMenu={(event) => { if (!allowPrint) event.preventDefault(); }} className="max-h-[88vh] max-w-[92vw] rounded-lg object-contain shadow-2xl" />
-      <button className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label="关闭">
+      <button className="absolute right-4 top-4 rounded-full bg-white/10 px-3 py-1.5 text-[13px] text-white hover:bg-white/20" aria-label={t("关闭")}>
         ✕
       </button>
     </div>

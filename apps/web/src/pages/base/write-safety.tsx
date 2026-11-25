@@ -168,7 +168,7 @@ export function WriteIssues({ ledger, issues }: { ledger: WriteLedger; issues: W
       {ledger.mayShow(issue) ? <>
       <p>{t(issue.label)}：{issue.status === "pending" ? t("正在保存…") : issue.message}</p>
       {issue.status === "failed" && <>
-        <label className="mt-1 block">原始输入（可复制）<textarea readOnly value={issue.draft} rows={Math.min(4, Math.max(1, issue.draft.split("\n").length))} className="mt-1 block w-full rounded border bg-surface px-2 py-1 text-foreground" /></label>
+        <label className="mt-1 block">{t("原始输入（可复制）")}<textarea readOnly value={issue.draft} rows={Math.min(4, Math.max(1, issue.draft.split("\n").length))} className="mt-1 block w-full rounded border bg-surface px-2 py-1 text-foreground" /></label>
         <button type="button" onClick={() => ledger.discard(issue.id)} className="mt-1 underline">{t("已核对，关闭提示")}</button>
       </>}
       </> : <><p>{issue.publicMessage ? `${issue.publicMessage} ` : ""}{t("未确认的修改已保留；当前权限或数据范围发生变化，原内容暂时隐藏。")}</p>{issue.status === "failed" && <button type="button" onClick={() => ledger.discard(issue.id)} className="mt-1 underline">{t("删除这条未确认草稿")}</button>}</>}

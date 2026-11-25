@@ -1203,6 +1203,9 @@ func (s *Server) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 		allowCredentials []webAuthnCredentialDescriptor
 	)
 	email := strings.TrimSpace(req.Email)
+	if !s.authRateLimit(w, r, authRateBucketPasskey, email, authRatePasskeyMaxIP, authRatePasskeyMaxAccount, authRatePasskeyWindow) {
+		return
+	}
 	if email != "" {
 		u, err := s.Store.UserByEmail(r.Context(), email)
 		if err == nil {
@@ -1261,6 +1264,9 @@ func (s *Server) beginPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 // finishPasskeyLogin handles POST /api/auth/passkey/login/finish (public route).
 func (s *Server) finishPasskeyLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
+	if !s.authRateLimit(w, r, authRateBucketPasskey, "", authRatePasskeyMaxIP, 0, authRatePasskeyWindow) {
+		return
+	}
 	pkStore, ok := s.passkeyStore(w)
 	if !ok {
 		return

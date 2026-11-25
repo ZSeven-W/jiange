@@ -520,6 +520,9 @@ func (s *Server) uploadFile(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusForbidden, "forbidden", "当前权限暂不支持上传附件")
 		return
 	}
+	if !s.enforceWorkspaceStorageQuota(r.Context(), w, d.WorkspaceID, int64(len(body))) {
+		return
+	}
 	mime := hdr.Header.Get("Content-Type")
 	if mime == "" {
 		mime = http.DetectContentType(body)

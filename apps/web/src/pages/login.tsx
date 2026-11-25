@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, type Me } from "@/lib/api";
+import { confirmPasswordReset, requestPasswordReset } from "@/lib/account-security-api";
 import { isMfaChallengeResponse, mfaApi, type LoginOrMfaResponse } from "@/lib/mfa-api";
 import { isWebAuthnSupported, loginWithPasskey } from "@/lib/passkey-api";
 import { buildSSOStartUrl, ssoApi } from "@/lib/sso-api";
@@ -8,10 +9,24 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Logo } from "@/components/brand";
-import { AlertCircle, ArrowLeft, Check, FileText, Fingerprint, ShieldCheck, Sparkles, Table2, X } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  Check,
+  FileText,
+  Fingerprint,
+  KeyRound,
+  Mail,
+  ShieldCheck,
+  Sparkles,
+  Table2,
+  X,
+} from "lucide-react";
 import { finishLogin } from "@/lib/session-cache";
 import { useI18n, type TFunc } from "@/lib/i18n";
 import { LocaleToggle } from "@/components/locale-toggle";
+
+export type LoginViewMode = "login" | "register" | "forgot" | "reset";
 
 export function readSSOErrorFromLocation(search: string, hash: string): string {
   const fromSearch = new URLSearchParams(search).get("sso_error")?.trim();
@@ -22,6 +37,33 @@ export function readSSOErrorFromLocation(search: string, hash: string): string {
     if (fromHash) return fromHash;
   }
   return "";
+}
+
+export function readResetTokenFromLocation(search: string, hash: string): string {
+  const fromSearch = new URLSearchParams(search).get("reset_token")?.trim();
+  if (fromSearch) return fromSearch;
+  const qIdx = hash.indexOf("?");
+  if (qIdx >= 0) {
+    const fromHash = new URLSearchParams(hash.slice(qIdx + 1)).get("reset_token")?.trim();
+    if (fromHash) return fromHash;
+  }
+  return "";
+}
+
+/**
+ * Normalize `#/login` (and `#/login?...`) back to `#/` after successful auth so
+ * authenticated users are never left stranded on the login hash URL.
+ */
+export function normalizePostLoginHash(): void {
+  if (typeof window === "undefined") return;
+  const hash = window.location.hash || "";
+  if (/^#\/login(?:$|[/?#])/i.test(hash)) {
+    try {
+      window.history.replaceState(null, "", "#/");
+    } catch {
+      window.location.hash = "#/";
+    }
+  }
 }
 
 export function formatSSOErrorMessage(code: string, t: TFunc): string {
@@ -59,17 +101,38 @@ export function LoginPage({
   initialSSOError,
   initialMFAChallenge = null,
   initialPasskeySupported,
+  initialMode,
+  initialResetToken,
 }: {
   initialSSOError?: string;
   initialMFAChallenge?: LoginMFAChallenge | null;
   initialPasskeySupported?: boolean;
+  initialMode?: LoginViewMode;
+  initialResetToken?: string;
 } = {}) {
   const { t } = useI18n();
   const passkeySupported = initialPasskeySupported ?? isWebAuthnSupported();
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const detectedResetToken =
+    initialResetToken !== undefined
+      ? initialResetToken.trim()
+      : typeof window === "undefined"
+        ? ""
+        : readResetTokenFromLocation(window.location.search, window.location.hash);
+
+  const [mode, setMode] = useState<LoginViewMode>(() => {
+    if (initialMode) return initialMode;
+    if (detectedResetToken) return "reset";
+    return "login";
+  });
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
+  const [resetToken, setResetToken] = useState(detectedResetToken);
+  const [resetNewPassword, setResetNewPassword] = useState("");
+  const [resetConfirmPassword, setResetConfirmPassword] = useState("");
+  const [resetValidationError, setResetValidationError] = useState("");
+  const [resetRequestSentMsg, setResetRequestSentMsg] = useState("");
+  const [resetSuccessBanner, setResetSuccessBanner] = useState("");
   const [mfaChallenge, setMfaChallenge] = useState<LoginMFAChallenge | null>(initialMFAChallenge);
   const [mfaCode, setMfaCode] = useState("");
   const [ssoError, setSSOError] = useState<string>(() => {
@@ -78,6 +141,12 @@ export function LoginPage({
     return readSSOErrorFromLocation(window.location.search, window.location.hash);
   });
   const qc = useQueryClient();
+
+  const completeAuth = (me: Me) => {
+    normalizePostLoginHash();
+    void finishLogin(qc, me);
+  };
+
   const ssoQuery = useQuery({
     queryKey: ["public-sso-providers"],
     queryFn: ssoApi.listPublicProviders,
@@ -85,6 +154,7 @@ export function LoginPage({
     staleTime: 60_000,
   });
   const ssoProviders = ssoQuery.data ?? [];
+
   const mfaVerify = useMutation({
     mutationFn: () => {
       if (!mfaChallenge) {
@@ -93,15 +163,17 @@ export function LoginPage({
       return mfaApi.verifyLogin(mfaChallenge.mfaToken, mfaCode.trim());
     },
     onSuccess: (me: Me) => {
-      void finishLogin(qc, me);
+      completeAuth(me);
     },
   });
+
   const passkeyLogin = useMutation({
     mutationFn: () => loginWithPasskey(email.trim() || undefined),
     onSuccess: (me: Me) => {
-      void finishLogin(qc, me);
+      completeAuth(me);
     },
   });
+
   const m = useMutation({
     mutationFn: (): Promise<LoginOrMfaResponse> =>
       mode === "login"
@@ -114,21 +186,86 @@ export function LoginPage({
         mfaVerify.reset();
         return;
       }
-      void finishLogin(qc, res);
+      completeAuth(res);
     },
   });
-  const submit = (e: FormEvent) => { e.preventDefault(); m.mutate(); };
+
+  const forgotMutation = useMutation({
+    mutationFn: () => requestPasswordReset(email.trim()),
+    onSuccess: (res) => {
+      setResetRequestSentMsg(
+        res.message || t("如果该邮箱已注册，我们已发送密码重置邮件，请查收收件箱"),
+      );
+    },
+  });
+
+  const resetConfirmMutation = useMutation({
+    mutationFn: () => confirmPasswordReset(resetToken.trim(), resetNewPassword),
+    onSuccess: () => {
+      setResetToken("");
+      setResetNewPassword("");
+      setResetConfirmPassword("");
+      setResetValidationError("");
+      setPassword("");
+      setResetSuccessBanner(t("密码已重置，请使用新密码登录"));
+      if (typeof window !== "undefined" && /^#\/login\?/i.test(window.location.hash)) {
+        try {
+          window.history.replaceState(null, "", "#/login");
+        } catch {
+          // Ignore history replace errors in restricted environments
+        }
+      }
+      setMode("login");
+    },
+  });
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    setResetSuccessBanner("");
+    m.mutate();
+  };
   const submitMFA = (e: FormEvent) => {
     e.preventDefault();
     if (!mfaCode.trim() || mfaVerify.isPending) return;
     mfaVerify.mutate();
   };
+  const submitForgot = (e: FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || forgotMutation.isPending) return;
+    setResetRequestSentMsg("");
+    forgotMutation.mutate();
+  };
+  const submitResetConfirm = (e: FormEvent) => {
+    e.preventDefault();
+    if (resetConfirmMutation.isPending) return;
+    setResetValidationError("");
+    if (!resetToken.trim()) {
+      setResetValidationError(t("请输入重置口令"));
+      return;
+    }
+    if (resetNewPassword.length < 8 || resetNewPassword.length > 256) {
+      setResetValidationError(t("新密码长度需为 8–256 个字符"));
+      return;
+    }
+    if (resetNewPassword !== resetConfirmPassword) {
+      setResetValidationError(t("两次输入的新密码不一致"));
+      return;
+    }
+    resetConfirmMutation.mutate();
+  };
   const backToPasswordLogin = () => {
     setMfaChallenge(null);
     setMfaCode("");
+    setResetValidationError("");
+    setResetRequestSentMsg("");
     mfaVerify.reset();
+    forgotMutation.reset();
+    resetConfirmMutation.reset();
     m.reset();
+    passkeyLogin.reset();
+    setMode("login");
   };
+
   const login = mode === "login";
   return (
     <div className="flex min-h-full bg-surface">
@@ -205,12 +342,172 @@ export function LoginPage({
               {t("返回账号登录")}
             </button>
           </form>
+        ) : mode === "forgot" ? (
+          <form onSubmit={submitForgot} className="w-full max-w-[360px]" data-password-reset-request-form>
+            <div className="mb-10 flex items-start justify-between lg:hidden"><Logo /><LocaleToggle /></div>
+            <div className="mb-6 hidden justify-end lg:flex"><LocaleToggle /></div>
+            <div className="inline-flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <Mail size={22} />
+            </div>
+            <h2 className="mt-4 text-[24px] font-semibold tracking-tight">{t("找回密码")}</h2>
+            <p className="mt-2 text-[14px] leading-6 text-muted-foreground">
+              {t("输入账号注册邮箱，我们将向您发送密码重置邮件")}
+            </p>
+            {resetRequestSentMsg && (
+              <div
+                role="status"
+                data-password-reset-sent-banner
+                className="mt-5 flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-[13px] text-emerald-700 dark:text-emerald-300"
+              >
+                <Check size={16} className="mt-0.5 shrink-0" />
+                <span className="min-w-0 flex-1 leading-5">{resetRequestSentMsg}</span>
+              </div>
+            )}
+            <div className="mt-6 space-y-4">
+              <Field id="reset-email" label={t("注册邮箱")}>
+                <Input
+                  id="reset-email"
+                  type="email"
+                  autoComplete="email"
+                  placeholder="name@company.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="h-11"
+                  data-reset-email-input
+                />
+              </Field>
+            </div>
+            {forgotMutation.error && (
+              <p role="alert" className="mt-3 text-[13px] text-destructive">
+                {(forgotMutation.error as Error).message}
+              </p>
+            )}
+            <Button
+              type="submit"
+              className="mt-7 h-11 w-full"
+              disabled={forgotMutation.isPending || !email.trim()}
+              data-reset-request-submit-btn
+            >
+              {forgotMutation.isPending ? t("发送中…") : t("发送重置邮件")}
+            </Button>
+            <button
+              type="button"
+              onClick={() => {
+                setResetValidationError("");
+                resetConfirmMutation.reset();
+                setMode("reset");
+              }}
+              data-goto-reset-confirm-btn
+              className="mt-3 flex h-10 w-full items-center justify-center rounded-md border border-border bg-surface text-[13px] font-medium text-foreground transition-colors hover:border-primary/50 hover:bg-hover"
+            >
+              {t("已有重置口令？立即重设")}
+            </button>
+            <button
+              type="button"
+              onClick={backToPasswordLogin}
+              data-reset-back-btn
+              className="mt-2 flex h-10 w-full items-center justify-center gap-1.5 rounded-md text-[13px] font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+            >
+              <ArrowLeft size={14} />
+              {t("返回账号登录")}
+            </button>
+          </form>
+        ) : mode === "reset" ? (
+          <form onSubmit={submitResetConfirm} className="w-full max-w-[360px]" data-password-reset-confirm-form>
+            <div className="mb-10 flex items-start justify-between lg:hidden"><Logo /><LocaleToggle /></div>
+            <div className="mb-6 hidden justify-end lg:flex"><LocaleToggle /></div>
+            <div className="inline-flex size-11 items-center justify-center rounded-xl bg-primary/10 text-primary">
+              <KeyRound size={22} />
+            </div>
+            <h2 className="mt-4 text-[24px] font-semibold tracking-tight">{t("重设登录密码")}</h2>
+            <p className="mt-2 text-[14px] leading-6 text-muted-foreground">
+              {t("输入邮件中的重置口令并设置新密码，重设后所有已登录设备需重新登录")}
+            </p>
+            <div className="mt-6 space-y-4">
+              <Field id="reset-token" label={t("重置口令")}>
+                <Input
+                  id="reset-token"
+                  type="text"
+                  autoComplete="one-time-code"
+                  placeholder={t("粘贴邮件中的重置口令")}
+                  value={resetToken}
+                  onChange={(e) => setResetToken(e.target.value)}
+                  className="h-11 font-mono text-[13px]"
+                  data-reset-token-input
+                />
+              </Field>
+              <Field id="reset-new-password" label={t("新密码")}>
+                <Input
+                  id="reset-new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={t("至少 8 位")}
+                  value={resetNewPassword}
+                  onChange={(e) => setResetNewPassword(e.target.value)}
+                  className="h-11"
+                  data-reset-new-password-input
+                />
+              </Field>
+              <Field id="reset-confirm-password" label={t("确认新密码")}>
+                <Input
+                  id="reset-confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder={t("再次输入新密码")}
+                  value={resetConfirmPassword}
+                  onChange={(e) => setResetConfirmPassword(e.target.value)}
+                  className="h-11"
+                  data-reset-confirm-password-input
+                />
+              </Field>
+            </div>
+            {(resetValidationError || resetConfirmMutation.error) && (
+              <p role="alert" className="mt-3 text-[13px] text-destructive">
+                {resetValidationError || (resetConfirmMutation.error as Error).message}
+              </p>
+            )}
+            <Button
+              type="submit"
+              className="mt-7 h-11 w-full"
+              disabled={resetConfirmMutation.isPending}
+              data-reset-confirm-submit-btn
+            >
+              {resetConfirmMutation.isPending ? t("重设中…") : t("确认重设密码")}
+            </Button>
+            <button
+              type="button"
+              onClick={backToPasswordLogin}
+              data-reset-back-btn
+              className="mt-4 flex h-10 w-full items-center justify-center gap-1.5 rounded-md text-[13px] font-medium text-muted-foreground transition-colors hover:bg-hover hover:text-foreground"
+            >
+              <ArrowLeft size={14} />
+              {t("返回账号登录")}
+            </button>
+          </form>
         ) : (
         <form onSubmit={submit} className="w-full max-w-[360px]">
           <div className="mb-10 flex items-start justify-between lg:hidden"><Logo /><LocaleToggle /></div>
           <div className="mb-6 hidden justify-end lg:flex"><LocaleToggle /></div>
           <h2 className="text-[26px] font-semibold tracking-tight">{login ? t("欢迎回来") : t("创建你的账号")}</h2>
           <p className="mt-2 text-[14px] text-muted-foreground">{login ? t("登录 Jiange，继续你的工作") : t("加入 Jiange，开始记录和协作")}</p>
+          {resetSuccessBanner && (
+            <div
+              role="status"
+              data-password-reset-success-banner
+              className="mt-5 flex items-start gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2.5 text-[13px] text-emerald-700 dark:text-emerald-300"
+            >
+              <Check size={16} className="mt-0.5 shrink-0" />
+              <span className="min-w-0 flex-1 leading-5">{resetSuccessBanner}</span>
+              <button
+                type="button"
+                aria-label={t("关闭")}
+                onClick={() => setResetSuccessBanner("")}
+                className="shrink-0 rounded p-0.5 opacity-70 hover:bg-emerald-500/15 hover:opacity-100"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          )}
           {ssoError && (
             <div
               role="alert"
@@ -232,7 +529,29 @@ export function LoginPage({
           <div className="mt-8 space-y-5">
             <Field id="email" label={t("邮箱")}><Input id="email" type="email" autoComplete="email" placeholder="name@company.com" value={email} onChange={(e) => setEmail(e.target.value)} className="h-11" /></Field>
             {!login && <Field id="name" label={t("名字")}><Input id="name" autoComplete="name" placeholder={t("你的名字")} value={name} onChange={(e) => setName(e.target.value)} className="h-11" /></Field>}
-            <Field id="password" label={t("密码")}><Input id="password" type="password" autoComplete={login ? "current-password" : "new-password"} placeholder={login ? t("输入密码") : t("至少 8 位")} value={password} onChange={(e) => setPassword(e.target.value)} className="h-11" /></Field>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <Label htmlFor="password" className="text-[13px] font-medium">{t("密码")}</Label>
+                {login && (
+                  <button
+                    type="button"
+                    data-forgot-password-btn
+                    onClick={() => {
+                      m.reset();
+                      passkeyLogin.reset();
+                      forgotMutation.reset();
+                      setResetRequestSentMsg("");
+                      setResetSuccessBanner("");
+                      setMode("forgot");
+                    }}
+                    className="text-[12px] font-medium text-primary hover:underline"
+                  >
+                    {t("忘记密码？")}
+                  </button>
+                )}
+              </div>
+              <Input id="password" type="password" autoComplete={login ? "current-password" : "new-password"} placeholder={login ? t("输入密码") : t("至少 8 位")} value={password} onChange={(e) => setPassword(e.target.value)} className="h-11" />
+            </div>
           </div>
           {m.error && <p role="alert" className="mt-3 text-[13px] text-destructive">{(m.error as Error).message}</p>}
           {passkeyLogin.error && (
@@ -281,7 +600,7 @@ export function LoginPage({
               </div>
             </div>
           )}
-          <p className="mt-7 text-center text-[13px] text-muted-foreground">{login ? t("还没有账号？") : t("已有账号？")}<button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => { setMode(login ? "register" : "login"); m.reset(); passkeyLogin.reset(); }}>{login ? t("免费注册") : t("去登录")}</button></p>
+          <p className="mt-7 text-center text-[13px] text-muted-foreground">{login ? t("还没有账号？") : t("已有账号？")}<button type="button" className="ml-1 font-medium text-primary hover:underline" onClick={() => { setMode(login ? "register" : "login"); setResetSuccessBanner(""); m.reset(); passkeyLogin.reset(); }}>{login ? t("免费注册") : t("去登录")}</button></p>
         </form>
         )}
       </main>

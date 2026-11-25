@@ -90,20 +90,22 @@ function safeReadOnlyImageURL(url?: string, publicToken?: string, versionSeq?: n
 }
 
 function ReadOnlyImage({ block, publicToken, versionSeq, recovery, disableFileDownloads = false, onPreview, activeComment = false }: { block: Block; publicToken?: string; versionSeq?: number; recovery?: number; disableFileDownloads?: boolean; onPreview?: (src: string, name: string, mime?: string) => void; activeComment?: boolean }) {
+  const { t } = useI18n();
   const [failed, setFailed] = useState(false);
   const src = fileURL(block.props.fileId, publicToken, versionSeq) ?? safeReadOnlyImageURL(block.props.url, publicToken, versionSeq);
   useEffect(() => { setFailed(false); }, [src, recovery]);
-  if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">图片不可用或需要登录：{block.props.name || "图片"}</div>;
+  if (!src || failed) return <div className="my-2 rounded-md border px-3 py-2 text-[13px] text-subtle" role="status">{t("图片不可用或需要登录：{name}", { name: block.props.name || t("图片") })}</div>;
   const align = imageAlign(block.props.align);
   const width = Number(block.props.imageWidth) || undefined;
-  const name = block.props.caption || block.props.name || "图片";
+  const name = block.props.caption || block.props.name || t("图片");
   const widthStyle = width ? { width: `${Math.min(100, width)}%` } : undefined;
   const image = <img src={src} alt={name} referrerPolicy="no-referrer" draggable={!disableFileDownloads} onContextMenu={(event) => { if (disableFileDownloads) event.preventDefault(); }} style={onPreview && width ? { width: "100%" } : widthStyle} className={cn("max-h-[640px] max-w-full rounded-[4px] object-contain", activeComment && "outline outline-2 outline-offset-2 outline-[#F0B400]")} onError={() => setFailed(true)} />;
-  return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}>{onPreview ? <button type="button" aria-label={`查看图片：${name}`} onClick={() => onPreview(src, name, block.props.mime?.startsWith("image/") ? block.props.mime : "image/*")} style={widthStyle} className="max-w-full cursor-zoom-in rounded-[4px] focus-visible:outline-2 focus-visible:outline-primary">{image}</button> : image}{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
+  return <figure className={cn("my-2 flex flex-col", align === "center" ? "items-center" : align === "right" ? "items-end" : "items-start")} data-image-align={align}>{onPreview ? <button type="button" aria-label={t("查看图片：{name}", { name })} onClick={() => onPreview(src, name, block.props.mime?.startsWith("image/") ? block.props.mime : "image/*")} style={widthStyle} className="max-w-full cursor-zoom-in rounded-[4px] focus-visible:outline-2 focus-visible:outline-primary">{image}</button> : image}{block.props.caption && <figcaption className="mt-1.5 text-center text-[14px] text-muted-foreground">{block.props.caption}</figcaption>}</figure>;
 }
 
 /** Folding a shared mind map changes only this reader's view. */
 function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; publicToken?: string; versionSeq?: number }) {
+  const { t } = useI18n();
   const graph = readFlow(block.props);
   const frames = readBoardFramesFromProps(block.props);
   const mindLayout = readMindLayoutFromProps(block.props);
@@ -132,7 +134,7 @@ function ReadOnlyFlowchart({ block, publicToken, versionSeq }: { block: Block; p
   }, [minWidth, minHeight, hasContent]);
   const height = Math.min(1200, Math.max(200, Number(block.props["fc.h"]) || 360));
   const sizing = { "--flow-min-width": `${minWidth}px`, "--flow-min-height": `${minHeight}px` } as CSSProperties;
-  return <div data-flowchart className="my-2"><div ref={scroll} data-flow-scroll role="region" aria-label="图形预览，可滚动查看" tabIndex={0} className="overflow-auto rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }}>{hasContent ? <div className="h-full min-h-[var(--flow-min-height)] min-w-[var(--flow-min-width)] sm:min-h-0 sm:min-w-0" style={sizing}><FlowSvg graph={display} frames={frames} votes={extras.votes} mindStructure={mindLayout.structure} mindRelations={mindLayout.relations} mindBoundaries={extras.mindBoundaries} mindSummaries={extras.mindSummaries} mindBadges={extras.mindBadges} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, versionSeq) ?? ""} onMindFold={(id) => setOverrides((previous) => ({ ...previous, [id]: !collapsed.has(id) }))} /></div> : <span className="grid h-full place-items-center text-[13px] text-subtle">空白流程图</span>}</div>{overflow && <p className="mt-1 text-right text-[12px] text-subtle sm:hidden">滑动查看完整图形</p>}</div>;
+  return <div data-flowchart className="my-2"><div ref={scroll} data-flow-scroll role="region" aria-label={t("图形预览，可滚动查看")} tabIndex={0} className="overflow-auto rounded-lg border border-[#DEE0E3] dark:border-border" style={{ height }}>{hasContent ? <div className="h-full min-h-[var(--flow-min-height)] min-w-[var(--flow-min-width)] sm:min-h-0 sm:min-w-0" style={sizing}><FlowSvg graph={display} frames={frames} votes={extras.votes} mindStructure={mindLayout.structure} mindRelations={mindLayout.relations} mindBoundaries={extras.mindBoundaries} mindSummaries={extras.mindSummaries} mindBadges={extras.mindBadges} width="100%" height="100%" idPrefix={`ro${block.id.replace(/\W/g, "")}`} fileUrl={(fid) => fileURL(String(fid), publicToken, versionSeq) ?? ""} onMindFold={(id) => setOverrides((previous) => ({ ...previous, [id]: !collapsed.has(id) }))} /></div> : <span className="grid h-full place-items-center text-[13px] text-subtle">{t("空白流程图")}</span>}</div>{overflow && <p className="mt-1 text-right text-[12px] text-subtle sm:hidden">{t("滑动查看完整图形")}</p>}</div>;
 }
 
 function ReadOnlyTable({ data, merges, widths, fillProps = {}, header = true, headerColumn = false, activeComment = false }: { data?: string; merges?: string; widths?: string; fillProps?: Record<string, string>; header?: boolean; headerColumn?: boolean; activeComment?: boolean }) {
@@ -203,8 +205,8 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, a
         case "quote": content = <blockquote className="my-1 border-l-2 border-[#BBBFC4] py-[3px] pl-3 dark:border-border text-[16px] leading-[1.75] text-muted-foreground">{rich}</blockquote>; break;
         case "code": content = <div className="my-2 rounded-md bg-[#F5F6F7] dark:bg-[#23262a]"><div className="px-3.5 pt-2 text-[12px] text-subtle">{codeLangLabel(block.props.lang)}</div><pre className={cn("px-4 pb-3 pt-0.5 font-mono text-[14px] leading-[1.6]", block.props.wrap === "false" ? "overflow-x-auto whitespace-pre" : "whitespace-pre-wrap break-words")}>{rich}</pre></div>; break;
         case "callout": content = <div className="my-1 flex gap-2 rounded-lg border px-3.5 py-[15px]" style={calloutStyle(block.props.color)}><span>{block.props.emoji || "💡"}</span><span className="min-w-0 flex-1 whitespace-pre-wrap break-words">{rich}</span></div>; break;
-        case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">空公式</span>}</div>; break;
-        case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">空流程图</span>}</div>; break;
+        case "math": content = <div data-math className="my-2 overflow-x-auto rounded-lg px-3 py-3 text-center text-[17px] italic leading-relaxed">{text ? <MathView src={text} /> : <span className="not-italic text-subtle">{t("空公式")}</span>}</div>; break;
+        case "diagram": content = <div data-diagram className="my-2 overflow-x-auto rounded-lg bg-surface py-3">{text ? <DiagramView src={text} /> : <span className="text-[13px] text-subtle">{t("空流程图")}</span>}</div>; break;
         case "flowchart": content = <ReadOnlyFlowchart block={block} publicToken={publicToken} versionSeq={imageVersionSeq} />; break;
         case "table": content = <ReadOnlyTable data={tableDataOf(block.props)} merges={block.props.tableMerges} widths={block.props.tableWidths} fillProps={block.props} header={block.props.tableHeader !== "none"} headerColumn={block.props.tableHeaderColumn === "column"} activeComment={activeBlockComment} />; break;
         case "columns": {
@@ -262,10 +264,10 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, a
         case "tabs": content = <TabsBlockView raw={block.props.tabs} readOnly />; break;
         case "bookmark": {
           const href = safeURL(block.props.url);
-          content = <div className="my-2 flex max-w-[520px] items-center gap-3 rounded-lg border px-3.5 py-3"><span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(block.props.name || "W").slice(0, 1).toUpperCase()}</span><span className="min-w-0 flex-1">{href ? <a href={href} target="_blank" rel="noopener noreferrer" className="block truncate text-[14px] font-medium">{block.props.title || block.props.name || href}</a> : <span className="block truncate text-[14px] font-medium">{block.props.title || block.props.name || "网页卡片"}</span>}<span className="block truncate text-[12px] text-subtle">{href || "链接不可用"}</span></span></div>; break;
+          content = <div className="my-2 flex max-w-[520px] items-center gap-3 rounded-lg border px-3.5 py-3"><span className="grid size-9 shrink-0 place-items-center rounded-md bg-accent text-[15px] font-semibold text-primary">{(block.props.name || "W").slice(0, 1).toUpperCase()}</span><span className="min-w-0 flex-1">{href ? <a href={href} target="_blank" rel="noopener noreferrer" className="block truncate text-[14px] font-medium">{block.props.title || block.props.name || href}</a> : <span className="block truncate text-[14px] font-medium">{block.props.title || block.props.name || t("网页卡片")}</span>}<span className="block truncate text-[12px] text-subtle">{href || t("链接不可用")}</span></span></div>; break;
         }
-        case "synced": content = <div className="my-2 rounded-lg border border-rose-200 bg-rose-50/20 px-3.5 py-2.5 text-[13px] text-muted-foreground" data-synced-readonly>同步块{block.props.syncId ? `（${block.props.syncId}）` : ""}</div>; break;
-        case "subpages": content = <div className="my-2 rounded-lg border bg-sidebar/30 px-3.5 py-2.5 text-[13px] text-muted-foreground" data-subpages-readonly>子页面列表</div>; break;
+        case "synced": content = <div className="my-2 rounded-lg border border-rose-200 bg-rose-50/20 px-3.5 py-2.5 text-[13px] text-muted-foreground" data-synced-readonly>{block.props.syncId ? t("同步块（{id}）", { id: block.props.syncId }) : t("同步块")}</div>; break;
+        case "subpages": content = <div className="my-2 rounded-lg border bg-sidebar/30 px-3.5 py-2.5 text-[13px] text-muted-foreground" data-subpages-readonly>{t("子页面列表")}</div>; break;
         case "embed": {
           const kindLabel = embedKindLabel(block.props.resourceKind);
           const href = publicToken ? "" : embedHref(block.props.resourceKind, block.props.resourceId);
@@ -276,7 +278,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, a
                 <span className="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary">{kindLabel}</span>
                 <span className="truncate font-medium text-foreground">{label}</span>
               </span>
-              {href && <a href={href} className="shrink-0 text-[12px] text-primary hover:underline">打开</a>}
+              {href && <a href={href} className="shrink-0 text-[12px] text-primary hover:underline">{t("打开")}</a>}
             </div>
           );
           break;
@@ -284,7 +286,7 @@ export function ReadOnlyDoc({ view, publicToken, disableFileDownloads = false, a
         case "reminder": content = <ReminderBlockView date={block.props.date} time={block.props.time} label={block.props.label} done={block.props.done === "true"} readOnly />; break;
         default: content = <p className="whitespace-pre-wrap break-words py-[3px] text-[16px] leading-[1.75]">{rich}</p>;
       }
-      return <div key={block.id} data-readonly-block={block.type} data-public-block={onCopyBlockLink ? block.id : undefined} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} onPointerDown={(event) => touch(event, block.id)} className={cn(onCopyBlockLink && "group/public-block relative", activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{actions(block)}{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{anchors.blockThreadIds.length} 条评论</button>}{block.type !== "columns" && nested}</div>;
+      return <div key={block.id} data-readonly-block={block.type} data-public-block={onCopyBlockLink ? block.id : undefined} data-comment-block={anchors?.blockThreadIds.join(" ") || undefined} onPointerDown={(event) => touch(event, block.id)} className={cn(onCopyBlockLink && "group/public-block relative", activeBlockComment && block.type !== "image" && block.type !== "table" && "rounded-[6px] outline outline-2 outline-offset-2 outline-[#F0B400]")} style={{ marginLeft: indent * 24, textAlign: block.props.align === "center" || block.props.align === "right" ? block.props.align : undefined }}>{actions(block)}{content}{!!anchors?.blockThreadIds.length && <button type="button" className="my-1 rounded-full border border-[#f5b1e5] bg-surface px-2 py-0.5 text-[11px] text-[#c950a8]" onClick={() => onActivateComment?.(anchors.blockThreadIds.includes(activeThread ?? -1) ? activeThread! : anchors.blockThreadIds[0])}>{t("{count} 条评论", { count: anchors.blockThreadIds.length })}</button>}{block.type !== "columns" && nested}</div>;
     });
   }
   return (

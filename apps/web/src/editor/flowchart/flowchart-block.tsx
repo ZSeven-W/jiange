@@ -383,6 +383,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
   /** URL for image nodes (public share pages use a token path). */
   fileUrl?: (id: number) => string;
 }) {
+  const { t } = useI18n();
   const theme = themeOf(graph.theme);
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
   const b = boardContentBounds(graph, mindStructure, frames, mindCollapsed, mindRelations, mindBoundaries, mindSummaries, mindBadges);
@@ -450,7 +451,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
               <g
                 data-board-frame-export={frame.id}
                 role="button"
-                aria-label={`导出分区 ${frame.title}`}
+                aria-label={t("导出分区 {title}", { title: frame.title })}
                 style={{ cursor: "pointer" }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); onFrameExport(frame); }}
@@ -474,7 +475,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
                   fill="#1F2329"
                   pointerEvents="none"
                 >
-                  导出分区
+                  {t("导出分区")}
                 </text>
               </g>
             )}
@@ -482,7 +483,7 @@ export function FlowSvg({ graph, width, height, viewBox, preserveAspectRatio = "
               <g
                 data-board-frame-delete={frame.id}
                 role="button"
-                aria-label={`删除分区 ${frame.title}`}
+                aria-label={t("删除分区 {title}", { title: frame.title })}
                 style={{ cursor: "pointer" }}
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => { e.stopPropagation(); onFrameDelete(frame); }}
@@ -677,6 +678,7 @@ export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, 
   canCopy?: boolean;
   currentUserId?: string;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(!!autoOpen && !readOnly);
   const previewFrames = useMemo(() => (blockProps ? readBoardFramesFromProps(blockProps) : []), [blockProps]);
   const previewMindCfg = useMemo(
@@ -689,12 +691,12 @@ export function FlowchartBlock({ graph, blockProps, height, readOnly, autoOpen, 
   );
   const previewPins = useMemo(() => resolveBoardCommentPins(comments, graph), [comments, graph]);
   return <div contentEditable={false} className="group/flow relative w-full max-w-full overflow-hidden rounded-lg border border-transparent transition-colors hover:border-[#DEE0E3] focus-within:border-[#3370FF] dark:hover:border-border" style={{ height }} data-flowchart>
-    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} votes={previewExtras.votes} currentUserId={currentUserId} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} mindBoundaries={previewExtras.mindBoundaries} mindSummaries={previewExtras.mindSummaries} mindBadges={previewExtras.mindBadges} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />空白流程图{!readOnly && "，点击「编辑」开始绘制"}</span></div>}
+    {graph.nodes.length || graph.strokes?.length || graph.mind?.length || previewFrames.length ? <FlowSvg graph={graph} frames={previewFrames} votes={previewExtras.votes} currentUserId={currentUserId} mindStructure={previewMindCfg.structure} mindRelations={previewMindCfg.relations} mindBoundaries={previewExtras.mindBoundaries} mindSummaries={previewExtras.mindSummaries} mindBadges={previewExtras.mindBadges} width="100%" height="100%" preserveAspectRatio="xMidYMid meet" idPrefix="fcp" commentPins={previewPins} activePinId={activeThread} /> : <div className="grid h-full place-items-center bg-[#F8F9FA] text-[13px] text-subtle dark:bg-hover"><span className="flex items-center gap-1.5"><Workflow size={16} />{readOnly ? t("空白流程图") : t("空白流程图，点击「编辑」开始绘制")}</span></div>}
     <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover/flow:opacity-100 [@media(hover:none)]:opacity-100">
       {previewPins.length > 0 && <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border border-[#FFD591] bg-[#FFF7E6] px-2 text-[12px] font-medium text-[#B25900] shadow-sm hover:bg-[#FFECCC]" data-flow-preview-pins><MessageSquare size={12} />{previewPins.length}</button>}
-      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />查看</> : <><Workflow size={13} />编辑</>}</button>
+      <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen(true)} className="flex h-7 items-center gap-1 rounded-md border bg-surface px-2 text-[12px] shadow-sm hover:bg-hover" data-flow-open>{readOnly ? <><Maximize2 size={13} />{t("查看")}</> : <><Workflow size={13} />{t("编辑")}</>}</button>
     </div>
-    {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}正在编辑</div>}
+    {!!peers?.length && <div className="absolute left-2 top-2 flex items-center gap-1 rounded-md bg-surface/90 px-1.5 py-0.5 text-[12px] text-subtle shadow-sm" data-flow-peers>{peers.slice(0, 3).map((p) => <span key={p.id} className="grid size-5 place-items-center rounded-full text-[11px] text-white" style={{ background: p.color }} title={p.name}>{[...p.name][0]}</span>)}{t("正在编辑")}</div>}
     {open && <FlowchartEditor initial={graph} blockProps={blockProps} readOnly={readOnly} ai={ai} onChange={onChange} onProps={onProps} onClose={() => { onPresence?.(null); setOpen(false); }} peers={peers} onPresence={onPresence} onComment={onComment} comments={comments} activeThread={activeThread} commentActions={commentActions} upload={upload} assets={assets} canCopy={canCopy} currentUserId={currentUserId} />}
   </div>;
 }
@@ -728,8 +730,6 @@ let flowClipboard: FlowClip | null = null;
 type Guide = { x1: number; y1: number; x2: number; y2: number };
 
 const PALETTE = ["#E1EAFF/#3370FF", "#D9F5D6/#2EA121", "#FFF1E8/#FF8800", "#FEF8C5/#DC9B04", "#FFE8EF/#E63995", "#F1E8FF/#7B61FF", "#F2F3F5/#8F959E", "#FFFFFF/#1F2329"];
-const INK_COLORS = [["#1F2329", "黑色"], ["#D83931", "红色"], ["#DE7802", "橙色"], ["#DC9B04", "黄色"], ["#2EA121", "绿色"], ["#3370FF", "蓝色"], ["#6425D0", "紫色"], ["#8F959E", "灰色"]] as const;
-const MIND_PALETTE = [["#1f2329", "黑"], ["#646a73", "深灰"], ["#bbbfc4", "灰"], ["#ffffff", "白"], ["#8f5fe8", "紫"], ["#5b7ff1", "蓝"], ["#79c968", "绿"], ["#f8dd4e", "黄"], ["#f4a340", "橙"], ["#e86d68", "红"], ["#e7defb", "浅紫"], ["#e1e9ff", "浅蓝"], ["#dff2dd", "浅绿"], ["#fff5c7", "浅黄"], ["#ffe8d1", "浅橙"], ["#fce4e4", "浅红"]] as const;
 const INK_WIDTHS = [2, 3, 5, 8, 12] as const;
 const MARKER_WIDTHS = [8, 12, 16, 20, 24] as const;
 
@@ -1155,7 +1155,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     if (readOnly || !mindSelected || !graph.mind?.some((topic) => topic.id === mindSelected)) return;
     const style = { ...mindDescriptionStyleAt(graph.mindDescriptionStyles, mindSelected), ...change };
     const description = mindDescriptionAt(graph.mindDescriptions, mindSelected) ?? "";
-    if (description && mindDescriptionLines(description, style.size ?? 12).length > 128) { setNotice({ ok: false, text: "此字号会使描述超过 128 行，请缩短描述或选择较小字号。" }); return; }
+    if (description && mindDescriptionLines(description, style.size ?? 12).length > 128) { setNotice({ ok: false, text: t("此字号会使描述超过 128 行，请缩短描述或选择较小字号。") }); return; }
     const mindDescriptionStyles = { ...graph.mindDescriptionStyles, [mindSelected]: style };
     commitMind(graph, { ...graph, mindDescriptionStyles });
   };
@@ -1208,7 +1208,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   };
   const finishMindDescription = () => {
     const edit = mindDescriptionEditingRef.current; if (!edit) return;
-    if (canonicalMindDescription(edit.value) === null || mindDescriptionLines(edit.value, mindDescriptionStyleAt(edit.base.mindDescriptionStyles, edit.id)?.size ?? 12).length > 128) { setNotice({ ok: false, text: "描述最多 2000 个字符，换行后不超过 128 行。" }); return; }
+    if (canonicalMindDescription(edit.value) === null || mindDescriptionLines(edit.value, mindDescriptionStyleAt(edit.base.mindDescriptionStyles, edit.id)?.size ?? 12).length > 128) { setNotice({ ok: false, text: t("描述最多 2000 个字符，换行后不超过 128 行。") }); return; }
     mindDescriptionEditingRef.current = null; setMindDescriptionEditing(null);
     if ((mindDescriptionAt(edit.base.mindDescriptions, edit.id) ?? "") === edit.value) return;
     const mindDescriptions = { ...edit.base.mindDescriptions, ...(edit.value ? { [edit.id]: edit.value } : {}) };
@@ -1217,7 +1217,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   };
   const cancelMindDescription = () => { mindDescriptionEditingRef.current = null; setMindDescriptionEditing(null); };
   const addMindMap = () => {
-    if (readOnly || (graph.mind?.length ?? 0) + 4 > 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return; }
+    if (readOnly || (graph.mind?.length ?? 0) + 4 > 500) { setNotice({ ok: false, text: t("思维导图节点已达上限。") }); return; }
     const hasContent = graph.nodes.length > 0 || (graph.mind?.length ?? 0) > 0 || (graph.strokes?.length ?? 0) > 0;
     const existing = hasContent ? flowBounds(graph) : null;
     const rawX = existing ? existing.x + existing.w + 90 : view.x + size.w / view.zoom / 2 - 120;
@@ -1231,14 +1231,14 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     const parentTopic = graph.mind?.find((topic) => topic.id === selectedId);
     const parent = sibling ? parentTopic?.parent : parentTopic?.id;
     if (readOnly || !parentTopic || !parent) return undefined;
-    if ((graph.mind?.length ?? 0) >= 500) { setNotice({ ok: false, text: "思维导图节点已达上限。" }); return undefined; }
+    if ((graph.mind?.length ?? 0) >= 500) { setNotice({ ok: false, text: t("思维导图节点已达上限。") }); return undefined; }
     let ancestor = graph.mind?.find((topic) => topic.id === parent), depth = 0;
     while (ancestor?.parent && depth < 33) { depth++; ancestor = graph.mind?.find((topic) => topic.id === ancestor!.parent); }
-    if (!ancestor || depth >= 32) { setNotice({ ok: false, text: "思维导图层级已达上限。" }); return undefined; }
+    if (!ancestor || depth >= 32) { setNotice({ ok: false, text: t("思维导图层级已达上限。") }); return undefined; }
     const siblings = graph.mind!.filter((topic) => topic.parent === parent).sort((a, b) => a.order - b.order || a.id.localeCompare(b.id));
     const index = siblings.findIndex((topic) => topic.id === parentTopic.id), next = sibling && index >= 0 ? siblings[index + 1] : undefined;
     const order = sibling && next ? (parentTopic.order + next.order) / 2 : Math.max(-1, ...siblings.map((topic) => topic.order)) + 1;
-    if (order > 1000000 || (next && (order <= parentTopic.order || order >= next.order))) { setNotice({ ok: false, text: "节点顺序空间不足，请在末尾添加。" }); return undefined; }
+    if (order > 1000000 || (next && (order <= parentTopic.order || order >= next.order))) { setNotice({ ok: false, text: t("节点顺序空间不足，请在末尾添加。") }); return undefined; }
     const topic: MindTopic = { id: newFlowId("m"), parent, order, text: "" };
     const result = commitMind(graph, { ...graph, mind: [...graph.mind!, topic], mindCollapsed: (graph.mindCollapsed ?? []).filter((id) => id !== parent) });
     if (result.applied && result.graph.mind?.some((item) => item.id === topic.id)) {
@@ -1268,7 +1268,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const addMindParent = () => {
     if (readOnly || !mindSelected || !graph.mind) return;
     const id = newFlowId("m"), mind = insertMindParent(graph.mind, mindSelected, id);
-    if (!mind) { setNotice({ ok: false, text: "无法添加父节点：根节点、节点数量或层级超出限制。" }); return; }
+    if (!mind) { setNotice({ ok: false, text: t("无法添加父节点：根节点、节点数量或层级超出限制。") }); return; }
     const result = commitMind(graph, { ...graph, mind });
     if (result.applied && result.graph.mind?.some((topic) => topic.id === id) && result.graph.mind.some((topic) => topic.id === mindSelected && topic.parent === id)) {
       setMindSelected(id); setSelected(new Set());
@@ -1285,74 +1285,74 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const insertMindClip = (clip: MindClip, duplicate = false) => {
     if (readOnly) return;
     const selectedTopic = graph.mind?.find((topic) => topic.id === mindSelected);
-    if (duplicate && (!selectedTopic || !canCopy)) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+    if (duplicate && (!selectedTopic || !canCopy)) { if (!canCopy) setNotice({ ok: false, text: t("当前文档不允许复制。") }); return; }
     const parent = duplicate ? selectedTopic!.parent : selectedTopic?.id ?? null;
     const at = duplicate && selectedTopic?.parent === null ? { x: selectedTopic.x! + 48, y: selectedTopic.y! + 48 } : { x: view.x + size.w / view.zoom / 2 - 52, y: view.y + size.h / view.zoom / 2 - 24 };
     const inserted = pasteMindBranch(graph, clip, parent, duplicate && parent ? selectedTopic!.id : null, at, () => newFlowId("m"));
-    if (!inserted) { setNotice({ ok: false, text: "无法粘贴：节点数量、层级或剪贴板内容超出限制。" }); return; }
+    if (!inserted) { setNotice({ ok: false, text: t("无法粘贴：节点数量、层级或剪贴板内容超出限制。") }); return; }
     const result = commitMind(graph, inserted.graph);
     if (result.graph.mind?.some((topic) => topic.id === inserted.root)) { setNotice(null); setMindSelected(inserted.root); setSelected(new Set()); setTool("select"); setHand(false); }
   };
   const duplicateMind = () => { if (!mindSelected) return; const clip = copyMindBranch(graph, mindSelected); if (clip) insertMindClip(clip, true); };
   const copyMindTextStyle = async () => {
-    if (!mindSelected || !canCopy) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+    if (!mindSelected || !canCopy) { if (!canCopy) setNotice({ ok: false, text: t("当前文档不允许复制。") }); return; }
     const clip = captureMindTextStyle(graph, mindSelected); if (!clip) return;
     setMindTextStyleSession(clip);
-    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: true, text: "已复制文字样式（当前登录会话）" }); return; }
-    try { await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob(["Jiange 文字样式"], { type: "text/plain" }), "text/html": new Blob([mindTextStyleHtml(clip)], { type: "text/html" }) })]); setNotice({ ok: true, text: "已复制文字样式" }); }
-    catch { setNotice({ ok: true, text: "已复制文字样式（当前登录会话）" }); }
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: true, text: t("已复制文字样式（当前登录会话）") }); return; }
+    try { await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([t("Jiange 文字样式")], { type: "text/plain" }), "text/html": new Blob([mindTextStyleHtml(clip)], { type: "text/html" }) })]); setNotice({ ok: true, text: t("已复制文字样式") }); }
+    catch { setNotice({ ok: true, text: t("已复制文字样式（当前登录会话）") }); }
   };
   const pasteMindTextStyle = async () => {
     if (readOnly || !mindSelected) return;
     const target = mindSelected, base = graph, snapshot = JSON.stringify(graph), sessionRevision = getMindTextStyleSessionRevision();
     let clip = getMindTextStyleSession();
     if (!clip) {
-      if (!navigator.clipboard?.read) { setNotice({ ok: false, text: "请先复制节点文字样式。" }); return; }
+      if (!navigator.clipboard?.read) { setNotice({ ok: false, text: t("请先复制节点文字样式。") }); return; }
       try {
         let timer: ReturnType<typeof setTimeout> | undefined;
         const items = await Promise.race([navigator.clipboard.read(), new Promise<ClipboardItems>((_, reject) => { timer = setTimeout(() => reject(new Error("clipboard timeout")), 2500); })]).finally(() => { if (timer) clearTimeout(timer); });
         for (const item of items) if (item.types.includes("text/html")) { clip = mindTextStyleFromHtml(await (await item.getType("text/html")).text()); if (clip) break; }
-      } catch { setNotice({ ok: false, text: "无法读取文字样式，请先在本标签页复制。" }); return; }
+      } catch { setNotice({ ok: false, text: t("无法读取文字样式，请先在本标签页复制。") }); return; }
     }
-    if (!clip) { setNotice({ ok: false, text: "剪贴板中没有可用的节点文字样式。" }); return; }
-    if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || mindSelectedRef.current !== target || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或登录状态已变化，未粘贴样式；请重新选择节点。" }); return; }
+    if (!clip) { setNotice({ ok: false, text: t("剪贴板中没有可用的节点文字样式。") }); return; }
+    if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || mindSelectedRef.current !== target || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: t("画布或登录状态已变化，未粘贴样式；请重新选择节点。") }); return; }
     const next = applyMindTextStyle(base, target, clip); if (!next) return;
-    const result = commitMind(base, next); if (result.applied) setNotice({ ok: true, text: "已粘贴文字样式" });
+    const result = commitMind(base, next); if (result.applied) setNotice({ ok: true, text: t("已粘贴文字样式") });
   };
   const insertMindPlainText = (text: string) => {
     if (!text.trim()) return;
-    if (text.length > 500 || /[\r\n]/.test(text)) { setNotice({ ok: false, text: "暂不支持将多行或超过 500 字的文本粘贴为节点。" }); return; }
+    if (text.length > 500 || /[\r\n]/.test(text)) { setNotice({ ok: false, text: t("暂不支持将多行或超过 500 字的文本粘贴为节点。") }); return; }
     const clip: MindClip = { version: 1, root: "plain", topics: [{ id: "plain", parent: null, order: 0, text, x: 0, y: 0 }], styles: {}, paints: {}, collapsed: [] };
     insertMindClip(clip);
   };
   const copyMindToClipboard = async (cut: boolean) => {
     const id = mindSelected, base = graph, clip = id ? copyMindBranch(base, id) : null;
-    if (!clip || !id || !canCopy) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
-    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: "当前浏览器无法完整复制分支，请使用键盘快捷键。" }); return; }
+    if (!clip || !id || !canCopy) { if (!canCopy) setNotice({ ok: false, text: t("当前文档不允许复制。") }); return; }
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: t("当前浏览器无法完整复制分支，请使用键盘快捷键。") }); return; }
     const snapshot = JSON.stringify(base), sessionRevision = getMindTextStyleSessionRevision();
     try {
       await navigator.clipboard.write([new ClipboardItem({ "text/plain": new Blob([mindClipText(clip)], { type: "text/plain" }), "text/html": new Blob([mindClipHtml(clip)], { type: "text/html" }) })]);
-      if (getMindTextStyleSessionRevision() !== sessionRevision || !canCopyRef.current) { setNotice({ ok: false, text: "登录状态或权限已变化，未保留本页副本，也未剪切。" }); return; }
+      if (getMindTextStyleSessionRevision() !== sessionRevision || !canCopyRef.current) { setNotice({ ok: false, text: t("登录状态或权限已变化，未保留本页副本，也未剪切。") }); return; }
       recentMindClipboard.current = parseMindClip(JSON.stringify(clip));
-      if (!cut) { setNotice({ ok: true, text: "已复制分支" }); return; }
-      if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || !canCopyRef.current || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或权限已变化，分支已复制但未剪切。" }); return; }
+      if (!cut) { setNotice({ ok: true, text: t("已复制分支") }); return; }
+      if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || !canCopyRef.current || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: t("画布或权限已变化，分支已复制但未剪切。") }); return; }
       const ids = new Set(clip.topics.map((topic) => topic.id)), result = commitMind(base, { ...base, mind: base.mind!.filter((topic) => !ids.has(topic.id)) });
       if (!result.graph.mind?.some((topic) => topic.id === id)) setMindSelected(null);
-    } catch { setNotice({ ok: false, text: "无法访问剪贴板，未剪切节点。" }); }
+    } catch { setNotice({ ok: false, text: t("无法访问剪贴板，未剪切节点。") }); }
   };
   const pasteMindFromClipboard = async () => {
-    if (readOnly || !navigator.clipboard?.read) { setNotice({ ok: false, text: "当前浏览器无法读取剪贴板，请使用键盘快捷键。" }); return; }
+    if (readOnly || !navigator.clipboard?.read) { setNotice({ ok: false, text: t("当前浏览器无法读取剪贴板，请使用键盘快捷键。") }); return; }
     const snapshot = JSON.stringify(graph), selected = mindSelected, sessionRevision = getMindTextStyleSessionRevision();
     try {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const items = await Promise.race([navigator.clipboard.read(), new Promise<ClipboardItems>((_, reject) => { timer = setTimeout(() => reject(new Error("clipboard timeout")), 2500); })]).finally(() => { if (timer) clearTimeout(timer); }); let structured = "", html = "", text = "";
       for (const item of items) { if (!structured && item.types.includes(MIND_CLIP_MIME)) structured = await (await item.getType(MIND_CLIP_MIME)).text(); if (!html && item.types.includes("text/html")) html = await (await item.getType("text/html")).text(); if (!text && item.types.includes("text/plain")) text = await (await item.getType("text/plain")).text(); }
-      if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || mindSelectedRef.current !== selected || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: "画布或登录状态已变化，未粘贴；请重新选择节点。" }); return; }
+      if (getMindTextStyleSessionRevision() !== sessionRevision || !editableRef.current || mindSelectedRef.current !== selected || JSON.stringify(graphRef.current) !== snapshot) { setNotice({ ok: false, text: t("画布或登录状态已变化，未粘贴；请重新选择节点。") }); return; }
       const clip = structured ? parseMindClip(structured) : mindClipFromHtml(html);
-      if ((structured || html.includes("data-jiange-mindmap")) && !clip) { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; }
+      if ((structured || html.includes("data-jiange-mindmap")) && !clip) { setNotice({ ok: false, text: t("剪贴板内容无效，未粘贴。") }); return; }
       setMindClipboardFallback(false);
       if (clip) insertMindClip(clip); else insertMindPlainText(text);
-    } catch { if (recentMindClipboard.current) setMindClipboardFallback(true); setNotice({ ok: false, text: recentMindClipboard.current ? "无法读取系统剪贴板，可在菜单中粘贴本页最近复制的分支。" : "无法读取剪贴板，请使用键盘快捷键。" }); }
+    } catch { if (recentMindClipboard.current) setMindClipboardFallback(true); setNotice({ ok: false, text: recentMindClipboard.current ? t("无法读取系统剪贴板，可在菜单中粘贴本页最近复制的分支。") : t("无法读取剪贴板，请使用键盘快捷键。") }); }
   };
   const openMindMenu = (x: number, y: number) => {
     const rect = svgWrap.current?.getBoundingClientRect();
@@ -1371,11 +1371,11 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const editableRef = useRef(!readOnly); editableRef.current = !readOnly;
   const copyMindNodeImage = async () => {
     const id = mindSelected, svg = svgWrap.current?.querySelector<SVGSVGElement>("[data-flow-svg]");
-    if (!id || !canCopy || !svg || mindEditingRef.current || mindDescriptionEditingRef.current) { if (!canCopy) setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
-    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: "当前浏览器不支持复制图片。" }); return; }
+    if (!id || !canCopy || !svg || mindEditingRef.current || mindDescriptionEditingRef.current) { if (!canCopy) setNotice({ ok: false, text: t("当前文档不允许复制。") }); return; }
+    if (!navigator.clipboard?.write || typeof ClipboardItem === "undefined") { setNotice({ ok: false, text: t("当前浏览器不支持复制图片。") }); return; }
     const bounds = mindNodeImageBounds(graph.mind ?? [], effectiveCollapsed, graph.mindStyles ?? {}, id, graph.mindDescriptions, graph.mindDescriptionStyles);
     const markup = bounds && mindNodeImageSvg(svg, id, bounds);
-    if (!bounds || !markup) { setNotice({ ok: false, text: "节点已变化，请重新选择后复制。" }); return; }
+    if (!bounds || !markup) { setNotice({ ok: false, text: t("节点已变化，请重新选择后复制。") }); return; }
     const snapshot = JSON.stringify(graph), sessionRevision = getMindTextStyleSessionRevision();
     const png = rasterizeMindNode(markup, bounds.pixels).then((blob) => {
       if (!imageCopyMounted.current || !canCopyRef.current || getMindTextStyleSessionRevision() !== sessionRevision || mindSelectedRef.current !== id || JSON.stringify(graphRef.current) !== snapshot) throw new Error("copy context changed");
@@ -1384,8 +1384,8 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     // ClipboardItem accepts a promise, allowing the write to start within the
     // user's gesture while rendering and permission checks complete.
     void png.catch(() => {});
-    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]); if (imageCopyMounted.current) setNotice({ ok: true, text: "已复制图片到剪贴板" }); }
-    catch { if (imageCopyMounted.current) setNotice({ ok: false, text: "无法复制图片，请检查剪贴板权限并重试。" }); }
+    try { await navigator.clipboard.write([new ClipboardItem({ "image/png": png })]); if (imageCopyMounted.current) setNotice({ ok: true, text: t("已复制图片到剪贴板") }); }
+    catch { if (imageCopyMounted.current) setNotice({ ok: false, text: t("无法复制图片，请检查剪贴板权限并重试。") }); }
   };
   const toWorld = (clientX: number, clientY: number) => {
     const r = svgWrap.current!.getBoundingClientRect();
@@ -1445,7 +1445,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     setTool("select");
     setHand(false);
     setShowStarter(false);
-    setNotice({ ok: true, text: `已插入分区画框「${created.title}」，拖动标题栏可联动移动内部图形` });
+    setNotice({ ok: true, text: t("已插入分区画框「{title}」，拖动标题栏可联动移动内部图形", { title: created.title }) });
   };
   const finishFrameTitleEdit = () => {
     if (!editingFrame) return;
@@ -1465,11 +1465,11 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     if (editingFrame?.id === frame.id) setEditingFrame(null);
   };
   const exportSingleFrame = (frame: BoardFrame) => {
-    if (!canCopy) { setNotice({ ok: false, text: "当前文档权限不允许导出。" }); return; }
+    if (!canCopy) { setNotice({ ok: false, text: t("当前文档权限不允许导出。") }); return; }
     const svg = exportFrameToSvg(frame, graph.nodes, graph.edges, themeOf(graph.theme));
     const safeName = (frame.title || "Frame").replace(/[\\/:*?"<>|]+/g, "_");
     download(`${safeName}.svg`, new Blob([svg], { type: "image/svg+xml" }));
-    setNotice({ ok: true, text: `已导出分区「${frame.title}」为 SVG` });
+    setNotice({ ok: true, text: t("已导出分区「{title}」为 SVG", { title: frame.title }) });
   };
   useEffect(() => {
     if (!compact || !mindSelected || drag || mindEditing || mindDescriptionEditing) return;
@@ -1479,9 +1479,9 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const addNode = (shape: Shape, at?: { x: number; y: number }) => {
     const spec = SHAPES.find((s) => s.id === shape)!;
     const c = at ?? { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
-    const node: FlowNode = { id: newFlowId("n"), shape, text: shape === "text" ? "文本" : spec.label.replace(/（.*）/, ""), x: Math.round(c.x - spec.w / 2), y: Math.round(c.y - spec.h / 2), w: spec.w, h: spec.h, z: isContainer(shape) ? Math.min(0, ...graph.nodes.map((n) => n.z ?? 0)) - 1 : Math.max(0, ...graph.nodes.map((n) => n.z ?? 0)) + 1 };
+    const node: FlowNode = { id: newFlowId("n"), shape, text: shape === "text" ? t("文本") : t(spec.label).replace(/（.*）|\(.*\)/, "").trim(), x: Math.round(c.x - spec.w / 2), y: Math.round(c.y - spec.h / 2), w: spec.w, h: spec.h, z: isContainer(shape) ? Math.min(0, ...graph.nodes.map((n) => n.z ?? 0)) - 1 : Math.max(0, ...graph.nodes.map((n) => n.z ?? 0)) + 1 };
     if (shape === "class") node.text = "ClassName\n+ field: type\n+ method()";
-    if (shape === "actor" || shape === "lifeline") node.text = shape === "actor" ? "用户" : "对象";
+    if (shape === "actor" || shape === "lifeline") node.text = shape === "actor" ? t("用户") : t("对象");
     commit({ ...graph, nodes: [...graph.nodes, node] });
     setSelected(new Set([node.id])); setTool("select"); setShowStarter(false);
   };
@@ -1512,21 +1512,21 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   /** Upload an image and place it (Feishu: 插入图片 / 粘贴 / 拖入画板). Max 360px on the long side. */
   const insertImage = async (file: File, at?: { x: number; y: number }) => {
     if (!upload || readOnly) return;
-    if (!/^image\/(png|jpe?g|gif|webp|svg\+xml)$/.test(file.type)) { setNotice({ ok: false, text: "仅支持 PNG、JPG、GIF、WebP、SVG 图片" }); return; }
-    if (file.size > 20 * 1024 * 1024) { setNotice({ ok: false, text: "图片不能超过 20 MB" }); return; }
-    setBusy(true); setNotice({ ok: true, text: "正在上传图片…" });
+    if (!/^image\/(png|jpe?g|gif|webp|svg\+xml)$/.test(file.type)) { setNotice({ ok: false, text: t("仅支持 PNG、JPG、GIF、WebP、SVG 图片") }); return; }
+    if (file.size > 20 * 1024 * 1024) { setNotice({ ok: false, text: t("图片不能超过 20 MB") }); return; }
+    setBusy(true); setNotice({ ok: true, text: t("正在上传图片…") });
     try {
       const url = URL.createObjectURL(file);
       const imageSize = await new Promise<{ w: number; h: number }>((resolve) => { const img = new Image(); img.onload = () => resolve({ w: img.naturalWidth || 240, h: img.naturalHeight || 160 }); img.onerror = () => resolve({ w: 240, h: 160 }); img.src = url; });
       URL.revokeObjectURL(url);
       const { w, h } = fitInsertedImage(imageSize, size, view.zoom);
       const asset = await upload(file);
-      if (!editableRef.current) { setNotice({ ok: false, text: "编辑权限已变化，图片未插入画板。" }); return; }
+      if (!editableRef.current) { setNotice({ ok: false, text: t("编辑权限已变化，图片未插入画板。") }); return; }
       const c = at ?? { x: view.x + size.w / view.zoom / 2, y: view.y + size.h / view.zoom / 2 };
       const node: FlowNode = { id: newFlowId("n"), shape: "image", text: "", fileId: asset.id, x: Math.round(c.x - w / 2), y: Math.round(c.y - h / 2), w, h, z: Math.max(0, ...graphRef.current.nodes.map((n) => n.z ?? 0)) + 1 };
       const next = { ...graphRef.current, nodes: [...graphRef.current.nodes, node] };
       commitRef.current(next); setSelected(new Set([node.id])); setNotice(null);
-    } catch { setNotice({ ok: false, text: "图片上传失败，请重试" }); }
+    } catch { setNotice({ ok: false, text: t("图片上传失败，请重试") }); }
     finally { setBusy(false); }
   };
   const nudge = (dx: number, dy: number) => commit(moveFlowSelection(graph, selected, dx, dy));
@@ -1594,21 +1594,21 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       if (inField(e.target)) return;
       if (mindSelected) {
         e.preventDefault(); e.stopPropagation();
-        if (!canCopy) { setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
-        const clip = copyMindBranch(graph, mindSelected); if (!clip || !e.clipboardData) { setNotice({ ok: false, text: "无法访问剪贴板，未剪切节点。" }); return; }
+        if (!canCopy) { setNotice({ ok: false, text: t("当前文档不允许复制。") }); return; }
+        const clip = copyMindBranch(graph, mindSelected); if (!clip || !e.clipboardData) { setNotice({ ok: false, text: t("无法访问剪贴板，未剪切节点。") }); return; }
         const json = JSON.stringify(clip), plain = mindClipText(clip);
         try {
           e.clipboardData.setData("text/plain", plain);
           try { e.clipboardData.setData(MIND_CLIP_MIME, json); } catch { /* HTML is a second structured representation. */ }
           try { e.clipboardData.setData("text/html", mindClipHtml(clip)); } catch { /* Plain text is still available. */ }
-        } catch { setNotice({ ok: false, text: "复制失败，未剪切节点。" }); return; }
+        } catch { setNotice({ ok: false, text: t("复制失败，未剪切节点。") }); return; }
         recentMindClipboard.current = parseMindClip(json);
         if (e.type === "cut" && !readOnly) removeMindTopic();
         return;
       }
       const c = clipOfSelection();
       if (!c) return;
-      if (!canCopy) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: "当前文档不允许复制。" }); return; }
+      if (!canCopy) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: t("当前文档不允许复制。") }); return; }
       flowClipboard = c;
       e.clipboardData?.setData("text/plain", CLIP_MARK + JSON.stringify(c));
       e.preventDefault(); e.stopPropagation();
@@ -1620,8 +1620,8 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       if (pastedImage && upload) { e.preventDefault(); e.stopPropagation(); void insertImage(pastedImage); return; }
       const text = e.clipboardData?.getData("text/plain") ?? "";
       const mindData = e.clipboardData?.getData(MIND_CLIP_MIME) ?? "", html = e.clipboardData?.getData("text/html") ?? "";
-      if (html.includes("data-jiange-mind-text-style")) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: "请使用「粘贴样式」应用文字样式。" }); return; }
-      if (mindData || html.includes("data-jiange-mindmap")) { e.preventDefault(); e.stopPropagation(); const clip = mindData ? parseMindClip(mindData) : mindClipFromHtml(html); if (!clip) { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; } insertMindClip(clip); return; }
+      if (html.includes("data-jiange-mind-text-style")) { e.preventDefault(); e.stopPropagation(); setNotice({ ok: false, text: t("请使用「粘贴样式」应用文字样式。") }); return; }
+      if (mindData || html.includes("data-jiange-mindmap")) { e.preventDefault(); e.stopPropagation(); const clip = mindData ? parseMindClip(mindData) : mindClipFromHtml(html); if (!clip) { setNotice({ ok: false, text: t("剪贴板内容无效，未粘贴。") }); return; } insertMindClip(clip); return; }
       if (mindSelected && text.trim() && !text.startsWith(CLIP_MARK)) {
         e.preventDefault(); e.stopPropagation();
         insertMindPlainText(text); return;
@@ -1639,24 +1639,24 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             if (strokes.some((stroke) => !stroke)) throw new Error("invalid stroke");
             clip = { nodes: raw.nodes.map((n) => normalizeNode(n)).filter((n): n is FlowNode => !!n), edges: raw.edges.map((x) => normalizeEdge(x)).filter((x): x is FlowEdge => !!x), strokes: strokes as FlowStroke[], source: raw.source };
           }
-        } catch { setNotice({ ok: false, text: "剪贴板内容无效，未粘贴。" }); return; }
+        } catch { setNotice({ ok: false, text: t("剪贴板内容无效，未粘贴。") }); return; }
         if (!clip || (!clip.nodes.length && !clip.strokes?.length)) return;
         const block: ClipBlock = { type: "flowchart", props: Object.fromEntries(clip.nodes.map((n) => [`fc.n.${n.id}`, JSON.stringify(n)])), chars: [], source: clip.source };
         const plan = planClipboardAssets([block], location.origin);
         if (!plan.ok) { setNotice({ ok: false, text: plan.message }); return; }
         if (!plan.assets) { pasteClip(clip, 24 * pasteCount.current); return; }
-        if (!assets?.copy || assetPaste.current) { setNotice({ ok: false, text: "当前无法安全复制图片，请确认编辑权限并稍后重试。" }); return; }
+        if (!assets?.copy || assetPaste.current) { setNotice({ ok: false, text: t("当前无法安全复制图片，请确认编辑权限并稍后重试。") }); return; }
         const copy = assets.copy, source = clip, offset = 24 * pasteCount.current, snapshot = JSON.stringify(graphRef.current), selection = selectedKeyRef.current;
         const key = JSON.stringify([plan.assets.sourceDocId, plan.assets.fileIds]);
         let requestId = assetRetry.current?.key === key ? assetRetry.current.id : "";
         if (!requestId) {
           try { requestId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (v) => v.toString(16).padStart(2, "0")).join(""); }
-          catch { setNotice({ ok: false, text: "无法创建安全的粘贴请求。" }); return; }
+          catch { setNotice({ ok: false, text: t("无法创建安全的粘贴请求。") }); return; }
           assetRetry.current = { key, id: requestId };
         }
         const controller = new AbortController(); assetPaste.current = controller;
         const stillCurrent = () => !controller.signal.aborted && editableRef.current && selectedKeyRef.current === selection && JSON.stringify(graphRef.current) === snapshot;
-        setNotice({ ok: true, text: "正在复制图片…" });
+        setNotice({ ok: true, text: t("正在复制图片…") });
         void (async () => {
           try {
             const [mapped] = await copyClipboardAssetsWithRetry(copy, [block], plan.assets!, requestId, assets.docId, controller.signal, stillCurrent);
@@ -1665,7 +1665,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             if (nodes.length !== source.nodes.length) throw new Error("invalid nodes");
             pasteClip({ ...source, nodes }, offset); assetRetry.current = null; setNotice(null);
           } catch {
-            if (!controller.signal.aborted) setNotice({ ok: false, text: stillCurrent() ? "无法确认图片复制结果，可再次粘贴重试。" : "画板已变化，未粘贴；请重新选择后再试。" });
+            if (!controller.signal.aborted) setNotice({ ok: false, text: stillCurrent() ? t("无法确认图片复制结果，可再次粘贴重试。") : t("画板已变化，未粘贴；请重新选择后再试。") });
           } finally { if (assetPaste.current === controller) assetPaste.current = null; }
         })();
         return;
@@ -1983,12 +1983,15 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       commit(merged);
       setShowStarter(false);
       requestAnimationFrame(() => fit(merged));
+      const xmindSummary = parsed.sheetCount > 1
+        ? t("已导入 XMind：{topics} 个主题（{sheets} 张画布）", { topics: parsed.topicCount, sheets: parsed.sheetCount })
+        : t("已导入 XMind：{topics} 个主题", { topics: parsed.topicCount });
       setNotice({
         ok: true,
-        text: `已导入 XMind：${parsed.topicCount} 个主题${parsed.sheetCount > 1 ? `（${parsed.sheetCount} 张画布）` : ""}${parsed.warnings.length ? `；${parsed.warnings.join("；")}` : ""}`,
+        text: parsed.warnings.length ? t("{summary}；{warnings}", { summary: xmindSummary, warnings: parsed.warnings.join("; ") }) : xmindSummary,
       });
     } catch (err) {
-      setNotice({ ok: false, text: err instanceof XmindError ? err.message : "导入 XMind 失败，请确认文件为标准 .xmind 格式" });
+      setNotice({ ok: false, text: err instanceof XmindError ? err.message : t("导入 XMind 失败，请确认文件为标准 .xmind 格式") });
     } finally {
       setBusy(false);
     }
@@ -2003,8 +2006,9 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       const { graph: g, warnings } = await parseDrawio(text);
       const merged = graph.nodes.length || graph.strokes?.length || graph.mind?.length ? appendGraph(graph, g) : { ...g, theme: graph.theme };
       commit(merged); requestAnimationFrame(() => fit(merged));
-      setNotice({ ok: true, text: `已导入 ${g.nodes.length} 个图形、${g.edges.length} 条连线${warnings.length ? `；${warnings.join("；")}` : ""}` });
-    } catch (err) { setNotice({ ok: false, text: err instanceof DrawioError ? err.message : "导入失败，请确认文件来自 draw.io / diagrams.net" }); }
+      const drawioSummary = t("已导入 {nodes} 个图形、{edges} 条连线", { nodes: g.nodes.length, edges: g.edges.length });
+      setNotice({ ok: true, text: warnings.length ? t("{summary}；{warnings}", { summary: drawioSummary, warnings: warnings.join("; ") }) : drawioSummary });
+    } catch (err) { setNotice({ ok: false, text: err instanceof DrawioError ? err.message : t("导入失败，请确认文件来自 draw.io / diagrams.net") }); }
     finally { setBusy(false); }
   };
   const runAI = async () => {
@@ -2012,33 +2016,38 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     setBusy(true); setNotice(null);
     try {
       const parsed = parseFlowchartAnswer(await ai(flowchartPrompt(aiText)));
-      if (!parsed) { setNotice({ ok: false, text: "AI 没有返回可用的流程图，请换种描述再试" }); return; }
+      if (!parsed) { setNotice({ ok: false, text: t("AI 没有返回可用的流程图，请换种描述再试") }); return; }
       const next = graph.nodes.length || graph.strokes?.length || graph.mind?.length ? appendGraph(graph, parsed.graph) : { ...parsed.graph, theme: graph.theme };
       commit(next); requestAnimationFrame(() => fit(next)); setMenu(null);
-      setNotice({ ok: true, text: `AI 生成了 ${parsed.graph.nodes.length} 个节点${parsed.dropped ? `，${parsed.dropped} 项无效内容已忽略` : ""}，请核对` });
+      setNotice({
+        ok: true,
+        text: parsed.dropped
+          ? t("AI 生成了 {count} 个节点，{dropped} 项无效内容已忽略，请核对", { count: parsed.graph.nodes.length, dropped: parsed.dropped })
+          : t("AI 生成了 {count} 个节点，请核对", { count: parsed.graph.nodes.length }),
+      });
     } catch (err) { setNotice({ ok: false, text: aiErrorText(err) }); }
     finally { setBusy(false); }
   };
   const download = (name: string, blob: Blob) => { const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 0); };
   const exportAs = async (kind: "svg" | "png" | "drawio" | "xmind") => {
-    if (mindEditingRef.current || mindDescriptionEditingRef.current) { setNotice({ ok: false, text: "请先完成节点文字编辑。" }); return; }
+    if (mindEditingRef.current || mindDescriptionEditingRef.current) { setNotice({ ok: false, text: t("请先完成节点文字编辑。") }); return; }
     setMenu(null);
     if (kind === "xmind") {
-      if (!canCopy) { setNotice({ ok: false, text: "当前文档权限不允许导出。" }); return; }
-      if (!graph.mind?.length) { setNotice({ ok: false, text: "画布中没有思维导图，请先插入思维导图后再导出 .xmind。" }); return; }
+      if (!canCopy) { setNotice({ ok: false, text: t("当前文档权限不允许导出。") }); return; }
+      if (!graph.mind?.length) { setNotice({ ok: false, text: t("画布中没有思维导图，请先插入思维导图后再导出 .xmind。") }); return; }
       try {
         const bytes = exportMindMapToXmind(graph);
-        return download("思维导图.xmind", new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "application/vnd.xmind.workbook" }));
+        return download(t("思维导图.xmind"), new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], { type: "application/vnd.xmind.workbook" }));
       } catch (err) {
-        setNotice({ ok: false, text: err instanceof XmindError ? err.message : "导出 XMind 失败" });
+        setNotice({ ok: false, text: err instanceof XmindError ? err.message : t("导出 XMind 失败") });
         return;
       }
     }
-    if (kind === "drawio" && graph.mind?.length) { setNotice({ ok: false, text: "draw.io 导出暂不支持思维导图，请使用 PNG、SVG 或 XMind。" }); return; }
-    if (kind === "drawio" && graph.strokes?.length) { setNotice({ ok: false, text: "draw.io 导出暂不支持笔迹，请使用 PNG 或 SVG。" }); return; }
-    if (kind === "drawio") return download("流程图.drawio", new Blob([toDrawio(graph)], { type: "application/xml" }));
+    if (kind === "drawio" && graph.mind?.length) { setNotice({ ok: false, text: t("draw.io 导出暂不支持思维导图，请使用 PNG、SVG 或 XMind。") }); return; }
+    if (kind === "drawio" && graph.strokes?.length) { setNotice({ ok: false, text: t("draw.io 导出暂不支持笔迹，请使用 PNG 或 SVG。") }); return; }
+    if (kind === "drawio") return download(t("流程图.drawio"), new Blob([toDrawio(graph)], { type: "application/xml" }));
     const svg = await inlineImages(svgMarkup(readOnly ? { ...graph, mindCollapsed: [...effectiveCollapsed] } : graph));
-    if (kind === "svg") return download(mindBoard ? "思维导图.svg" : "流程图.svg", new Blob([svg], { type: "image/svg+xml" }));
+    if (kind === "svg") return download(mindBoard ? t("思维导图.svg") : t("流程图.svg"), new Blob([svg], { type: "image/svg+xml" }));
     const b = flowBounds(graph), scale = 2, w = (b.w + 80) * scale, h = (b.h + 80) * scale;
     const img = new Image();
     img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
@@ -2046,7 +2055,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     const canvas = document.createElement("canvas"); canvas.width = w; canvas.height = h;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
     ctx.drawImage(img, 0, 0, w, h);
-    canvas.toBlob((blob) => blob && download(mindBoard ? "思维导图.png" : "流程图.png", blob), "image/png");
+    canvas.toBlob((blob) => blob && download(mindBoard ? t("思维导图.png") : t("流程图.png"), blob), "image/png");
   };
 
   const alignNodes = (k: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => {
@@ -2092,21 +2101,31 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
   const barBtn = "flex h-8 items-center gap-1 rounded-md px-2 text-[13px] text-[#1F2329] hover:bg-hover disabled:opacity-30 dark:text-foreground";
   const menuItem = "flex h-8 w-full items-center gap-2 rounded-md px-2 text-left hover:bg-hover";
   const railBtn = cn("grid size-9 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", compact && "size-9 shrink-0 max-[359px]:size-8");
+  const inkPalette = [
+    ["#1F2329", t("黑色")], ["#D83931", t("红色")], ["#DE7802", t("橙色")], ["#DC9B04", t("黄色")],
+    ["#2EA121", t("绿色")], ["#3370FF", t("蓝色")], ["#6425D0", t("紫色")], ["#8F959E", t("灰色")],
+  ] as const;
+  const mindPalette = [
+    ["#1f2329", t("黑")], ["#646a73", t("深灰")], ["#bbbfc4", t("灰")], ["#ffffff", t("白")],
+    ["#8f5fe8", t("紫")], ["#5b7ff1", t("蓝")], ["#79c968", t("绿")], ["#f8dd4e", t("黄")],
+    ["#f4a340", t("橙")], ["#e86d68", t("红")], ["#e7defb", t("浅紫")], ["#e1e9ff", t("浅蓝")],
+    ["#dff2dd", t("浅绿")], ["#fff5c7", t("浅黄")], ["#ffe8d1", t("浅橙")], ["#fce4e4", t("浅红")],
+  ] as const;
   const activeInkColor = penKind === "marker" ? markerColor : penColor;
-  const inkColors = penKind === "marker" ? [["#FFEE24", "黄色"], ["#FFB3CC", "粉色"], ["#98E7A5", "绿色"], ["#8DCBFF", "蓝色"], ["#D1B3FF", "紫色"]] as const : INK_COLORS;
-  const penSettings = <div className="absolute bottom-[52px] right-0 z-[90] w-[208px] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[13px] shadow-lg" role="group" aria-label="画笔颜色" onPointerDown={(event) => event.stopPropagation()}>
-    <div className="mb-2 text-subtle">画笔颜色</div><div className="flex flex-wrap gap-2">{inkColors.map(([color, label]) => <button key={color} type="button" aria-label={`画笔颜色 ${label}`} title={label} aria-pressed={activeInkColor === color} onClick={() => { penKind === "marker" ? setMarkerColor(color) : setPenColor(color); setMenu(null); }} className={cn("size-5 rounded-full border border-[#bbbfc4]", activeInkColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
+  const inkColors = penKind === "marker" ? [["#FFEE24", t("黄色")], ["#FFB3CC", t("粉色")], ["#98E7A5", t("绿色")], ["#8DCBFF", t("蓝色")], ["#D1B3FF", t("紫色")]] as const : inkPalette;
+  const penSettings = <div className="absolute bottom-[52px] right-0 z-[90] w-[208px] rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[13px] shadow-lg" role="group" aria-label={t("画笔颜色")} onPointerDown={(event) => event.stopPropagation()}>
+    <div className="mb-2 text-subtle">{t("画笔颜色")}</div><div className="flex flex-wrap gap-2">{inkColors.map(([color, label]) => <button key={color} type="button" aria-label={t("画笔颜色 {color}", { color: label })} title={label} aria-pressed={activeInkColor === color} onClick={() => { penKind === "marker" ? setMarkerColor(color) : setPenColor(color); setMenu(null); }} className={cn("size-5 rounded-full border border-[#bbbfc4]", activeInkColor === color && "ring-2 ring-primary ring-offset-2")} style={{ background: color }}/>)}</div>
   </div>;
   const libraryGroups: { title: string; shapes: Shape[] }[] = [
-    { title: "基础", shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "sticky", "note", "text", ...(upload ? ["image" as const] : [])] },
-    { title: "泳道", shapes: ["swimlane", "swimlaneV"] },
-    { title: "流程图", shapes: ["terminator", "rect", "diamond", "parallelogram", "document", "cylinder", "hexagon"] },
-    { title: "类图", shapes: ["class", "note"] },
-    { title: "时序图", shapes: ["actor", "lifeline", "note"] },
+    { title: t("基础"), shapes: ["round", "rect", "ellipse", "diamond", "triangle", "hexagon", "parallelogram", "sticky", "note", "text", ...(upload ? ["image" as const] : [])] },
+    { title: t("泳道"), shapes: ["swimlane", "swimlaneV"] },
+    { title: t("流程图"), shapes: ["terminator", "rect", "diamond", "parallelogram", "document", "cylinder", "hexagon"] },
+    { title: t("类图"), shapes: ["class", "note"] },
+    { title: t("时序图"), shapes: ["actor", "lifeline", "note"] },
   ];
   const ICON_BOX: Partial<Record<Shape, [number, number, number, number]>> = { actor: [33, 6, 30, 106], lifeline: [18, 8, 60, 82], swimlane: [6, 16, 84, 64], swimlaneV: [14, 6, 68, 84], class: [14, 12, 68, 72], triangle: [14, 14, 68, 68], note: [16, 12, 64, 72], sticky: [14, 14, 68, 68] };
   const shapeIcon = (id: Shape) => { const [x, y, w, h] = ICON_BOX[id] ?? [10, 22, 76, 52]; return <svg viewBox="0 0 96 96" className="size-6" fill="none"><ShapeOutline n={{ id: "i", x, y, w, h, shape: id, text: "" }} theme={{ ...THEMES[0], radius: 4, strokeWidth: 6 }} fill="none" stroke="currentColor" />{id === "text" && <text x="48" y="66" textAnchor="middle" fontSize="52" fill="currentColor">T</text>}</svg>; };
-  const filteredGroups = libraryGroups.map((g) => ({ ...g, shapes: g.shapes.filter((id) => !libQuery.trim() || SHAPES.find((x) => x.id === id)!.label.includes(libQuery.trim())) })).filter((g) => g.shapes.length);
+  const filteredGroups = libraryGroups.map((g) => ({ ...g, shapes: g.shapes.filter((id) => { const q = libQuery.trim().toLowerCase(); if (!q) return true; const raw = SHAPES.find((x) => x.id === id)!.label; return raw.toLowerCase().includes(q) || t(raw).toLowerCase().includes(q); }) })).filter((g) => g.shapes.length);
   // Floating style toolbar anchored above the selection (Feishu: shape ▾ / 填充 ▾ / 边框 ▾ / 字色 ▾ / 字号 ▾ / 更多).
   const anchorBox = selectedNodes.length ? bounds(selectedNodes) : selectedEdges.length ? (() => { const e = selectedEdges[0]; const a = graph.nodes.find((n) => n.id === e.from), t = graph.nodes.find((n) => n.id === e.to); if (!a || !t) return null; const m = edgePath(e, a, t).mid; return { x: m.x, y: m.y, w: 0, h: 0 }; })() : selectedStrokes.length ? flowBounds({ nodes: [], edges: [], strokes: selectedStrokes, theme: graph.theme }) : null;
   const obstaclePadding = Math.max(12, 20 * view.zoom);
@@ -2243,7 +2262,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         onFrameExport={exportSingleFrame}
         onFrameDelete={readOnly ? undefined : deleteBoardFrame}
         mindStructure={mindStructure} mindRelations={mindRelations} mindRelationFrom={mindRelationFrom}
-        onRemoveMindRelation={readOnly ? undefined : (relId) => { persistMindLayout(mindStructure, mindRelations.filter((r) => r.id !== relId)); setNotice({ ok: true, text: "已删除跨分支关联线" }); }}
+        onRemoveMindRelation={readOnly ? undefined : (relId) => { persistMindLayout(mindStructure, mindRelations.filter((r) => r.id !== relId)); setNotice({ ok: true, text: t("已删除跨分支关联线") }); }}
         mindBoundaries={extras.mindBoundaries} mindSummaries={extras.mindSummaries} mindBadges={extras.mindBadges}
         onEditMindBoundary={readOnly ? undefined : (nodeId) => { setMindSelected(nodeId); setSelected(new Set()); setBoundaryLabelDraft(extrasRef.current.mindBoundaries[nodeId]?.label ?? ""); const pos = mindPositions.find((m) => m.topic.id === nodeId); const scr = pos ? worldToScreen(pos.x, pos.y) : { x: 240, y: 160 }; setMindPaintMenu({ kind: "boundary", left: Math.max(8, Math.min(window.innerWidth - 260, scr.x)), top: Math.max(56, Math.min(window.innerHeight - 210, scr.y)) }); }}
         onEditMindSummary={readOnly ? undefined : (parentId) => { setMindSelected(parentId); setSelected(new Set()); setSummaryLabelDraft(extrasRef.current.mindSummaries[parentId]?.label ?? t("核心结论")); const pos = mindPositions.find((m) => m.topic.id === parentId); const scr = pos ? worldToScreen(pos.x + pos.w, pos.y) : { x: 240, y: 160 }; setMindPaintMenu({ kind: "summary", left: Math.max(8, Math.min(window.innerWidth - 260, scr.x)), top: Math.max(56, Math.min(window.innerHeight - 210, scr.y)) }); }}
@@ -2254,7 +2273,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
           const pos = mindPositions.find((m) => m.topic.id === topic.id);
           const wx = pos ? Math.round(pos.x + pos.w) : Math.round(toWorld(event.clientX, event.clientY).x);
           const wy = pos ? Math.round(pos.y) : Math.round(toWorld(event.clientX, event.clientY).y);
-          openCommentComposer({ kind: "mind", targetId: topic.id, x: wx, y: wy }, topic.text || "导图主题", event.clientX, event.clientY);
+          openCommentComposer({ kind: "mind", targetId: topic.id, x: wx, y: wy }, topic.text || t("导图主题"), event.clientX, event.clientY);
           return;
         }
         if (readOnly) return;
@@ -2266,12 +2285,12 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
           const exists = mindRelations.some((r) => r.fromId === mindRelationFrom && r.toId === topic.id);
           if (!exists) {
             const relId = `mr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-            persistMindLayout(mindStructure, [...mindRelations, { id: relId, fromId: mindRelationFrom, toId: topic.id, label: "关联" }]);
+            persistMindLayout(mindStructure, [...mindRelations, { id: relId, fromId: mindRelationFrom, toId: topic.id, label: t("关联") }]);
           }
           setMindRelationFrom(null);
           setMindSelected(topic.id);
           setSelected(new Set());
-          setNotice({ ok: true, text: exists ? "这两个主题之间已存在关联线" : "已创建跨分支关联线（双击关联线可删除）" });
+          setNotice({ ok: true, text: exists ? t("这两个主题之间已存在关联线") : t("已创建跨分支关联线（双击关联线可删除）") });
           return;
         }
         if (hand || space.current || event.button === 1) { setDrag({ kind: "pan", startX: event.clientX, startY: event.clientY, vx: view.x, vy: view.y }); return; }
@@ -2295,7 +2314,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             const p = toWorld(e.clientX, e.clientY);
             const wx = Math.round(Math.max(-20000, Math.min(20000, p.x)));
             const wy = Math.round(Math.max(-20000, Math.min(20000, p.y)));
-            openCommentComposer({ kind: "point", x: wx, y: wy }, `画布 (${wx}, ${wy})`, e.clientX, e.clientY);
+            openCommentComposer({ kind: "point", x: wx, y: wy }, t("画布 ({x}, {y})", { x: wx, y: wy }), e.clientX, e.clientY);
             return;
           }
           setCommentDraft(null);
@@ -2323,7 +2342,8 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             return;
           }
           if (tool === "comment" && commentActions) {
-            const label = n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形";
+            const shapeSpec = SHAPES.find((x) => x.id === n.shape);
+            const label = n.text.split("\n")[0] || (shapeSpec ? t(shapeSpec.label) : t("图形"));
             openCommentComposer({ kind: "node", targetId: n.id, x: Math.round(n.x + n.w), y: Math.round(n.y) }, label, e.clientX, e.clientY);
             return;
           }
@@ -2417,7 +2437,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       />
       {editing && (editNode || editEdge) && (() => {
         const anchor = editNode ? { x: editNode.x, y: editNode.y, w: editNode.w, h: editNode.h } : (() => { const e = editEdge!; const a = graph.nodes.find((n) => n.id === e.from)!, t = graph.nodes.find((n) => n.id === e.to)!; const m = edgePath(e, a, t).mid; return { x: m.x - 70, y: m.y - 16, w: 140, h: 32 }; })();
-        return <textarea autoFocus value={editing.value} placeholder="输入文本" onChange={(e) => setEditing({ ...editing, value: e.target.value })} onBlur={finishEdit} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); finishEdit(); } if (e.key === "Escape") setEditing(null); }}
+        return <textarea autoFocus value={editing.value} placeholder={t("输入文本")} onChange={(e) => setEditing({ ...editing, value: e.target.value })} onBlur={finishEdit} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); finishEdit(); } if (e.key === "Escape") setEditing(null); }}
           className={cn("absolute select-text resize-none rounded border-2 border-primary bg-surface p-1 text-center outline-none", compact ? "text-[16px]" : "text-[14px]")} style={{ left: (anchor.x - view.x) * view.zoom, top: (anchor.y - view.y) * view.zoom, width: anchor.w * view.zoom, height: Math.max(32, anchor.h * view.zoom) }} data-flow-text-editor />;
       })()}
       {editingFrame && (() => {
@@ -2427,7 +2447,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
           <input
             autoFocus
             data-board-frame-title-input
-            aria-label="编辑分区标题"
+            aria-label={t("编辑分区标题")}
             maxLength={120}
             value={editingFrame.value}
             onPointerDown={(e) => e.stopPropagation()}
@@ -2451,9 +2471,9 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       })()}
       {!graph.nodes.length && !graph.strokes?.length && !graph.mind?.length && !frames.length && !readOnly && showStarter && <div className="pointer-events-none absolute inset-0 z-20 grid place-items-center">
         <div className={cn("pointer-events-auto w-[min(560px,calc(100%-32px))] overflow-y-auto rounded-xl border border-[#DEE0E3] bg-surface p-4 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "max-h-[calc(100%-24px)]" : "max-h-[calc(100%-190px)]")} style={{ touchAction: "pan-y" }} onPointerDown={(e) => e.stopPropagation()} data-flow-template-picker>
-          <div className="mb-3 flex items-center text-[14px] font-medium">从模板创建<button type="button" aria-label="关闭模板" onClick={() => setShowStarter(false)} className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover"><X size={16}/></button></div>
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">{FLOW_TEMPLATES.map((t) => <button key={t.id} type="button" onClick={() => applyTemplate(t)} className="rounded-lg border border-[#DEE0E3] p-2 text-left hover:border-primary dark:border-border" data-flow-template={t.id}><div className="text-[13px] font-medium">{t.label}</div><div className="mt-1 text-[11px] leading-4 text-subtle">{t.desc}</div></button>)}</div>
-          <div className="mt-3 text-[12px] text-subtle">也可以从{compact ? "下方" : "左侧"}图形库选择图形后点击画布放置，或在右上角使用「AI 生成」「导入 draw.io」，支持直接粘贴 draw.io 内容。</div>
+          <div className="mb-3 flex items-center text-[14px] font-medium">{t("从模板创建")}<button type="button" aria-label={t("关闭模板")} onClick={() => setShowStarter(false)} className="ml-auto grid size-8 place-items-center rounded-md text-subtle hover:bg-hover"><X size={16}/></button></div>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-5">{FLOW_TEMPLATES.map((tpl) => <button key={tpl.id} type="button" onClick={() => applyTemplate(tpl)} className="rounded-lg border border-[#DEE0E3] p-2 text-left hover:border-primary dark:border-border" data-flow-template={tpl.id}><div className="text-[13px] font-medium">{t(tpl.label)}</div><div className="mt-1 text-[11px] leading-4 text-subtle">{t(tpl.desc)}</div></button>)}</div>
+          <div className="mt-3 text-[12px] text-subtle">{compact ? t("也可以从下方图形库选择图形后点击画布放置，或在右上角使用「AI 生成」「导入 draw.io」，支持直接粘贴 draw.io 内容。") : t("也可以从左侧图形库选择图形后点击画布放置，或在右上角使用「AI 生成」「导入 draw.io」，支持直接粘贴 draw.io 内容。")}</div>
         </div>
       </div>}
       {/* 协作者指针 */}
@@ -2464,12 +2484,12 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       {/* 选中对象的浮动样式栏 */}
       {!readOnly && barPos && !drag && !editing && !recoveryOpen && svgWrap.current && createPortal(<div ref={styleBarRef} className={cn(floatBar, compact ? "fixed bottom-[68px] left-3 right-3 z-[90] flex-wrap [&>*]:shrink-0" : "absolute z-20 -translate-x-1/2")} style={compact ? undefined : barPos} onPointerDown={(e) => e.stopPropagation()} data-flow-style-bar>
         {selectedStrokes.length > 0 && <>
-          <div className="relative"><button type="button" aria-label="笔迹颜色" title="笔迹颜色" className={barBtn} onClick={() => setMenu(menu === "ink-color" ? null : "ink-color")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: selectedStrokes[0].color }}/><ChevronDown size={12}/></button>
-            {menu === "ink-color" && <div className={cn(pop, "left-0 w-[208px] p-2")} role="group" aria-label="笔迹颜色">{INK_COLORS.map(([color, label]) => <button key={color} type="button" aria-label={`笔迹颜色 ${label}`} title={label} onClick={() => { patchStrokes({ color }); setMenu(null); }} className="m-1 size-5 rounded-full border border-[#bbbfc4]" style={{ background: color }}/>)}</div>}
+          <div className="relative"><button type="button" aria-label={t("笔迹颜色")} title={t("笔迹颜色")} className={barBtn} onClick={() => setMenu(menu === "ink-color" ? null : "ink-color")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: selectedStrokes[0].color }}/><ChevronDown size={12}/></button>
+            {menu === "ink-color" && <div className={cn(pop, "left-0 w-[208px] p-2")} role="group" aria-label={t("笔迹颜色")}>{inkPalette.map(([color, label]) => <button key={color} type="button" aria-label={t("笔迹颜色 {color}", { color: label })} title={label} onClick={() => { patchStrokes({ color }); setMenu(null); }} className="m-1 size-5 rounded-full border border-[#bbbfc4]" style={{ background: color }}/>)}</div>}
           </div>
           <FeishuSelect
-            ariaLabel="笔迹粗细"
-            title="笔迹粗细"
+            ariaLabel={t("笔迹粗细")}
+            title={t("笔迹粗细")}
             value={String(selectedStrokes[0].width)}
             options={[...(INK_WIDTHS.includes(selectedStrokes[0].width as typeof INK_WIDTHS[number]) ? [] : [selectedStrokes[0].width]), ...INK_WIDTHS].map((width) => ({ value: String(width), label: String(width) }))}
             onChange={(val) => patchStrokes({ width: Number(val) })}
@@ -2477,29 +2497,29 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             chevronSize={11}
             menuMinWidth={64}
           />
-          <button type="button" className={barBtn} onClick={() => { const clip = clipOfSelection(); if (clip) pasteClip(clip, 20); }} title="创建副本" aria-label="创建笔迹副本"><Copy size={15}/></button>
-          <button type="button" className={barBtn} onClick={removeSelected} data-flow-delete-ink><Trash2 size={15}/>删除笔迹</button>
+          <button type="button" className={barBtn} onClick={() => { const clip = clipOfSelection(); if (clip) pasteClip(clip, 20); }} title={t("创建副本")} aria-label={t("创建笔迹副本")}><Copy size={15}/></button>
+          <button type="button" className={barBtn} onClick={removeSelected} data-flow-delete-ink><Trash2 size={15}/>{t("删除笔迹")}</button>
         </>}
-        {compact && <button type="button" className={tb} aria-label="完成选择" onClick={() => { setSelected(new Set()); setMenu(null); }}><X size={16}/></button>}
-        {compact && selectedNodes.length === 1 && selectedNodes[0].shape !== "image" && <button type="button" className={barBtn} onClick={() => setEditing({ id: selectedNodes[0].id, kind: "node", value: selectedNodes[0].text })} data-flow-edit-text>编辑文字</button>}
-        {compact && selectedNodes.length === 1 && <button type="button" className={barBtn} onClick={() => { setConnectFrom(selectedNodes[0].id); setSelected(new Set()); setMenu(null); }} data-flow-connect-tap>连接图形</button>}
+        {compact && <button type="button" className={tb} aria-label={t("完成选择")} onClick={() => { setSelected(new Set()); setMenu(null); }}><X size={16}/></button>}
+        {compact && selectedNodes.length === 1 && selectedNodes[0].shape !== "image" && <button type="button" className={barBtn} onClick={() => setEditing({ id: selectedNodes[0].id, kind: "node", value: selectedNodes[0].text })} data-flow-edit-text>{t("编辑文字")}</button>}
+        {compact && selectedNodes.length === 1 && <button type="button" className={barBtn} onClick={() => { setConnectFrom(selectedNodes[0].id); setSelected(new Set()); setMenu(null); }} data-flow-connect-tap>{t("连接图形")}</button>}
         {selectedNodes.length > 0 && !selectedNodes.every((n) => n.shape === "image") && <>
-          <div className="relative"><button type="button" className={barBtn} title="图形" onClick={() => setMenu(menu === "shape" ? null : "shape")}>{shapeIcon(selectedNodes[0].shape)}<ChevronDown size={12} /></button>
-            {menu === "shape" && <div className={cn(pop, "left-0 grid w-[208px] grid-cols-5 gap-1 p-2")}>{SHAPES.map((s) => <button key={s.id} type="button" title={s.label} onClick={() => { patchNodes({ shape: s.id }); setMenu(null); }} className={cn("grid size-9 place-items-center rounded-md hover:bg-hover", selectedNodes[0].shape === s.id && "bg-[#E1EAFF] text-primary")}>{shapeIcon(s.id)}</button>)}</div>}
+          <div className="relative"><button type="button" className={barBtn} title={t("图形")} onClick={() => setMenu(menu === "shape" ? null : "shape")}>{shapeIcon(selectedNodes[0].shape)}<ChevronDown size={12} /></button>
+            {menu === "shape" && <div className={cn(pop, "left-0 grid w-[208px] grid-cols-5 gap-1 p-2")}>{SHAPES.map((s) => <button key={s.id} type="button" title={t(s.label)} onClick={() => { patchNodes({ shape: s.id }); setMenu(null); }} className={cn("grid size-9 place-items-center rounded-md hover:bg-hover", selectedNodes[0].shape === s.id && "bg-[#E1EAFF] text-primary")}>{shapeIcon(s.id)}</button>)}</div>}
           </div>
-          <div className="relative"><button type="button" className={barBtn} title="填充" onClick={() => setMenu(menu === "fill" ? null : "fill")}><span className="size-4 rounded-full border border-[#BBBFC4]" style={{ background: selectedNodes[0].fill ?? theme.fill }} /><ChevronDown size={12} /></button>
-            {menu === "fill" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="mb-1 text-[12px] text-subtle">填充</div><div className="grid grid-cols-8 gap-1">{PALETTE.map((p) => { const [fill] = p.split("/"); return <button key={p} type="button" onClick={() => { patchNodes({ fill }); setMenu(null); }} className="size-[18px] rounded-full border border-[#BBBFC4]" style={{ background: fill }} title={fill} />; })}</div><button type="button" onClick={() => { patchNodes({ fill: undefined }); setMenu(null); }} className="mt-2 h-7 w-full rounded-md border text-[12px] hover:bg-hover">跟随风格</button></div>}
+          <div className="relative"><button type="button" className={barBtn} title={t("填充")} onClick={() => setMenu(menu === "fill" ? null : "fill")}><span className="size-4 rounded-full border border-[#BBBFC4]" style={{ background: selectedNodes[0].fill ?? theme.fill }} /><ChevronDown size={12} /></button>
+            {menu === "fill" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="mb-1 text-[12px] text-subtle">{t("填充")}</div><div className="grid grid-cols-8 gap-1">{PALETTE.map((p) => { const [fill] = p.split("/"); return <button key={p} type="button" onClick={() => { patchNodes({ fill }); setMenu(null); }} className="size-[18px] rounded-full border border-[#BBBFC4]" style={{ background: fill }} title={fill} />; })}</div><button type="button" onClick={() => { patchNodes({ fill: undefined }); setMenu(null); }} className="mt-2 h-7 w-full rounded-md border text-[12px] hover:bg-hover">{t("跟随风格")}</button></div>}
           </div>
-          <div className="relative"><button type="button" className={barBtn} title="边框" onClick={() => setMenu(menu === "stroke" ? null : "stroke")}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: selectedNodes[0].stroke ?? theme.stroke }} /><ChevronDown size={12} /></button>
-            {menu === "stroke" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="mb-1 text-[12px] text-subtle">边框</div><div className="grid grid-cols-8 gap-1">{PALETTE.map((p) => { const stroke = p.split("/")[1]; return <button key={p} type="button" onClick={() => { patchNodes({ stroke }); setMenu(null); }} className="size-[18px] rounded-full border-[3px] bg-white" style={{ borderColor: stroke }} title={stroke} />; })}</div><button type="button" onClick={() => { patchNodes({ stroke: undefined }); setMenu(null); }} className="mt-2 h-7 w-full rounded-md border text-[12px] hover:bg-hover">跟随风格</button></div>}
+          <div className="relative"><button type="button" className={barBtn} title={t("边框")} onClick={() => setMenu(menu === "stroke" ? null : "stroke")}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: selectedNodes[0].stroke ?? theme.stroke }} /><ChevronDown size={12} /></button>
+            {menu === "stroke" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="mb-1 text-[12px] text-subtle">{t("边框")}</div><div className="grid grid-cols-8 gap-1">{PALETTE.map((p) => { const stroke = p.split("/")[1]; return <button key={p} type="button" onClick={() => { patchNodes({ stroke }); setMenu(null); }} className="size-[18px] rounded-full border-[3px] bg-white" style={{ borderColor: stroke }} title={stroke} />; })}</div><button type="button" onClick={() => { patchNodes({ stroke: undefined }); setMenu(null); }} className="mt-2 h-7 w-full rounded-md border text-[12px] hover:bg-hover">{t("跟随风格")}</button></div>}
           </div>
           <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
-          <div className="relative"><button type="button" className={barBtn} title="文字颜色" onClick={() => setMenu(menu === "color" ? null : "color")}><span className="grid size-[18px] place-items-center rounded-[3px] bg-[#FFE928] text-[12px] font-medium" style={{ color: selectedNodes[0].color ?? theme.text }}>A</span><ChevronDown size={12} /></button>
+          <div className="relative"><button type="button" className={barBtn} title={t("文字颜色")} onClick={() => setMenu(menu === "color" ? null : "color")}><span className="grid size-[18px] place-items-center rounded-[3px] bg-[#FFE928] text-[12px] font-medium" style={{ color: selectedNodes[0].color ?? theme.text }}>A</span><ChevronDown size={12} /></button>
             {menu === "color" && <div className={cn(pop, "left-0 w-[188px] p-2")}><div className="grid grid-cols-8 gap-1">{["#1F2329", "#8F959E", "#D83931", "#DE7802", "#DC9B04", "#2EA121", "#245BDB", "#6425D0"].map((c) => <button key={c} type="button" onClick={() => { patchNodes({ color: c }); setMenu(null); }} className="grid size-[18px] place-items-center rounded border text-[11px] font-medium" style={{ color: c }}>A</button>)}</div></div>}
           </div>
           <FeishuSelect
-            ariaLabel="字号"
-            title="字号"
+            ariaLabel={t("字号")}
+            title={t("字号")}
             value={String(selectedNodes[0].size ?? 14)}
             options={[12, 14, 16, 18, 20, 24, 28, 32].map((v) => ({ value: String(v), label: String(v) }))}
             onChange={(val) => patchNodes({ size: Number(val) })}
@@ -2507,73 +2527,73 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             chevronSize={11}
             menuMinWidth={68}
           />
-          <div className="relative"><button type="button" className={barBtn} title="对齐" onClick={() => setMenu(menu === "align" ? null : "align")} data-flow-align-btn>{selectedNodes.length > 1 ? <AlignStartVertical size={15} /> : selectedNodes[0].align === "left" ? <AlignLeft size={15} /> : selectedNodes[0].align === "right" ? <AlignRight size={15} /> : <AlignCenter size={15} />}<ChevronDown size={12} /></button>
+          <div className="relative"><button type="button" className={barBtn} title={t("对齐")} onClick={() => setMenu(menu === "align" ? null : "align")} data-flow-align-btn>{selectedNodes.length > 1 ? <AlignStartVertical size={15} /> : selectedNodes[0].align === "left" ? <AlignLeft size={15} /> : selectedNodes[0].align === "right" ? <AlignRight size={15} /> : <AlignCenter size={15} />}<ChevronDown size={12} /></button>
             {menu === "align" && <div className={cn(pop, "left-0 w-[208px] p-2")} data-flow-align-menu>
-              <div className="mb-1 text-[12px] text-subtle">文字对齐</div>
-              <div className="flex gap-1">{([["left", AlignLeft, "左对齐"], ["center", AlignCenter, "居中"], ["right", AlignRight, "右对齐"]] as const).map(([k, Icon, l]) => <button key={k} type="button" title={l} onClick={() => patchNodes({ align: k === "center" ? undefined : k })} className={cn(tb, (selectedNodes[0].align ?? "center") === k && "bg-[#E1EAFF] text-primary")}><Icon size={15} /></button>)}</div>
+              <div className="mb-1 text-[12px] text-subtle">{t("文字对齐")}</div>
+              <div className="flex gap-1">{([["left", AlignLeft, t("左对齐")], ["center", AlignCenter, t("居中")], ["right", AlignRight, t("右对齐")]] as const).map(([k, Icon, l]) => <button key={k} type="button" title={l} onClick={() => patchNodes({ align: k === "center" ? undefined : k })} className={cn(tb, (selectedNodes[0].align ?? "center") === k && "bg-[#E1EAFF] text-primary")}><Icon size={15} /></button>)}</div>
               {selectedNodes.length > 1 && <>
-                <div className="mb-1 mt-2 text-[12px] text-subtle">图形对齐</div>
-                <div className="grid grid-cols-6 gap-1">{([["left", AlignStartVertical, "左对齐"], ["hcenter", AlignCenterVertical, "水平居中"], ["right", AlignEndVertical, "右对齐"], ["top", AlignStartHorizontal, "顶端对齐"], ["vcenter", AlignCenterHorizontal, "垂直居中"], ["bottom", AlignEndHorizontal, "底端对齐"]] as const).map(([k, Icon, l]) => <button key={k} type="button" title={l} onClick={() => alignNodes(k)} className={tb} data-flow-align={k}><Icon size={15} /></button>)}</div>
-                <div className="mt-1 flex gap-1"><button type="button" title="水平等距分布" disabled={selectedNodes.length < 3} onClick={() => distribute("x")} className={tb} data-flow-distribute="x"><AlignHorizontalSpaceAround size={15} /></button><button type="button" title="垂直等距分布" disabled={selectedNodes.length < 3} onClick={() => distribute("y")} className={tb} data-flow-distribute="y"><AlignVerticalSpaceAround size={15} /></button></div>
+                <div className="mb-1 mt-2 text-[12px] text-subtle">{t("图形对齐")}</div>
+                <div className="grid grid-cols-6 gap-1">{([["left", AlignStartVertical, t("左对齐")], ["hcenter", AlignCenterVertical, t("水平居中")], ["right", AlignEndVertical, t("右对齐")], ["top", AlignStartHorizontal, t("顶端对齐")], ["vcenter", AlignCenterHorizontal, t("垂直居中")], ["bottom", AlignEndHorizontal, t("底端对齐")]] as const).map(([k, Icon, l]) => <button key={k} type="button" title={l} onClick={() => alignNodes(k)} className={tb} data-flow-align={k}><Icon size={15} /></button>)}</div>
+                <div className="mt-1 flex gap-1"><button type="button" title={t("水平等距分布")} disabled={selectedNodes.length < 3} onClick={() => distribute("x")} className={tb} data-flow-distribute="x"><AlignHorizontalSpaceAround size={15} /></button><button type="button" title={t("垂直等距分布")} disabled={selectedNodes.length < 3} onClick={() => distribute("y")} className={tb} data-flow-distribute="y"><AlignVerticalSpaceAround size={15} /></button></div>
               </>}
             </div>}
           </div>
         </>}
         {selectedEdges.length > 0 && <>
-          {([["orthogonal", "折线"], ["straight", "直线"], ["curve", "曲线"]] as [EdgeKind, string][]).map(([k, l]) => <button key={k} type="button" onClick={() => patchEdges({ kind: k, fromPort: undefined, toPort: undefined, mid: undefined })} className={cn(barBtn, (selectedEdges[0].kind ?? "orthogonal") === k && "bg-[#E1EAFF] text-primary")}>{l}</button>)}
-          <button type="button" onClick={() => patchEdges({ dashed: !selectedEdges[0].dashed })} className={cn(barBtn, selectedEdges[0].dashed && "bg-[#E1EAFF] text-primary")}>虚线</button>
-          <button type="button" onClick={() => patchEdges({ arrow: selectedEdges[0].arrow === "none" ? undefined : selectedEdges[0].arrow === "both" ? "none" : "both" })} className={barBtn}>箭头：{selectedEdges[0].arrow === "none" ? "无" : selectedEdges[0].arrow === "both" ? "双向" : "单向"}</button>
-          <button type="button" onClick={() => setEditing({ id: selectedEdges[0].id, kind: "edge", value: selectedEdges[0].label ?? "" })} className={barBtn}>文字</button>
-          {selectedEdges.some((x) => x.pts?.length || x.mid !== undefined) && <button type="button" onClick={() => patchEdges({ pts: undefined, mid: undefined })} className={barBtn} title="恢复自动走线" data-flow-clear-points>清除拐点</button>}
+          {([["orthogonal", t("折线")], ["straight", t("直线")], ["curve", t("曲线")]] as [EdgeKind, string][]).map(([k, l]) => <button key={k} type="button" onClick={() => patchEdges({ kind: k, fromPort: undefined, toPort: undefined, mid: undefined })} className={cn(barBtn, (selectedEdges[0].kind ?? "orthogonal") === k && "bg-[#E1EAFF] text-primary")}>{l}</button>)}
+          <button type="button" onClick={() => patchEdges({ dashed: !selectedEdges[0].dashed })} className={cn(barBtn, selectedEdges[0].dashed && "bg-[#E1EAFF] text-primary")}>{t("虚线")}</button>
+          <button type="button" onClick={() => patchEdges({ arrow: selectedEdges[0].arrow === "none" ? undefined : selectedEdges[0].arrow === "both" ? "none" : "both" })} className={barBtn}>{t("箭头：{kind}", { kind: selectedEdges[0].arrow === "none" ? t("无") : selectedEdges[0].arrow === "both" ? t("双向") : t("单向") })}</button>
+          <button type="button" onClick={() => setEditing({ id: selectedEdges[0].id, kind: "edge", value: selectedEdges[0].label ?? "" })} className={barBtn}>{t("文字")}</button>
+          {selectedEdges.some((x) => x.pts?.length || x.mid !== undefined) && <button type="button" onClick={() => patchEdges({ pts: undefined, mid: undefined })} className={barBtn} title={t("恢复自动走线")} data-flow-clear-points>{t("清除拐点")}</button>}
         </>}
         <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
-        {(commentActions || onComment) && selectedNodes.length > 0 && <button type="button" className={tb} title="评论此图形" onClick={() => { const n = selectedNodes[0]; finishEdit(); const label = n.text.split("\n")[0] || SHAPES.find((x) => x.id === n.shape)?.label || "图形"; if (commentActions) { openCommentComposer({ kind: "node", targetId: n.id, x: Math.round(n.x + n.w), y: Math.round(n.y) }, label); return; } if (recoveryRef.current.length) { setRecoveryOpen(true); return; } onComment?.(label); onClose(); }} data-flow-comment><MessageSquare size={15} /></button>}
-        <div className="relative"><button type="button" className={tb} title="更多" onClick={() => setMenu(menu === "more" ? null : "more")} data-flow-more-btn><MoreHorizontal size={16} /></button>
+        {(commentActions || onComment) && selectedNodes.length > 0 && <button type="button" className={tb} title={t("评论此图形")} onClick={() => { const n = selectedNodes[0]; finishEdit(); const shapeSpec = SHAPES.find((x) => x.id === n.shape); const label = n.text.split("\n")[0] || (shapeSpec ? t(shapeSpec.label) : t("图形")); if (commentActions) { openCommentComposer({ kind: "node", targetId: n.id, x: Math.round(n.x + n.w), y: Math.round(n.y) }, label); return; } if (recoveryRef.current.length) { setRecoveryOpen(true); return; } onComment?.(label); onClose(); }} data-flow-comment><MessageSquare size={15} /></button>}
+        <div className="relative"><button type="button" className={tb} title={t("更多")} onClick={() => setMenu(menu === "more" ? null : "more")} data-flow-more-btn><MoreHorizontal size={16} /></button>
           {menu === "more" && <div className={cn(pop, "right-0 w-44")} data-flow-more-menu>
             {selectedNodes.length > 0 && <>
-              <button type="button" className={menuItem} onClick={() => { const c = clipOfSelection(); if (c) pasteClip(c, 20); setMenu(null); }}><Copy size={14} />创建副本<span className="ml-auto text-[12px] text-subtle">⌘D</span></button>
-              <button type="button" className={menuItem} onClick={() => { layer("front"); setMenu(null); }}><ArrowUpToLine size={14} />置于顶层</button>
-              <button type="button" className={menuItem} onClick={() => { layer("back"); setMenu(null); }}><ArrowDownToLine size={14} />置于底层</button>
-              <button type="button" className={menuItem} onClick={() => { commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, rot: ((n.rot ?? 0) + 90) % 360 || undefined } : n)) }); setMenu(null); }} data-flow-rotate90><RotateCw size={14} />旋转 90°</button>
-              {selectedNodes.some((n) => n.rot) && <button type="button" className={menuItem} onClick={() => { commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, rot: undefined } : n)) }); setMenu(null); }}><RotateCcw size={14} />取消旋转</button>}
+              <button type="button" className={menuItem} onClick={() => { const c = clipOfSelection(); if (c) pasteClip(c, 20); setMenu(null); }}><Copy size={14} />{t("创建副本")}<span className="ml-auto text-[12px] text-subtle">⌘D</span></button>
+              <button type="button" className={menuItem} onClick={() => { layer("front"); setMenu(null); }}><ArrowUpToLine size={14} />{t("置于顶层")}</button>
+              <button type="button" className={menuItem} onClick={() => { layer("back"); setMenu(null); }}><ArrowDownToLine size={14} />{t("置于底层")}</button>
+              <button type="button" className={menuItem} onClick={() => { commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, rot: ((n.rot ?? 0) + 90) % 360 || undefined } : n)) }); setMenu(null); }} data-flow-rotate90><RotateCw size={14} />{t("旋转 90°")}</button>
+              {selectedNodes.some((n) => n.rot) && <button type="button" className={menuItem} onClick={() => { commit({ ...graph, nodes: graph.nodes.map((n) => (selected.has(n.id) ? { ...n, rot: undefined } : n)) }); setMenu(null); }}><RotateCcw size={14} />{t("取消旋转")}</button>}
               <span className="my-1 block h-px bg-[#DEE0E3]" />
             </>}
-            <button type="button" className={cn(menuItem, "text-destructive")} onClick={() => { removeSelected(); setMenu(null); }}><Trash2 size={14} />删除<span className="ml-auto text-[12px] text-subtle">Del</span></button>
+            <button type="button" className={cn(menuItem, "text-destructive")} onClick={() => { removeSelected(); setMenu(null); }}><Trash2 size={14} />{t("删除")}<span className="ml-auto text-[12px] text-subtle">Del</span></button>
           </div>}
         </div>
       </div>, compact ? document.body : svgWrap.current)}
       </>}
     </div>
-    {compact && connectFrom && <div className="absolute bottom-[68px] left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-lg border bg-surface px-3 py-2 text-[13px] shadow-md" role="status">请选择要连接的图形<button type="button" className="text-primary" onClick={() => setConnectFrom(null)}>取消</button></div>}
+    {compact && connectFrom && <div className="absolute bottom-[68px] left-1/2 z-20 flex -translate-x-1/2 items-center gap-3 whitespace-nowrap rounded-lg border bg-surface px-3 py-2 text-[13px] shadow-md" role="status">{t("请选择要连接的图形")}<button type="button" className="text-primary" onClick={() => setConnectFrom(null)}>{t("取消")}</button></div>}
 
     {/* 左侧：图形库面板 + 竖向工具条（飞书画板布局） */}
-    {!readOnly && compact && library && <button type="button" aria-label="关闭图形库" className="absolute inset-0 z-30 bg-black/20" onClick={() => setLibrary(false)} />}
-    {!readOnly && library && <aside className={cn("absolute bottom-0 left-0 top-0 flex w-[260px] flex-col border-r border-[#DEE0E3] bg-surface dark:border-border", compact ? "z-40 max-w-[calc(100%-48px)] shadow-xl" : "z-10")} aria-label="图形库" data-flow-library>
-      <div className="flex h-12 shrink-0 items-center gap-2 px-4"><span className="text-[14px] font-medium">图形库</span><button type="button" title="收起" onClick={() => setLibrary(false)} className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover"><ChevronLeft size={16} /></button></div>
-      <label className="mx-4 flex h-8 items-center gap-2 rounded-md border px-2 text-subtle focus-within:border-primary"><Search size={14} /><input value={libQuery} onChange={(e) => setLibQuery(e.target.value)} placeholder="搜索" className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
+    {!readOnly && compact && library && <button type="button" aria-label={t("关闭图形库")} className="absolute inset-0 z-30 bg-black/20" onClick={() => setLibrary(false)} />}
+    {!readOnly && library && <aside className={cn("absolute bottom-0 left-0 top-0 flex w-[260px] flex-col border-r border-[#DEE0E3] bg-surface dark:border-border", compact ? "z-40 max-w-[calc(100%-48px)] shadow-xl" : "z-10")} aria-label={t("图形库")} data-flow-library>
+      <div className="flex h-12 shrink-0 items-center gap-2 px-4"><span className="text-[14px] font-medium">{t("图形库")}</span><button type="button" title={t("收起")} onClick={() => setLibrary(false)} className="ml-auto grid size-7 place-items-center rounded text-subtle hover:bg-hover"><ChevronLeft size={16} /></button></div>
+      <label className="mx-4 flex h-8 items-center gap-2 rounded-md border px-2 text-subtle focus-within:border-primary"><Search size={14} /><input value={libQuery} onChange={(e) => setLibQuery(e.target.value)} placeholder={t("搜索")} className="min-w-0 flex-1 bg-transparent text-[13px] text-foreground outline-none" /></label>
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
-        {filteredGroups.map((g) => <section key={g.title} className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{g.title}</div><div className="grid grid-cols-5 gap-1">{g.shapes.map((id, i) => { const spec = SHAPES.find((s) => s.id === id)!; return <button key={`${id}${i}`} type="button" title={`${spec.label}（点击后在画布上放置，双击直接添加）`} onClick={() => { if (id === "image") imageRef.current?.click(); else { setTool(id); setHand(false); setShowStarter(false); } if (compact) setLibrary(false); }} onDoubleClick={() => id !== "image" && addNode(id)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", tool === id && "bg-[#E1EAFF] text-primary")} data-flow-shape={id}>{shapeIcon(id)}</button>; })}</div></section>)}
-        {!libQuery.trim() && <section className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />连线样式</div>
-          <div className="grid grid-cols-5 gap-1">{([["orthogonal", "折线", "M10,78 H48 V18 H86"], ["straight", "直线", "M10,86 L86,10"], ["curve", "曲线", "M10,80 C40,80 56,16 86,16"]] as const).map(([k, l, d]) => <button key={k} type="button" title={`新连线默认使用${l}`} onClick={() => setEdgeKind(k)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", edgeKind === k && "bg-[#E1EAFF] text-primary")} data-flow-edge-kind={k}><svg viewBox="0 0 96 96" className="size-6" fill="none" stroke="currentColor" strokeWidth={6}><path d={d} /></svg></button>)}</div>
-          <p className="mt-1 text-[12px] leading-5 text-subtle">选中图形后，从四周的蓝色圆点拖到另一个图形即可连线。</p>
+        {filteredGroups.map((g) => <section key={g.title} className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{g.title}</div><div className="grid grid-cols-5 gap-1">{g.shapes.map((id, i) => { const spec = SHAPES.find((s) => s.id === id)!; return <button key={`${id}${i}`} type="button" title={t("{label}（点击后在画布上放置，双击直接添加）", { label: t(spec.label) })} onClick={() => { if (id === "image") imageRef.current?.click(); else { setTool(id); setHand(false); setShowStarter(false); } if (compact) setLibrary(false); }} onDoubleClick={() => id !== "image" && addNode(id)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", tool === id && "bg-[#E1EAFF] text-primary")} data-flow-shape={id}>{shapeIcon(id)}</button>; })}</div></section>)}
+        {!libQuery.trim() && <section className="mt-4"><div className="mb-2 flex items-center gap-1 text-[13px] text-[#646A73]"><ChevronDown size={12} />{t("连线样式")}</div>
+          <div className="grid grid-cols-5 gap-1">{([["orthogonal", t("折线"), "M10,78 H48 V18 H86"], ["straight", t("直线"), "M10,86 L86,10"], ["curve", t("曲线"), "M10,80 C40,80 56,16 86,16"]] as const).map(([k, l, d]) => <button key={k} type="button" title={t("新连线默认使用{kind}", { kind: l })} onClick={() => setEdgeKind(k)} className={cn("grid size-10 place-items-center rounded-md text-[#1F2329] hover:bg-hover dark:text-foreground", edgeKind === k && "bg-[#E1EAFF] text-primary")} data-flow-edge-kind={k}><svg viewBox="0 0 96 96" className="size-6" fill="none" stroke="currentColor" strokeWidth={6}><path d={d} /></svg></button>)}</div>
+          <p className="mt-1 text-[12px] leading-5 text-subtle">{t("选中图形后，从四周的蓝色圆点拖到另一个图形即可连线。")}</p>
         </section>}
       </div>
     </aside>}
-    {!readOnly && !(compact && (connectFrom || (barPos && !drag && !editing))) && <aside className={cn("absolute z-10 flex gap-0.5 rounded-xl border border-[#DEE0E3] bg-surface p-1.5 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "bottom-[68px] left-1/2 max-w-[calc(100%-24px)] -translate-x-1/2 flex-row overflow-x-auto" : "top-1/2 -translate-y-1/2 flex-col")} style={compact ? undefined : { left: library ? 272 : 12 }} aria-label="工具">
-      <button type="button" className={cn(railBtn, library && "bg-[#E1EAFF]")} title="图形库" onClick={() => setLibrary(!library)} data-flow-library-toggle><Shapes size={18} className="text-[#3370FF]" /></button>
+    {!readOnly && !(compact && (connectFrom || (barPos && !drag && !editing))) && <aside className={cn("absolute z-10 flex gap-0.5 rounded-xl border border-[#DEE0E3] bg-surface p-1.5 shadow-[0_4px_16px_rgba(31,35,41,0.08)] dark:border-border", compact ? "bottom-[68px] left-1/2 max-w-[calc(100%-24px)] -translate-x-1/2 flex-row overflow-x-auto" : "top-1/2 -translate-y-1/2 flex-col")} style={compact ? undefined : { left: library ? 272 : 12 }} aria-label={t("工具")}>
+      <button type="button" className={cn(railBtn, library && "bg-[#E1EAFF]")} title={t("图形库")} onClick={() => setLibrary(!library)} data-flow-library-toggle><Shapes size={18} className="text-[#3370FF]" /></button>
       <span className={cn("bg-[#DEE0E3]", compact ? "mx-0.5 my-1 h-8 w-px shrink-0" : "mx-1 my-0.5 h-px")} />
-      <button type="button" className={cn(railBtn, tool === "select" && !hand && !votingMode && "bg-[#E1EAFF] text-primary")} title="选择" onClick={() => { setTool("select"); setHand(false); setVotingMode(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
-      <button type="button" className={cn(railBtn, ((tool === "pen" && penKind === "pen") || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title="画笔" aria-label="画笔" aria-pressed={(tool === "pen" && penKind === "pen") || tool === "eraser"} onClick={() => { setTool("pen"); setPenKind("pen"); setHand(false); setVotingMode(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "select" && !hand && !votingMode && "bg-[#E1EAFF] text-primary")} title={t("选择")} onClick={() => { setTool("select"); setHand(false); setVotingMode(false); }} data-flow-select-tool><MousePointer2 size={18} /></button>
+      <button type="button" className={cn(railBtn, ((tool === "pen" && penKind === "pen") || tool === "eraser") && "bg-[#E1EAFF] text-primary")} title={t("画笔")} aria-label={t("画笔")} aria-pressed={(tool === "pen" && penKind === "pen") || tool === "eraser"} onClick={() => { setTool("pen"); setPenKind("pen"); setHand(false); setVotingMode(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-flow-pen-tool><Pencil size={18} /></button>
       <button type="button" className={cn(railBtn, tool === "pen" && penKind === "marker" && "bg-[#FFF5C7] text-[#B25900]")} title={t("荧光笔")} aria-label={t("荧光笔")} aria-pressed={tool === "pen" && penKind === "marker"} onClick={() => { setTool("pen"); setPenKind("marker"); setHand(false); setVotingMode(false); setSelected(new Set()); setMenu(null); setShowStarter(false); }} data-board-tool="highlighter"><Highlighter size={18} /></button>
       <button type="button" className={cn(railBtn, menu === "sticky" && "bg-[#FFF3B0] text-[#9A5B00]")} title={t("便利贴")} aria-label={t("便利贴")} aria-expanded={menu === "sticky"} onClick={() => { setMenu(menu === "sticky" ? null : "sticky"); setVotingMode(false); }} data-board-add-sticky><StickyNote size={18} /></button>
-      <button type="button" className={railBtn} aria-label="插入思维导图" title="插入思维导图" onClick={addMindMap} data-flow-mindmap-tool><ListTree size={18}/></button>
-      <button type="button" className={railBtn} aria-label="分区画框" title="分区画框 (Frame)" onClick={addBoardFrame} data-board-frame-tool><Frame size={18}/></button>
-      <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title="图形（点击画布放置）" onClick={() => { setTool("round"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Square size={18} /></button>
-      <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title="文本" onClick={() => { setTool("text"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Type size={18} /></button>
-      <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title="判断" onClick={() => { setTool("diamond"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Diamond size={18} /></button>
-      <button type="button" className={cn(railBtn, tool === "note" && "bg-[#E1EAFF] text-primary")} title="便签" onClick={() => { setTool("note"); setHand(false); setVotingMode(false); setShowStarter(false); }}><svg viewBox="0 0 96 96" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={7}><path d="M14,12 H66 L82,28 V84 H14 Z M66,12 V28 H82" /></svg></button>
-      {commentActions && <button type="button" className={cn(railBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} title="评论图钉（点击画布或对象添加锚点评论）" aria-label="评论图钉" aria-pressed={tool === "comment"} onClick={() => { setTool((cur) => cur === "comment" ? "select" : "comment"); setSelected(new Set()); setHand(false); setVotingMode(false); setShowStarter(false); setMenu(null); }} data-flow-comment-tool><MessageSquare size={18} /></button>}
-      {upload && <button type="button" className={railBtn} title="插入图片（也可粘贴或拖入画板）" onClick={() => imageRef.current?.click()} data-flow-image-btn><ImageIcon size={18} /></button>}
+      <button type="button" className={railBtn} aria-label={t("插入思维导图")} title={t("插入思维导图")} onClick={addMindMap} data-flow-mindmap-tool><ListTree size={18}/></button>
+      <button type="button" className={railBtn} aria-label={t("分区画框")} title={t("分区画框 (Frame)")} onClick={addBoardFrame} data-board-frame-tool><Frame size={18}/></button>
+      <button type="button" className={cn(railBtn, tool === "round" && "bg-[#E1EAFF] text-primary")} title={t("图形（点击画布放置）")} onClick={() => { setTool("round"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Square size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "text" && "bg-[#E1EAFF] text-primary")} title={t("文本")} onClick={() => { setTool("text"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Type size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "diamond" && "bg-[#E1EAFF] text-primary")} title={t("判断")} onClick={() => { setTool("diamond"); setHand(false); setVotingMode(false); setShowStarter(false); }}><Diamond size={18} /></button>
+      <button type="button" className={cn(railBtn, tool === "note" && "bg-[#E1EAFF] text-primary")} title={t("便签")} onClick={() => { setTool("note"); setHand(false); setVotingMode(false); setShowStarter(false); }}><svg viewBox="0 0 96 96" className="size-[18px]" fill="none" stroke="currentColor" strokeWidth={7}><path d="M14,12 H66 L82,28 V84 H14 Z M66,12 V28 H82" /></svg></button>
+      {commentActions && <button type="button" className={cn(railBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} title={t("评论图钉（点击画布或对象添加锚点评论）")} aria-label={t("评论图钉")} aria-pressed={tool === "comment"} onClick={() => { setTool((cur) => cur === "comment" ? "select" : "comment"); setSelected(new Set()); setHand(false); setVotingMode(false); setShowStarter(false); setMenu(null); }} data-flow-comment-tool><MessageSquare size={18} /></button>}
+      {upload && <button type="button" className={railBtn} title={t("插入图片（也可粘贴或拖入画板）")} onClick={() => imageRef.current?.click()} data-flow-image-btn><ImageIcon size={18} /></button>}
       <input ref={imageRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void insertImage(f); }} data-flow-image-input />
     </aside>}
     {!readOnly && menu === "sticky" && (
@@ -2616,15 +2636,15 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       </div>
     )}
     {readOnly && commentActions && <div className={cn(floatBar, "absolute left-3 top-16 z-20")}>
-      <button type="button" className={cn(barBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} aria-label="评论图钉" aria-pressed={tool === "comment"} onClick={() => setTool((cur) => cur === "comment" ? "select" : "comment")} data-flow-comment-tool><MessageSquare size={15} /><span>{tool === "comment" ? "点击画布落钉" : "评论"}</span></button>
+      <button type="button" className={cn(barBtn, tool === "comment" && "bg-[#FFF1E8] text-[#FF8800]")} aria-label={t("评论图钉")} aria-pressed={tool === "comment"} onClick={() => setTool((cur) => cur === "comment" ? "select" : "comment")} data-flow-comment-tool><MessageSquare size={15} /><span>{tool === "comment" ? t("点击画布落钉") : t("评论")}</span></button>
     </div>}
 
-    {!readOnly && mindViewMode === "canvas" && mindSelected && !mindEditing && !mindDescriptionEditing && !movingMind && <div role="toolbar" aria-label="思维导图节点操作" data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
+    {!readOnly && mindViewMode === "canvas" && mindSelected && !mindEditing && !mindDescriptionEditing && !movingMind && <div role="toolbar" aria-label={t("思维导图节点操作")} data-mind-toolbar className={cn("z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 overflow-x-auto rounded-lg border border-[#DEE0E3] bg-surface p-1 shadow-lg [&>button]:shrink-0 [&>button]:whitespace-nowrap", compact ? "absolute bottom-[120px] left-1/2" : "fixed")} style={mindToolbarStyle} onPointerDown={(event) => event.stopPropagation()}>
       <FeishuSelect
-        ariaLabel="导图结构"
-        title="切换思维导图结构"
+        ariaLabel={t("导图结构")}
+        title={t("切换思维导图结构")}
         value={mindStructure}
-        options={MIND_LAYOUT_OPTIONS}
+        options={MIND_LAYOUT_OPTIONS.map((opt) => ({ ...opt, label: t(opt.label) }))}
         onChange={(val) => {
           const next = val as MindLayoutKind;
           persistMindLayout(next, mindRelations);
@@ -2638,21 +2658,21 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       <button
         type="button"
         data-mind-relation-btn
-        aria-label="跨分支关联线"
+        aria-label={t("跨分支关联线")}
         aria-pressed={mindRelationFrom === mindSelected}
-        title="点击目标主题创建跨分支虚线关联"
+        title={t("点击目标主题创建跨分支虚线关联")}
         className={cn(barBtn, mindRelationFrom === mindSelected && "bg-[#F3EEFF] text-[#7B56D9]")}
         onClick={() => {
           if (mindRelationFrom === mindSelected) {
             setMindRelationFrom(null);
           } else {
             setMindRelationFrom(mindSelected);
-            setNotice({ ok: true, text: "请点击目标主题以创建跨分支关联线（Esc 取消）" });
+            setNotice({ ok: true, text: t("请点击目标主题以创建跨分支关联线（Esc 取消）") });
           }
         }}
       >
         <Link2 size={14} />
-        <span>关联线</span>
+        <span>{t("关联线")}</span>
       </button>
       <button
         type="button"
@@ -2694,13 +2714,13 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         <span>{t("徽章")}</span>
       </button>
       <span className="mx-0.5 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
-      <button type="button" data-mind-paint-trigger aria-label="节点形状" aria-expanded={mindPaintMenu?.kind === "shape"} title="更改图形" className={barBtn} onClick={(event) => openMindPaintMenu("shape", event.currentTarget)}>{selectedShape === "text" ? <Type size={17}/> : selectedShape === "oval" ? <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="9" cy="9" rx="7" ry="5"/></svg> : <Square size={17}/>}<ChevronDown size={11}/></button>
-      {selectedShape !== "text" && <button type="button" data-mind-paint-trigger aria-label="节点填充" aria-expanded={mindPaintMenu?.kind === "fill"} title="节点填充" className={barBtn} onClick={(event) => openMindPaintMenu("fill", event.currentTarget)}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: currentPaint.fill === "none" ? "linear-gradient(135deg, transparent 46%, #c7cbd1 48%, #c7cbd1 52%, transparent 54%)" : currentPaint.fill ?? (mindAnchor?.topic.parent === null ? "#5b7ff1" : "#fff") }}/><ChevronDown size={11}/></button>}
-      <button type="button" data-mind-paint-trigger aria-label="节点连线样式" aria-expanded={mindPaintMenu?.kind === "line"} title="节点连线样式" className={barBtn} onClick={(event) => openMindPaintMenu("line", event.currentTarget)}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: currentPaint.stroke ?? "#5b7ff1" }}/><ChevronDown size={11}/></button>
-      <button type="button" data-mind-paint-trigger aria-label="文字颜色和背景" aria-expanded={mindPaintMenu?.kind === "textColor"} title="文字颜色和背景" className={barBtn} onClick={(event) => openMindPaintMenu("textColor", event.currentTarget)}><span className="border-b-2 px-0.5 text-[15px]" style={{ borderColor: graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor, background: currentTextFormat.highlight ?? "transparent" }}>A</span><ChevronDown size={11}/></button>
+      <button type="button" data-mind-paint-trigger aria-label={t("节点形状")} aria-expanded={mindPaintMenu?.kind === "shape"} title={t("更改图形")} className={barBtn} onClick={(event) => openMindPaintMenu("shape", event.currentTarget)}>{selectedShape === "text" ? <Type size={17}/> : selectedShape === "oval" ? <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5"><ellipse cx="9" cy="9" rx="7" ry="5"/></svg> : <Square size={17}/>}<ChevronDown size={11}/></button>
+      {selectedShape !== "text" && <button type="button" data-mind-paint-trigger aria-label={t("节点填充")} aria-expanded={mindPaintMenu?.kind === "fill"} title={t("节点填充")} className={barBtn} onClick={(event) => openMindPaintMenu("fill", event.currentTarget)}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: currentPaint.fill === "none" ? "linear-gradient(135deg, transparent 46%, #c7cbd1 48%, #c7cbd1 52%, transparent 54%)" : currentPaint.fill ?? (mindAnchor?.topic.parent === null ? "#5b7ff1" : "#fff") }}/><ChevronDown size={11}/></button>}
+      <button type="button" data-mind-paint-trigger aria-label={t("节点连线样式")} aria-expanded={mindPaintMenu?.kind === "line"} title={t("节点连线样式")} className={barBtn} onClick={(event) => openMindPaintMenu("line", event.currentTarget)}><span className="size-4 rounded-full border-[3px]" style={{ borderColor: currentPaint.stroke ?? "#5b7ff1" }}/><ChevronDown size={11}/></button>
+      <button type="button" data-mind-paint-trigger aria-label={t("文字颜色和背景")} aria-expanded={mindPaintMenu?.kind === "textColor"} title={t("文字颜色和背景")} className={barBtn} onClick={(event) => openMindPaintMenu("textColor", event.currentTarget)}><span className="border-b-2 px-0.5 text-[15px]" style={{ borderColor: graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor, background: currentTextFormat.highlight ?? "transparent" }}>A</span><ChevronDown size={11}/></button>
       <FeishuSelect
-        ariaLabel="文字大小"
-        title="文字大小"
+        ariaLabel={t("文字大小")}
+        title={t("文字大小")}
         value={String(graph.mindStyles?.[mindSelected]?.size ?? (mindAnchor?.topic.parent === null ? 16 : 14))}
         options={[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => ({ value: String(size), label: String(size) }))}
         onChange={(val) => updateMindStyle({ size: Number(val) })}
@@ -2708,38 +2728,38 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         chevronSize={11}
         menuMinWidth={68}
       />
-      <button type="button" data-mind-paint-trigger aria-label="文字格式" aria-expanded={mindPaintMenu?.kind === "textFormat"} title="文字格式" className={barBtn} onClick={(event) => openMindPaintMenu("textFormat", event.currentTarget)}><span className="text-[15px]">A</span><AlignLeft size={12}/><ChevronDown size={11}/></button>
-      <button type="button" aria-label={mindDescriptionAt(graph.mindDescriptions, mindSelected) ? "编辑描述" : "添加描述"} title="添加或编辑描述 (Shift + Enter)" className={barBtn} onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindDescription(topic); }}><Plus size={15}/></button>
-      {mindDescriptionAt(graph.mindDescriptions, mindSelected) && <button type="button" data-mind-paint-trigger aria-label="描述样式" aria-expanded={mindPaintMenu?.kind === "description"} title="描述字号和颜色" className={barBtn} onClick={(event) => openMindPaintMenu("description", event.currentTarget)}><span className="text-[13px]">Aa</span><ChevronDown size={11}/></button>}
-      {commentActions && mindAnchor && <button type="button" aria-label="评论此主题" title="评论此主题" data-mind-comment className={barBtn} onClick={() => openCommentComposer({ kind: "mind", targetId: mindAnchor.topic.id, x: Math.round(mindAnchor.x + mindAnchor.w), y: Math.round(mindAnchor.y) }, mindAnchor.topic.text || "导图主题")}><MessageSquare size={15}/></button>}
+      <button type="button" data-mind-paint-trigger aria-label={t("文字格式")} aria-expanded={mindPaintMenu?.kind === "textFormat"} title={t("文字格式")} className={barBtn} onClick={(event) => openMindPaintMenu("textFormat", event.currentTarget)}><span className="text-[15px]">A</span><AlignLeft size={12}/><ChevronDown size={11}/></button>
+      <button type="button" aria-label={mindDescriptionAt(graph.mindDescriptions, mindSelected) ? t("编辑描述") : t("添加描述")} title={t("添加或编辑描述 (Shift + Enter)")} className={barBtn} onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindDescription(topic); }}><Plus size={15}/></button>
+      {mindDescriptionAt(graph.mindDescriptions, mindSelected) && <button type="button" data-mind-paint-trigger aria-label={t("描述样式")} aria-expanded={mindPaintMenu?.kind === "description"} title={t("描述字号和颜色")} className={barBtn} onClick={(event) => openMindPaintMenu("description", event.currentTarget)}><span className="text-[13px]">Aa</span><ChevronDown size={11}/></button>}
+      {commentActions && mindAnchor && <button type="button" aria-label={t("评论此主题")} title={t("评论此主题")} data-mind-comment className={barBtn} onClick={() => openCommentComposer({ kind: "mind", targetId: mindAnchor.topic.id, x: Math.round(mindAnchor.x + mindAnchor.w), y: Math.round(mindAnchor.y) }, mindAnchor.topic.text || t("导图主题"))}><MessageSquare size={15}/></button>}
       <span className="mx-1 h-5 w-px shrink-0 bg-[#DEE0E3]"/>
-      <button type="button" data-mind-menu-trigger className={cn(barBtn, !compact && "order-last")} aria-label="更多节点操作" aria-expanded={!!mindMenu} title="更多" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); if (mindMenu) setMindMenu(null); else openMindMenu(rect.left, compact ? 8 : rect.top - 288); }}><MoreHorizontal size={16}/></button>
-      {compact && <><button type="button" className={barBtn} aria-label="编辑文字" title="编辑文字" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button><button type="button" className={barBtn} aria-label="添加子节点" title="添加子节点" onClick={() => addMindTopic(false)}><Plus size={15}/></button><button type="button" className={barBtn} aria-label="添加同级节点" title="添加同级节点" disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button><button type="button" className={barBtn} aria-label="删除节点" title="删除节点" onClick={removeMindTopic}><Trash2 size={15}/></button></>}
+      <button type="button" data-mind-menu-trigger className={cn(barBtn, !compact && "order-last")} aria-label={t("更多节点操作")} aria-expanded={!!mindMenu} title={t("更多")} onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); if (mindMenu) setMindMenu(null); else openMindMenu(rect.left, compact ? 8 : rect.top - 288); }}><MoreHorizontal size={16}/></button>
+      {compact && <><button type="button" className={barBtn} aria-label={t("编辑文字")} title={t("编辑文字")} onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindEdit(topic); }}><Pencil size={15}/></button><button type="button" className={barBtn} aria-label={t("添加子节点")} title={t("添加子节点")} onClick={() => addMindTopic(false)}><Plus size={15}/></button><button type="button" className={barBtn} aria-label={t("添加同级节点")} title={t("添加同级节点")} disabled={!graph.mind?.find((topic) => topic.id === mindSelected)?.parent} onClick={() => addMindTopic(true)}><ListTree size={15}/></button><button type="button" className={barBtn} aria-label={t("删除节点")} title={t("删除节点")} onClick={removeMindTopic}><Trash2 size={15}/></button></>}
     </div>}
 
-    {mindMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="menu" aria-label="节点操作" data-mind-context className="fixed z-[96] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top, width: Math.max(1, Math.min(192, window.innerWidth - 16)), maxHeight: mindMenu.maxHeight }} onPointerDown={(event) => event.stopPropagation()}>
-      {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(true); }}>添加同级节点 <span className="text-[#8f959e]">Enter</span></button>}
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(false); }}>添加子节点 <span className="text-[#8f959e]">Tab</span></button>
-      {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindParent(); }}>添加父节点 <span className="text-[#8f959e]">Shift + Tab</span></button>}
-      {!!graph.mind?.some((topic) => topic.parent === mindSelected) && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); toggleMindFold(mindSelected); }}>{effectiveCollapsed.has(mindSelected) ? "展开子节点" : "收起子节点"}<span className="text-[#8f959e]">⌘ .</span></button>}
+    {mindMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="menu" aria-label={t("节点操作")} data-mind-context className="fixed z-[96] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface py-1 text-[13px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindMenu.left, top: mindMenu.top, width: Math.max(1, Math.min(192, window.innerWidth - 16)), maxHeight: mindMenu.maxHeight }} onPointerDown={(event) => event.stopPropagation()}>
+      {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(true); }}>{t("添加同级节点")} <span className="text-[#8f959e]">Enter</span></button>}
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindTopic(false); }}>{t("添加子节点")} <span className="text-[#8f959e]">Tab</span></button>
+      {!!mindAnchor?.topic.parent && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); addMindParent(); }}>{t("添加父节点")} <span className="text-[#8f959e]">Shift + Tab</span></button>}
+      {!!graph.mind?.some((topic) => topic.parent === mindSelected) && <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); toggleMindFold(mindSelected); }}>{effectiveCollapsed.has(mindSelected) ? t("展开子节点") : t("收起子节点")}<span className="text-[#8f959e]">⌘ .</span></button>}
       <div className="my-1 border-t border-[#e5e6eb]"/>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindDescription(topic); }}>{mindDescriptionAt(graph.mindDescriptions, mindSelected) ? "编辑描述" : "添加描述"}<span className="text-[#8f959e]">Shift + Enter</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { const topic = graph.mind?.find((item) => item.id === mindSelected); if (topic) startMindDescription(topic); }}>{mindDescriptionAt(graph.mindDescriptions, mindSelected) ? t("编辑描述") : t("添加描述")}<span className="text-[#8f959e]">Shift + Enter</span></button>
       <div className="my-1 border-t border-[#e5e6eb]"/>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(false); }}>复制 <span className="text-[#8f959e]">⌘ C</span></button>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindNodeImage(); }}>复制为图片 <span className="text-[#8f959e]">⌘ ⇧ C</span></button>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(true); }}>剪切 <span className="text-[#8f959e]">⌘ X</span></button>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindFromClipboard(); }}>粘贴 <span className="text-[#8f959e]">⌘ V</span></button>
-      {mindClipboardFallback && recentMindClipboard.current && <button type="button" role="menuitem" className="flex h-8 w-full items-center px-3 text-left hover:bg-hover" onClick={() => { const clip = recentMindClipboard.current; setMindMenu(null); if (clip) insertMindClip(clip); }}>粘贴本页最近复制的分支</button>}
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); duplicateMind(); }}>创建副本 <span className="text-[#8f959e]">⌘ D</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(false); }}>{t("复制")} <span className="text-[#8f959e]">⌘ C</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindNodeImage(); }}>{t("复制为图片")} <span className="text-[#8f959e]">⌘ ⇧ C</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindToClipboard(true); }}>{t("剪切")} <span className="text-[#8f959e]">⌘ X</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindFromClipboard(); }}>{t("粘贴")} <span className="text-[#8f959e]">⌘ V</span></button>
+      {mindClipboardFallback && recentMindClipboard.current && <button type="button" role="menuitem" className="flex h-8 w-full items-center px-3 text-left hover:bg-hover" onClick={() => { const clip = recentMindClipboard.current; setMindMenu(null); if (clip) insertMindClip(clip); }}>{t("粘贴本页最近复制的分支")}</button>}
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); duplicateMind(); }}>{t("创建副本")} <span className="text-[#8f959e]">⌘ D</span></button>
       <div className="my-1 border-t border-[#e5e6eb]"/>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindTextStyle(); }}>复制样式 <span className="text-[#8f959e]">⌘ ⌥ C</span></button>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindTextStyle(); }}>粘贴样式 <span className="text-[#8f959e]">⌘ ⌥ V</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover disabled:opacity-40" disabled={!canCopy} onClick={() => { setMindMenu(null); void copyMindTextStyle(); }}>{t("复制样式")} <span className="text-[#8f959e]">⌘ ⌥ C</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); void pasteMindTextStyle(); }}>{t("粘贴样式")} <span className="text-[#8f959e]">⌘ ⌥ V</span></button>
       <div className="my-1 border-t border-[#e5e6eb]"/>
-      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); removeMindTopic(); }}>删除 <span className="text-[#8f959e]">⌫</span></button>
+      <button type="button" role="menuitem" className="flex h-8 w-full items-center justify-between px-3 text-left hover:bg-hover" onClick={() => { setMindMenu(null); removeMindTopic(); }}>{t("删除")} <span className="text-[#8f959e]">⌫</span></button>
     </div>}
 
-    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="dialog" aria-label={{ fill: "节点填充", line: "节点连线样式", shape: "更改图形", textColor: "文字颜色和背景", textFormat: "文字格式", description: "描述样式", boundary: t("分支外框"), summary: t("分支概要"), badge: t("节点徽章") }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : mindPaintMenu.kind === "badge" ? 264 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
-      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: "填充颜色", line: "连线样式", shape: "更改图形", textColor: "文字颜色", description: "描述样式", boundary: t("分支外框"), summary: t("分支概要"), badge: t("优先级与进度徽章") }[mindPaintMenu.kind]}</div>}
+    {mindPaintMenu && mindSelected && !readOnly && !mindEditing && !mindDescriptionEditing && <div role="dialog" aria-label={{ fill: t("节点填充"), line: t("节点连线样式"), shape: t("更改图形"), textColor: t("文字颜色和背景"), textFormat: t("文字格式"), description: t("描述样式"), boundary: t("分支外框"), summary: t("分支概要"), badge: t("节点徽章") }[mindPaintMenu.kind]} data-mind-paint-menu className="fixed z-[95] max-h-[calc(100dvh-16px)] overflow-y-auto rounded-lg border border-[#DEE0E3] bg-surface p-3 text-[12px] shadow-[0_5px_18px_rgba(31,35,41,0.16)]" style={{ left: mindPaintMenu.left, top: mindPaintMenu.top, width: mindPaintMenu.kind === "shape" ? 144 : mindPaintMenu.kind === "textFormat" ? 200 : mindPaintMenu.kind === "badge" ? 264 : 244 }} onPointerDown={(event) => event.stopPropagation()}>
+      {mindPaintMenu.kind !== "textFormat" && <div className="mb-2 text-[#646A73]">{{ fill: t("填充颜色"), line: t("连线样式"), shape: t("更改图形"), textColor: t("文字颜色"), description: t("描述样式"), boundary: t("分支外框"), summary: t("分支概要"), badge: t("优先级与进度徽章") }[mindPaintMenu.kind]}</div>}
       {mindPaintMenu.kind === "boundary" && (
         <div className="space-y-2.5" data-mind-boundary-popover>
           <input
@@ -2974,7 +2994,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
               </button>
             </div>
             <div className="mt-1.5 flex flex-wrap gap-1">
-              {["核心", "待确认", "阻塞", "已完成"].map((presetTag) => (
+              {[t("核心"), t("待确认"), t("阻塞"), t("已完成")].map((presetTag) => (
                 <button
                   key={presetTag}
                   type="button"
@@ -2986,7 +3006,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
                       : "border-[#dee0e3] text-subtle hover:bg-hover",
                   )}
                 >
-                  {t(presetTag)}
+                  {presetTag}
                 </button>
               ))}
             </div>
@@ -3005,26 +3025,26 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
           )}
         </div>
       )}
-      {mindPaintMenu.kind === "shape" && <div className="flex gap-1">{(["text", "oval", "rect"] as const).map((shape) => <button key={shape} type="button" aria-label={{ text: "文字形状", oval: "椭圆形状", rect: "矩形形状" }[shape]} aria-pressed={selectedShape === shape} className={cn("grid size-8 place-items-center rounded hover:bg-hover", selectedShape === shape && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => { updateMindStyle({ shape }); setMindPaintMenu(null); }}>{shape === "text" ? <Type size={17}/> : shape === "oval" ? <Circle size={17} className="scale-y-75"/> : <Square size={17}/>}</button>)}</div>}
-      {mindPaintMenu.kind === "textFormat" && <><div className="flex gap-1 border-b border-[#e5e6eb] pb-2">{([ ["bold", "加粗", Bold], ["strike", "删除线", Strikethrough], ["underline", "下划线", Underline], ["italic", "斜体", Italic] ] as const).map(([key, label, Icon]) => <button key={key} type="button" aria-label={label} aria-pressed={!!currentTextFormat[key]} className={cn("grid size-8 place-items-center rounded hover:bg-hover", currentTextFormat[key] && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ [key]: currentTextFormat[key] ? undefined : true })}><Icon size={16}/></button>)}</div><div className="mt-2 flex gap-1">{([ ["left", "左对齐", AlignLeft], ["center", "居中对齐", AlignCenter], ["right", "右对齐", AlignRight] ] as const).map(([align, label, Icon]) => <button key={align} type="button" aria-label={label} aria-pressed={(currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align} className={cn("grid h-8 flex-1 place-items-center rounded hover:bg-hover", (currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ align })}><Icon size={16}/></button>)}</div></>}
-      {mindPaintMenu.kind === "textColor" && <><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="自动文字颜色" className="size-6 rounded border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindStyle({ color: undefined })}>A</button>{MIND_PALETTE.slice(0, 7).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字`} aria-pressed={graph.mindStyles?.[mindSelected]?.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646A73]">背景颜色</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="无文字背景" className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindTextFormat({ highlight: undefined })}/>{MIND_PALETTE.slice(4, 11).map(([color, name]) => <button key={color} type="button" aria-label={`${name}文字背景`} aria-pressed={currentTextFormat.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindTextFormat({ highlight: color })}/>)}</div><div className="mt-2 flex gap-3"><label className="relative cursor-pointer text-[#646A73]">自定义文字色<input aria-label="自定义文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646A73]">自定义背景色<input aria-label="自定义文字背景" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentTextFormat.highlight ?? "#fff5c7"} onChange={(event) => updateMindTextFormat({ highlight: event.target.value })}/></label></div></>}
-      {mindPaintMenu.kind === "description" && <><div className="mb-3 flex items-center justify-between text-[#646a73]"><span>字号</span><FeishuSelect ariaLabel="描述字号" value={String(currentDescriptionStyle.size ?? 12)} options={[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => ({ value: String(size), label: String(size) }))} onChange={(val) => updateMindDescriptionStyle({ size: Number(val) })} className="h-7 w-20 border border-[#dee0e3] bg-surface px-2 text-[#1f2329]" chevronSize={11} menuMinWidth={76} /></div><div className="mb-2 text-[#646a73]">文字颜色</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="默认描述颜色" className="size-6 rounded border border-[#d4d7dc] text-[#8f959e]" onClick={() => updateMindDescriptionStyle({ color: undefined })}>A</button>{[0, 1, 4, 5, 6, 8, 9].map((index) => MIND_PALETTE[index]).map(([color, name]) => <button key={color} type="button" aria-label={`${name}描述文字`} aria-pressed={currentDescriptionStyle.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindDescriptionStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646a73]">文字背景</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label="无描述背景" className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindDescriptionStyle({ highlight: undefined })}/>{MIND_PALETTE.slice(9, 16).map(([color, name]) => <button key={color} type="button" aria-label={`${name}描述背景`} aria-pressed={currentDescriptionStyle.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindDescriptionStyle({ highlight: color })}/>)}</div><div className="mt-3 flex gap-3"><label className="relative cursor-pointer text-[#646a73]">自定义文字色<input aria-label="自定义描述文字颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentDescriptionStyle.color ?? "#8f959e"} onChange={(event) => updateMindDescriptionStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646a73]">自定义背景色<input aria-label="自定义描述背景颜色" type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentDescriptionStyle.highlight ?? "#fff5c7"} onChange={(event) => updateMindDescriptionStyle({ highlight: event.target.value })}/></label></div></>}
+      {mindPaintMenu.kind === "shape" && <div className="flex gap-1">{(["text", "oval", "rect"] as const).map((shape) => <button key={shape} type="button" aria-label={{ text: t("文字形状"), oval: t("椭圆形状"), rect: t("矩形形状") }[shape]} aria-pressed={selectedShape === shape} className={cn("grid size-8 place-items-center rounded hover:bg-hover", selectedShape === shape && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => { updateMindStyle({ shape }); setMindPaintMenu(null); }}>{shape === "text" ? <Type size={17}/> : shape === "oval" ? <Circle size={17} className="scale-y-75"/> : <Square size={17}/>}</button>)}</div>}
+      {mindPaintMenu.kind === "textFormat" && <><div className="flex gap-1 border-b border-[#e5e6eb] pb-2">{([ ["bold", t("加粗"), Bold], ["strike", t("删除线"), Strikethrough], ["underline", t("下划线"), Underline], ["italic", t("斜体"), Italic] ] as const).map(([key, label, Icon]) => <button key={key} type="button" aria-label={label} aria-pressed={!!currentTextFormat[key]} className={cn("grid size-8 place-items-center rounded hover:bg-hover", currentTextFormat[key] && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ [key]: currentTextFormat[key] ? undefined : true })}><Icon size={16}/></button>)}</div><div className="mt-2 flex gap-1">{([ ["left", t("左对齐"), AlignLeft], ["center", t("居中对齐"), AlignCenter], ["right", t("右对齐"), AlignRight] ] as const).map(([align, label, Icon]) => <button key={align} type="button" aria-label={label} aria-pressed={(currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align} className={cn("grid h-8 flex-1 place-items-center rounded hover:bg-hover", (currentTextFormat.align ?? (mindAnchor?.topic.parent === null || selectedShape !== "text" ? "center" : "left")) === align && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindTextFormat({ align })}><Icon size={16}/></button>)}</div></>}
+      {mindPaintMenu.kind === "textColor" && <><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label={t("自动文字颜色")} className="size-6 rounded border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindStyle({ color: undefined })}>A</button>{mindPalette.slice(0, 7).map(([color, name]) => <button key={color} type="button" aria-label={t("{color}文字", { color: name })} aria-pressed={graph.mindStyles?.[mindSelected]?.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646A73]">{t("背景颜色")}</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label={t("无文字背景")} className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindTextFormat({ highlight: undefined })}/>{mindPalette.slice(4, 11).map(([color, name]) => <button key={color} type="button" aria-label={t("{color}文字背景", { color: name })} aria-pressed={currentTextFormat.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindTextFormat({ highlight: color })}/>)}</div><div className="mt-2 flex gap-3"><label className="relative cursor-pointer text-[#646A73]">{t("自定义文字色")}<input aria-label={t("自定义文字颜色")} type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={graph.mindStyles?.[mindSelected]?.color ?? mindDefaultColor} onChange={(event) => updateMindStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646A73]">{t("自定义背景色")}<input aria-label={t("自定义文字背景")} type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentTextFormat.highlight ?? "#fff5c7"} onChange={(event) => updateMindTextFormat({ highlight: event.target.value })}/></label></div></>}
+      {mindPaintMenu.kind === "description" && <><div className="mb-3 flex items-center justify-between text-[#646a73]"><span>{t("字号")}</span><FeishuSelect ariaLabel={t("描述字号")} value={String(currentDescriptionStyle.size ?? 12)} options={[12, 14, 16, 18, 24, 36, 48, 72, 96].map((size) => ({ value: String(size), label: String(size) }))} onChange={(val) => updateMindDescriptionStyle({ size: Number(val) })} className="h-7 w-20 border border-[#dee0e3] bg-surface px-2 text-[#1f2329]" chevronSize={11} menuMinWidth={76} /></div><div className="mb-2 text-[#646a73]">{t("文字颜色")}</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label={t("默认描述颜色")} className="size-6 rounded border border-[#d4d7dc] text-[#8f959e]" onClick={() => updateMindDescriptionStyle({ color: undefined })}>A</button>{[0, 1, 4, 5, 6, 8, 9].map((index) => mindPalette[index]).map(([color, name]) => <button key={color} type="button" aria-label={t("{color}描述文字", { color: name })} aria-pressed={currentDescriptionStyle.color === color} className="size-6 rounded border border-[#d4d7dc] font-semibold" style={{ color }} onClick={() => updateMindDescriptionStyle({ color })}>A</button>)}</div><div className="mb-2 mt-3 text-[#646a73]">{t("文字背景")}</div><div className="grid grid-cols-8 gap-1.5"><button type="button" aria-label={t("无描述背景")} className="size-6 rounded border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindDescriptionStyle({ highlight: undefined })}/>{mindPalette.slice(9, 16).map(([color, name]) => <button key={color} type="button" aria-label={t("{color}描述背景", { color: name })} aria-pressed={currentDescriptionStyle.highlight === color} className="size-6 rounded border border-[#d4d7dc]" style={{ background: color }} onClick={() => updateMindDescriptionStyle({ highlight: color })}/>)}</div><div className="mt-3 flex gap-3"><label className="relative cursor-pointer text-[#646a73]">{t("自定义文字色")}<input aria-label={t("自定义描述文字颜色")} type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentDescriptionStyle.color ?? "#8f959e"} onChange={(event) => updateMindDescriptionStyle({ color: event.target.value })}/></label><label className="relative cursor-pointer text-[#646a73]">{t("自定义背景色")}<input aria-label={t("自定义描述背景颜色")} type="color" className="absolute inset-0 h-full w-full cursor-pointer opacity-0" value={currentDescriptionStyle.highlight ?? "#fff5c7"} onChange={(event) => updateMindDescriptionStyle({ highlight: event.target.value })}/></label></div></>}
       {(mindPaintMenu.kind === "line" || mindPaintMenu.kind === "fill") && <>
-      {mindPaintMenu.kind === "line" && <><div className="mb-2 flex gap-1">{(["solid", "dashed", "dotted"] as const).map((line) => <button key={line} type="button" aria-label={{ solid: "实线", dashed: "虚线", dotted: "点线" }[line]} aria-pressed={(currentPaint.line ?? "solid") === line} className={cn("h-7 flex-1 rounded text-[16px] hover:bg-hover", (currentPaint.line ?? "solid") === line && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindPaint({ line })}>{line === "solid" ? "—" : line === "dashed" ? "---" : "····"}</button>)}</div><div className="mb-2 flex gap-1">{[1, 2, 3, 4].map((width) => <button key={width} type="button" aria-label={`线宽 ${width}`} aria-pressed={(currentPaint.width ?? 2) === width} className={cn("grid h-7 flex-1 place-items-center rounded hover:bg-hover", (currentPaint.width ?? 2) === width && "bg-[#e1eaff]")} onClick={() => updateMindPaint({ width })}><span className="rounded-full bg-[#1f2329]" style={{ width: 3 + width * 2, height: 3 + width * 2 }}/></button>)}</div></>}
-      <div className="grid grid-cols-8 gap-1.5">{mindPaintMenu.kind === "fill" && <button type="button" aria-label="无填充" title="无填充" className="size-6 rounded-full border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindPaint({ fill: "none" })}/>} {mindPaintMenu.kind === "line" && <button type="button" aria-label="自动线条颜色" title="自动线条颜色" className="size-6 rounded-full border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindPaint({ stroke: undefined })}>✦</button>}{MIND_PALETTE.map(([color, name]) => <button key={color} type="button" aria-label={`${name}${mindPaintMenu.kind === "fill" ? "填充" : "线条"}`} title={name} aria-pressed={(mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color} className={cn("size-6 rounded-full border border-[#d4d7dc]", (mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color && "ring-2 ring-[#3370ff] ring-offset-1")} style={{ background: color }} onClick={() => updateMindPaint(mindPaintMenu.kind === "fill" ? { fill: color } : { stroke: color })}/>)}</div>
-      <label className="mt-3 block text-[#646A73]">不透明度 <span className="float-right">{mindPaintMenu.kind === "fill" ? currentPaint.fillOpacity ?? 100 : currentPaint.opacity ?? 100}%</span><input aria-label={mindPaintMenu.kind === "fill" ? "填充不透明度" : "线条不透明度"} type="range" min={0} max={100} className="mt-1 block w-full accent-[#3370ff]" value={mindPaintMenu.kind === "fill" ? currentPaint.fillOpacity ?? 100 : currentPaint.opacity ?? 100} onChange={(event) => updateMindPaint(mindPaintMenu.kind === "fill" ? { fillOpacity: Number(event.target.value) } : { opacity: Number(event.target.value) })}/></label>
+      {mindPaintMenu.kind === "line" && <><div className="mb-2 flex gap-1">{(["solid", "dashed", "dotted"] as const).map((line) => <button key={line} type="button" aria-label={{ solid: t("实线"), dashed: t("虚线"), dotted: t("点线") }[line]} aria-pressed={(currentPaint.line ?? "solid") === line} className={cn("h-7 flex-1 rounded text-[16px] hover:bg-hover", (currentPaint.line ?? "solid") === line && "bg-[#e1eaff] text-[#3370ff]")} onClick={() => updateMindPaint({ line })}>{line === "solid" ? "—" : line === "dashed" ? "---" : "····"}</button>)}</div><div className="mb-2 flex gap-1">{[1, 2, 3, 4].map((width) => <button key={width} type="button" aria-label={t("线宽 {width}", { width })} aria-pressed={(currentPaint.width ?? 2) === width} className={cn("grid h-7 flex-1 place-items-center rounded hover:bg-hover", (currentPaint.width ?? 2) === width && "bg-[#e1eaff]")} onClick={() => updateMindPaint({ width })}><span className="rounded-full bg-[#1f2329]" style={{ width: 3 + width * 2, height: 3 + width * 2 }}/></button>)}</div></>}
+      <div className="grid grid-cols-8 gap-1.5">{mindPaintMenu.kind === "fill" && <button type="button" aria-label={t("无填充")} title={t("无填充")} className="size-6 rounded-full border border-[#d4d7dc]" style={{ background: "linear-gradient(135deg, #fff 47%, #c7cbd1 49%, #c7cbd1 52%, #fff 54%)" }} onClick={() => updateMindPaint({ fill: "none" })}/>} {mindPaintMenu.kind === "line" && <button type="button" aria-label={t("自动线条颜色")} title={t("自动线条颜色")} className="size-6 rounded-full border border-[#d4d7dc] text-[#3370ff]" onClick={() => updateMindPaint({ stroke: undefined })}>✦</button>}{mindPalette.map(([color, name]) => <button key={color} type="button" aria-label={mindPaintMenu.kind === "fill" ? t("{color}填充", { color: name }) : t("{color}线条", { color: name })} title={name} aria-pressed={(mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color} className={cn("size-6 rounded-full border border-[#d4d7dc]", (mindPaintMenu.kind === "fill" ? currentPaint.fill : currentPaint.stroke) === color && "ring-2 ring-[#3370ff] ring-offset-1")} style={{ background: color }} onClick={() => updateMindPaint(mindPaintMenu.kind === "fill" ? { fill: color } : { stroke: color })}/>)}</div>
+      <label className="mt-3 block text-[#646A73]">{t("不透明度")} <span className="float-right">{mindPaintMenu.kind === "fill" ? currentPaint.fillOpacity ?? 100 : currentPaint.opacity ?? 100}%</span><input aria-label={mindPaintMenu.kind === "fill" ? t("填充不透明度") : t("线条不透明度")} type="range" min={0} max={100} className="mt-1 block w-full accent-[#3370ff]" value={mindPaintMenu.kind === "fill" ? currentPaint.fillOpacity ?? 100 : currentPaint.opacity ?? 100} onChange={(event) => updateMindPaint(mindPaintMenu.kind === "fill" ? { fillOpacity: Number(event.target.value) } : { opacity: Number(event.target.value) })}/></label>
       </>}
     </div>}
-    {mindOffer === mindSelected && hasMindSiblings && !mindEditing && !mindDescriptionEditing && !mindPaintMenu && <div className="fixed z-[90] flex items-center gap-2 rounded-lg border border-[#DEE0E3] bg-surface px-3 py-2 text-[12px] shadow-md" style={compact ? { left: 12, bottom: 170, maxWidth: "calc(100% - 24px)" } : { left: mindToolbarStyle?.left ?? 170, top: treeTop - 50 >= 64 ? Math.max(8, toolbarTop - 44) : Math.min(windowHeight - 44, toolbarTop + 48), transform: "translateX(-50%)" }} onPointerDown={(event) => event.stopPropagation()}><span>应用样式到所有同级节点</span><button type="button" aria-label="应用到同级节点" className="text-[#2ea121]" onClick={applyMindStyleToSiblings}>✓</button><button type="button" aria-label="关闭同级样式提示" className="text-[#d83931]" onClick={() => setMindOffer(null)}>×</button></div>}
+    {mindOffer === mindSelected && hasMindSiblings && !mindEditing && !mindDescriptionEditing && !mindPaintMenu && <div className="fixed z-[90] flex items-center gap-2 rounded-lg border border-[#DEE0E3] bg-surface px-3 py-2 text-[12px] shadow-md" style={compact ? { left: 12, bottom: 170, maxWidth: "calc(100% - 24px)" } : { left: mindToolbarStyle?.left ?? 170, top: treeTop - 50 >= 64 ? Math.max(8, toolbarTop - 44) : Math.min(windowHeight - 44, toolbarTop + 48), transform: "translateX(-50%)" }} onPointerDown={(event) => event.stopPropagation()}><span>{t("应用样式到所有同级节点")}</span><button type="button" aria-label={t("应用到同级节点")} className="text-[#2ea121]" onClick={applyMindStyleToSiblings}>✓</button><button type="button" aria-label={t("关闭同级样式提示")} className="text-[#d83931]" onClick={() => setMindOffer(null)}>×</button></div>}
 
-    {!readOnly && (tool === "pen" || tool === "eraser") && <div role="toolbar" aria-label="画笔工具" data-flow-pen-toolbar onPointerDown={(event) => event.stopPropagation()} className={cn("absolute left-1/2 z-20 flex h-12 max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 rounded-full border border-[#DEE0E3] bg-surface px-2 shadow-[0_4px_16px_rgba(31,35,41,0.12)]", compact ? "bottom-[120px]" : "bottom-5")}>
-      <button type="button" aria-label="画笔模式" aria-pressed={tool === "pen" && penKind === "pen"} title="画笔" className={cn(tb, tool === "pen" && penKind === "pen" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("pen"); setMenu(null); }}><Pencil size={17}/></button>
-      <button type="button" aria-label="荧光笔" aria-pressed={tool === "pen" && penKind === "marker"} title="荧光笔" className={cn(tb, tool === "pen" && penKind === "marker" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("marker"); setMenu(null); }}><Brush size={17}/></button>
-      <button type="button" aria-label="橡皮擦" aria-pressed={tool === "eraser"} title="橡皮擦（擦除整条笔迹）" data-flow-eraser-tool className={cn(tb, tool === "eraser" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("eraser"); setMenu(null); }}><Eraser size={17}/></button>
+    {!readOnly && (tool === "pen" || tool === "eraser") && <div role="toolbar" aria-label={t("画笔工具")} data-flow-pen-toolbar onPointerDown={(event) => event.stopPropagation()} className={cn("absolute left-1/2 z-20 flex h-12 max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1 rounded-full border border-[#DEE0E3] bg-surface px-2 shadow-[0_4px_16px_rgba(31,35,41,0.12)]", compact ? "bottom-[120px]" : "bottom-5")}>
+      <button type="button" aria-label={t("画笔模式")} aria-pressed={tool === "pen" && penKind === "pen"} title={t("画笔")} className={cn(tb, tool === "pen" && penKind === "pen" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("pen"); setMenu(null); }}><Pencil size={17}/></button>
+      <button type="button" aria-label={t("荧光笔")} aria-pressed={tool === "pen" && penKind === "marker"} title={t("荧光笔")} className={cn(tb, tool === "pen" && penKind === "marker" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("pen"); setPenKind("marker"); setMenu(null); }}><Brush size={17}/></button>
+      <button type="button" aria-label={t("橡皮擦")} aria-pressed={tool === "eraser"} title={t("橡皮擦（擦除整条笔迹）")} data-flow-eraser-tool className={cn(tb, tool === "eraser" && "bg-[#E1EAFF] text-primary")} onClick={() => { setTool("eraser"); setMenu(null); }}><Eraser size={17}/></button>
       <span className="mx-1 h-6 w-px shrink-0 bg-[#DEE0E3]"/>
       <FeishuSelect
-        ariaLabel="画笔粗细"
-        title="画笔粗细"
+        ariaLabel={t("画笔粗细")}
+        title={t("画笔粗细")}
         disabled={tool !== "pen"}
         value={String(penKind === "marker" ? markerWidth : penWidth)}
         options={(penKind === "marker" ? MARKER_WIDTHS : INK_WIDTHS).map((width) => ({ value: String(width), label: String(width) }))}
@@ -3033,12 +3053,12 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         chevronSize={11}
         menuMinWidth={64}
       />
-      <div className="relative"><button type="button" aria-label="画笔颜色" aria-expanded={menu === "pen"} title="画笔颜色" disabled={tool !== "pen"} className={tb} onClick={() => setMenu(menu === "pen" ? null : "pen")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: activeInkColor }}/></button>{menu === "pen" && penSettings}</div>
-      <button type="button" aria-label="关闭画笔工具" title="关闭画笔工具" className={tb} onClick={() => { setTool("select"); setMenu(null); }}><X size={16}/></button>
+      <div className="relative"><button type="button" aria-label={t("画笔颜色")} aria-expanded={menu === "pen"} title={t("画笔颜色")} disabled={tool !== "pen"} className={tb} onClick={() => setMenu(menu === "pen" ? null : "pen")}><span className="size-4 rounded-full border border-[#bbbfc4]" style={{ background: activeInkColor }}/></button>{menu === "pen" && penSettings}</div>
+      <button type="button" aria-label={t("关闭画笔工具")} title={t("关闭画笔工具")} className={tb} onClick={() => { setTool("select"); setMenu(null); }}><X size={16}/></button>
     </div>}
 
     {/* 左上：返回 */}
-    <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />{mindBoard ? "思维导图" : "流程图"}</button>
+    <button type="button" onClick={requestClose} className={cn(floatBar, "absolute top-3 z-20 h-10 px-3 text-[14px]")} style={{ left: !readOnly && library && !compact ? 272 : 12 }} data-flow-done><ChevronLeft size={16} />{mindBoard ? t("思维导图") : t("流程图")}</button>
 
     {/* 右上：大纲切换 / 投票 / 计时 / 评论徽标 / 风格 / 自动排版 / AI 生成 / 导入 / 导出 */}
     <div className={cn(floatBar, "absolute right-3 top-3 z-20")} data-flow-global-tools>
@@ -3100,8 +3120,8 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       {boardPins.length > 0 && (
         <button
           type="button"
-          aria-label={`画板评论 ${boardPins.length} 条`}
-          title="查看画板评论图钉"
+          aria-label={t("画板评论 {count} 条", { count: boardPins.length })}
+          title={t("查看画板评论图钉")}
           data-flow-comments-count
           className={cn(barBtn, "text-[#B25900] hover:bg-[#FFF7E6]")}
           onClick={() => {
@@ -3118,32 +3138,32 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         </button>
       )}
       {!readOnly && <>
-        <div className="relative"><button type="button" aria-label="模板" title="模板" className={barBtn} onClick={() => setMenu(menu === "template" ? null : "template")} data-flow-template-btn><LayoutTemplate size={15} /><span className="hidden md:inline">模板</span></button>
-          {menu === "template" && <div className={cn(pop, "right-0 w-60")}>{FLOW_TEMPLATES.map((t) => <button key={t.id} type="button" className="flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-hover" onClick={() => applyTemplate(t)}><span>{t.label}</span><span className="text-[12px] text-subtle">{t.desc}{graph.nodes.length ? "（追加到右侧）" : ""}</span></button>)}</div>}
+        <div className="relative"><button type="button" aria-label={t("模板")} title={t("模板")} className={barBtn} onClick={() => setMenu(menu === "template" ? null : "template")} data-flow-template-btn><LayoutTemplate size={15} /><span className="hidden md:inline">{t("模板")}</span></button>
+          {menu === "template" && <div className={cn(pop, "right-0 w-60")}>{FLOW_TEMPLATES.map((tpl) => <button key={tpl.id} type="button" className="flex w-full flex-col rounded-md px-2 py-1.5 text-left hover:bg-hover" onClick={() => applyTemplate(tpl)}><span>{t(tpl.label)}</span><span className="text-[12px] text-subtle">{graph.nodes.length ? t("{desc}（追加到右侧）", { desc: t(tpl.desc) }) : t(tpl.desc)}</span></button>)}</div>}
         </div>
-        <div className="relative"><button type="button" aria-label="风格" title="风格" className={barBtn} onClick={() => setMenu(menu === "theme" ? null : "theme")} data-flow-theme-btn><Palette size={15} /><span className="hidden md:inline">风格</span></button>
-          {menu === "theme" && <div className={cn(pop, "right-0 grid w-[300px] grid-cols-3 gap-1.5 p-2")}>{THEMES.map((t) => <button key={t.id} type="button" onClick={() => { commit({ ...graph, theme: t.id }); setMenu(null); }} className={cn("rounded-md border p-1.5 text-center text-[12px] hover:border-primary", graph.theme === t.id && "border-primary text-primary")} data-flow-theme={t.id}><span className="mb-1 block h-8 rounded" style={{ background: t.canvas, border: `1px solid #DEE0E3` }}><span className="mx-auto mt-2 block h-4 w-10" style={{ background: t.palette ? t.palette[0].split("/")[0] : t.fill, border: `${t.strokeWidth}px solid ${t.palette ? t.palette[0].split("/")[1] : t.stroke}`, borderRadius: t.radius / 2 }} /></span>{t.label}</button>)}</div>}
+        <div className="relative"><button type="button" aria-label={t("风格")} title={t("风格")} className={barBtn} onClick={() => setMenu(menu === "theme" ? null : "theme")} data-flow-theme-btn><Palette size={15} /><span className="hidden md:inline">{t("风格")}</span></button>
+          {menu === "theme" && <div className={cn(pop, "right-0 grid w-[300px] grid-cols-3 gap-1.5 p-2")}>{THEMES.map((th) => <button key={th.id} type="button" onClick={() => { commit({ ...graph, theme: th.id }); setMenu(null); }} className={cn("rounded-md border p-1.5 text-center text-[12px] hover:border-primary", graph.theme === th.id && "border-primary text-primary")} data-flow-theme={th.id}><span className="mb-1 block h-8 rounded" style={{ background: th.canvas, border: `1px solid #DEE0E3` }}><span className="mx-auto mt-2 block h-4 w-10" style={{ background: th.palette ? th.palette[0].split("/")[0] : th.fill, border: `${th.strokeWidth}px solid ${th.palette ? th.palette[0].split("/")[1] : th.stroke}`, borderRadius: th.radius / 2 }} /></span>{t(th.label)}</button>)}</div>}
         </div>
-        <button type="button" aria-label="自动排版" disabled={!graph.nodes.length} className={barBtn} onClick={() => { const next = autoLayout(graph); commit(next); requestAnimationFrame(() => fit(next)); }} title={graph.nodes.length ? "按连线关系自动排版流程图" : "暂无流程图图形可排版"}><Spline size={15} /><span className="hidden md:inline">自动排版</span></button>
-        <div className="relative"><button type="button" aria-label={mindBoard ? "AI 生成流程图" : "AI 生成"} className={cn(barBtn, !ai && "opacity-60")} onClick={() => (ai ? setMenu(menu === "ai" ? null : "ai") : openAISettings())} title={ai ? "用 AI 生成流程图" : "请先在 AI 设置中配置 API Key"} data-flow-ai-btn><Sparkles size={15} className="text-primary" /><span className="hidden md:inline">{mindBoard ? "AI 生成流程图" : "AI 生成"}</span></button>
+        <button type="button" aria-label={t("自动排版")} disabled={!graph.nodes.length} className={barBtn} onClick={() => { const next = autoLayout(graph); commit(next); requestAnimationFrame(() => fit(next)); }} title={graph.nodes.length ? t("按连线关系自动排版流程图") : t("暂无流程图图形可排版")}><Spline size={15} /><span className="hidden md:inline">{t("自动排版")}</span></button>
+        <div className="relative"><button type="button" aria-label={mindBoard ? t("AI 生成流程图") : t("AI 生成")} className={cn(barBtn, !ai && "opacity-60")} onClick={() => (ai ? setMenu(menu === "ai" ? null : "ai") : openAISettings())} title={ai ? t("用 AI 生成流程图") : t("请先在 AI 设置中配置 API Key")} data-flow-ai-btn><Sparkles size={15} className="text-primary" /><span className="hidden md:inline">{mindBoard ? t("AI 生成流程图") : t("AI 生成")}</span></button>
           {menu === "ai" && ai && <div className={cn(pop, "right-0 w-[360px] p-3")}>
-            <textarea autoFocus value={aiText} onChange={(e) => setAiText(e.target.value)} rows={4} maxLength={1000} placeholder="描述流程，例如：用户注册流程，包含填写信息、校验手机号、校验失败重试、创建账号、发送欢迎邮件" className="w-full select-text resize-none rounded-md border p-2 text-[13px] outline-none focus:border-primary" data-flow-ai-input />
-            <div className="mt-2 flex items-center gap-2"><span className="text-[12px] text-subtle">{graph.nodes.length ? "结果将追加到画布右侧" : "结果会自动排版"}</span><button type="button" disabled={busy || !aiText.trim()} onClick={() => void runAI()} className="ml-auto flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{busy && <Loader2 size={12} className="animate-spin" />}生成</button></div>
+            <textarea autoFocus value={aiText} onChange={(e) => setAiText(e.target.value)} rows={4} maxLength={1000} placeholder={t("描述流程，例如：用户注册流程，包含填写信息、校验手机号、校验失败重试、创建账号、发送欢迎邮件")} className="w-full select-text resize-none rounded-md border p-2 text-[13px] outline-none focus:border-primary" data-flow-ai-input />
+            <div className="mt-2 flex items-center gap-2"><span className="text-[12px] text-subtle">{graph.nodes.length ? t("结果将追加到画布右侧") : t("结果会自动排版")}</span><button type="button" disabled={busy || !aiText.trim()} onClick={() => void runAI()} className="ml-auto flex h-7 items-center gap-1 rounded-md bg-primary px-3 text-[12px] text-white disabled:opacity-40">{busy && <Loader2 size={12} className="animate-spin" />}{t("生成")}</button></div>
           </div>}
         </div>
         <div className="relative">
-          <button type="button" aria-label="导入 draw.io 或 XMind" title="导入 draw.io / XMind" className={barBtn} onClick={() => setMenu(menu === "import" ? null : "import")} data-flow-import><FileUp size={15} /><span className="hidden md:inline">导入</span></button>
+          <button type="button" aria-label={t("导入 draw.io 或 XMind")} title={t("导入 draw.io / XMind")} className={barBtn} onClick={() => setMenu(menu === "import" ? null : "import")} data-flow-import><FileUp size={15} /><span className="hidden md:inline">{t("导入")}</span></button>
           {menu === "import" && (
             <div className={cn(pop, "right-0 w-44")}>
-              <button type="button" className="flex h-8 w-full items-center rounded-md px-2 text-left hover:bg-hover" onClick={() => { setMenu(null); if (fileRef.current) { fileRef.current.accept = ".drawio,.xml,.dio,application/xml,text/xml"; fileRef.current.click(); } }} data-flow-import-drawio>导入 draw.io 文件</button>
-              <button type="button" className="flex h-8 w-full items-center rounded-md px-2 text-left hover:bg-hover" onClick={() => { setMenu(null); if (fileRef.current) { fileRef.current.accept = ".xmind,application/zip,application/vnd.xmind.workbook"; fileRef.current.click(); } }} data-flow-import-xmind>导入 XMind（.xmind）</button>
+              <button type="button" className="flex h-8 w-full items-center rounded-md px-2 text-left hover:bg-hover" onClick={() => { setMenu(null); if (fileRef.current) { fileRef.current.accept = ".drawio,.xml,.dio,application/xml,text/xml"; fileRef.current.click(); } }} data-flow-import-drawio>{t("导入 draw.io 文件")}</button>
+              <button type="button" className="flex h-8 w-full items-center rounded-md px-2 text-left hover:bg-hover" onClick={() => { setMenu(null); if (fileRef.current) { fileRef.current.accept = ".xmind,application/zip,application/vnd.xmind.workbook"; fileRef.current.click(); } }} data-flow-import-xmind>{t("导入 XMind（.xmind）")}</button>
             </div>
           )}
           <input ref={fileRef} type="file" accept=".drawio,.xml,.dio,.xmind,application/xml,text/xml,application/zip" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void importFile(f); }} data-flow-import-input />
         </div>
       </>}
-      <div className="relative"><button type="button" aria-label="导出" title="导出" className={barBtn} onClick={() => setMenu(menu === "export" ? null : "export")} data-flow-export-btn><Download size={15} /><span className="hidden md:inline">导出</span></button>
-        {menu === "export" && <div className={cn(pop, "right-0 w-44")}>{([["png", "图片（PNG）"], ["svg", "矢量图（SVG）"], ["drawio", "draw.io 文件"], ["xmind", "XMind 文件（.xmind）"]] as const).map(([k, l]) => <button key={k} type="button" data-flow-export={k} className="flex h-8 w-full items-center rounded-md px-2 text-left hover:bg-hover" onClick={() => void exportAs(k)}>{l}</button>)}</div>}
+      <div className="relative"><button type="button" aria-label={t("导出")} title={t("导出")} className={barBtn} onClick={() => setMenu(menu === "export" ? null : "export")} data-flow-export-btn><Download size={15} /><span className="hidden md:inline">{t("导出")}</span></button>
+        {menu === "export" && <div className={cn(pop, "right-0 w-44")}>{([["png", t("图片（PNG）")], ["svg", t("矢量图（SVG）")], ["drawio", t("draw.io 文件")], ["xmind", t("XMind 文件（.xmind）")]] as const).map(([k, l]) => <button key={k} type="button" data-flow-export={k} className="flex h-8 w-full items-center rounded-md px-2 text-left hover:bg-hover" onClick={() => void exportAs(k)}>{l}</button>)}</div>}
       </div>
     </div>
     {commentDraft && commentActions && (
@@ -3165,7 +3185,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
             setOpenPinId(created.id);
             setPinPopoverPos({ x: commentDraft.screenX, y: commentDraft.screenY });
           }
-          setNotice({ ok: true, text: "已添加画板锚点评论" });
+          setNotice({ ok: true, text: t("已添加画板锚点评论") });
         }}
       />
     )}
@@ -3176,7 +3196,7 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
         screenY={pinPopoverPos?.y ?? worldToScreen(openPin.x, openPin.y).y}
         canSubmit={!!commentActions}
         onReply={commentActions ? async (parentId, body) => { await commentActions.reply(parentId, body); } : undefined}
-        onResolve={commentActions ? async (cid) => { await commentActions.resolve(cid); setNotice({ ok: true, text: "已解决该画板评论" }); } : undefined}
+        onResolve={commentActions ? async (cid) => { await commentActions.resolve(cid); setNotice({ ok: true, text: t("已解决该画板评论") }); } : undefined}
         onClose={() => setOpenPinId(null)}
       />
     )}
@@ -3216,8 +3236,8 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
     )}
     {notice && <div role={notice.ok ? "status" : "alert"} className={cn("absolute left-1/2 top-16 z-20 max-w-[520px] -translate-x-1/2 rounded-md border bg-surface px-3 py-1.5 text-[12px] shadow", notice.ok ? "text-[#1F2329]" : "text-destructive")}>{notice.text}<button type="button" className="ml-2 text-subtle" onClick={() => setNotice(null)}>×</button></div>}
 
-    {recovery.length > 0 && <div className="pointer-events-none absolute right-0 top-16 z-[95] flex justify-center px-3" style={{ left: !readOnly && library && !compact ? 260 : 0 }}><div ref={recoveryBannerRef} role="alert" className="pointer-events-auto flex w-full max-w-[480px] items-center gap-2 rounded-lg border border-[#ffd591] bg-[#fff7e6] px-3 py-2 text-[12px] text-[#7a4b00] shadow-md"><span>{recovery.some((item) => item.conflicts.includes("permission") || item.conflicts.includes("document")) ? "文档状态或编辑权限已变化" : "协作者修改了同一对象"}，部分操作未应用；原输入已暂存。</span><button type="button" className="ml-auto shrink-0 underline" onClick={() => setRecoveryOpen(true)}>查看未应用内容</button></div></div>}
-    {recoveryOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label={mindBoard ? "未应用的思维导图内容" : "未应用的流程图内容"}><div ref={recoveryDialogRef} className="max-h-[calc(100dvh-32px)] w-full max-w-[560px] overflow-y-auto rounded-xl border bg-surface p-4 shadow-xl"><h2 className="text-[16px] font-semibold">{mindBoard ? "未应用的思维导图内容" : "未应用的流程图内容"}</h2><p className="mt-2 text-[13px] text-subtle">请复制保留文字，或下载完整备份，再根据最新画布重新操作。关闭编辑器会丢失这些暂存内容。</p><textarea aria-label="未应用内容" readOnly value={describeUnappliedFlows(recovery)} className="mt-3 h-40 w-full select-text rounded-md border bg-surface p-3 text-[13px] outline-none"/><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => download(mindBoard ? "思维导图未应用内容.json" : "流程图未应用内容.json", new Blob([JSON.stringify({ version: 1, attempts: recovery }, null, 2)], { type: "application/json" }))}>下载完整备份</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => setRecoveryOpen(false)}>继续编辑</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); }}>已保留，清除暂存</button><button type="button" className="rounded-md bg-[#d83931] px-3 py-1.5 text-[13px] text-white" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); onClose(); }}>丢弃并退出</button></div></div></div>}
+    {recovery.length > 0 && <div className="pointer-events-none absolute right-0 top-16 z-[95] flex justify-center px-3" style={{ left: !readOnly && library && !compact ? 260 : 0 }}><div ref={recoveryBannerRef} role="alert" className="pointer-events-auto flex w-full max-w-[480px] items-center gap-2 rounded-lg border border-[#ffd591] bg-[#fff7e6] px-3 py-2 text-[12px] text-[#7a4b00] shadow-md"><span>{recovery.some((item) => item.conflicts.includes("permission") || item.conflicts.includes("document")) ? t("文档状态或编辑权限已变化，部分操作未应用；原输入已暂存。") : t("协作者修改了同一对象，部分操作未应用；原输入已暂存。")}</span><button type="button" className="ml-auto shrink-0 underline" onClick={() => setRecoveryOpen(true)}>{t("查看未应用内容")}</button></div></div>}
+    {recoveryOpen && <div className="fixed inset-0 z-[100] grid place-items-center bg-black/30 p-4" role="dialog" aria-modal="true" aria-label={mindBoard ? t("未应用的思维导图内容") : t("未应用的流程图内容")}><div ref={recoveryDialogRef} className="max-h-[calc(100dvh-32px)] w-full max-w-[560px] overflow-y-auto rounded-xl border bg-surface p-4 shadow-xl"><h2 className="text-[16px] font-semibold">{mindBoard ? t("未应用的思维导图内容") : t("未应用的流程图内容")}</h2><p className="mt-2 text-[13px] text-subtle">{t("请复制保留文字，或下载完整备份，再根据最新画布重新操作。关闭编辑器会丢失这些暂存内容。")}</p><textarea aria-label={t("未应用内容")} readOnly value={describeUnappliedFlows(recovery)} className="mt-3 h-40 w-full select-text rounded-md border bg-surface p-3 text-[13px] outline-none"/><div className="mt-3 flex flex-wrap justify-end gap-2"><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => download(mindBoard ? t("思维导图未应用内容.json") : t("流程图未应用内容.json"), new Blob([JSON.stringify({ version: 1, attempts: recovery }, null, 2)], { type: "application/json" }))}>{t("下载完整备份")}</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => setRecoveryOpen(false)}>{t("继续编辑")}</button><button type="button" className="rounded-md border px-3 py-1.5 text-[13px]" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); }}>{t("已保留，清除暂存")}</button><button type="button" className="rounded-md bg-[#d83931] px-3 py-1.5 text-[13px] text-white" onClick={() => { recoveryRef.current = []; setRecovery([]); setRecoveryOpen(false); onClose(); }}>{t("丢弃并退出")}</button></div></div></div>}
 
     {/* 右下：缩略图导航 + 撤销重做、缩放 */}
     {minimapOpen && mindViewMode === "canvas" && (
@@ -3242,16 +3262,16 @@ export function FlowchartEditor({ initial, blockProps, readOnly, ai, onChange, o
       </div>
     )}
     <div className="absolute bottom-4 right-4 z-20 flex items-center gap-2">
-      {!readOnly && <div className={floatBar}><button type="button" className={railBtn} title="撤销" disabled={!undo.length} onClick={doUndo}><Undo2 size={16} /></button><button type="button" className={railBtn} title="重做" disabled={!redo.length} onClick={doRedo}><Redo2 size={16} /></button></div>}
+      {!readOnly && <div className={floatBar}><button type="button" className={railBtn} title={t("撤销")} disabled={!undo.length} onClick={doUndo}><Undo2 size={16} /></button><button type="button" className={railBtn} title={t("重做")} disabled={!redo.length} onClick={doRedo}><Redo2 size={16} /></button></div>}
       <div className={floatBar}>
         {mindViewMode === "canvas" && (
           <button type="button" className={cn(railBtn, minimapOpen && "bg-[#E1EAFF] text-primary")} title={t("缩略图导航")} aria-label={t("缩略图导航")} aria-pressed={minimapOpen} onClick={() => setMinimapOpen((v) => !v)} data-board-minimap-toggle><MapIcon size={16} /></button>
         )}
-        <button type="button" className={cn(railBtn, hand && "bg-[#E1EAFF] text-primary")} title="抓手（拖动画布，也可按住空格）" onClick={() => setHand(!hand)} data-flow-hand><Hand size={16} /></button>
+        <button type="button" className={cn(railBtn, hand && "bg-[#E1EAFF] text-primary")} title={t("抓手（拖动画布，也可按住空格）")} onClick={() => setHand(!hand)} data-flow-hand><Hand size={16} /></button>
         <span className="mx-0.5 h-5 w-px bg-[#DEE0E3]" />
-        <button type="button" className={railBtn} title="缩小" onClick={() => { autoFit.current = false; setView((v) => ({ ...v, zoom: Math.max(0.2, v.zoom / 1.2) })); }}><Minus size={16} /></button>
-        <button type="button" className="h-8 w-12 rounded-md text-center text-[13px] hover:bg-hover" title="适应画布" onClick={() => fit()} data-flow-fit>{Math.round(view.zoom * 100)}%</button>
-        <button type="button" className={railBtn} title="放大" onClick={() => { autoFit.current = false; setView((v) => ({ ...v, zoom: Math.min(3, v.zoom * 1.2) })); }}><Plus size={16} /></button>
+        <button type="button" className={railBtn} title={t("缩小")} onClick={() => { autoFit.current = false; setView((v) => ({ ...v, zoom: Math.max(0.2, v.zoom / 1.2) })); }}><Minus size={16} /></button>
+        <button type="button" className="h-8 w-12 rounded-md text-center text-[13px] hover:bg-hover" title={t("适应画布")} onClick={() => fit()} data-flow-fit>{Math.round(view.zoom * 100)}%</button>
+        <button type="button" className={railBtn} title={t("放大")} onClick={() => { autoFit.current = false; setView((v) => ({ ...v, zoom: Math.min(3, v.zoom * 1.2) })); }}><Plus size={16} /></button>
       </div>
     </div>
   </div>, document.body);

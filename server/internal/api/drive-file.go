@@ -102,6 +102,9 @@ func (s *Server) postDriveFile(w http.ResponseWriter, r *http.Request) {
 		httpx.Error(w, http.StatusRequestEntityTooLarge, "too_large", "文件不能超过 20 MB")
 		return
 	}
+	if !s.enforceWorkspaceStorageQuota(r.Context(), w, wsID, int64(len(body))) {
+		return
+	}
 	mime := http.DetectContentType(body)
 	keyToken, err := token()
 	if err != nil {

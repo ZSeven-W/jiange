@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, ChevronDown, ChevronRight, FolderTree, Pencil, Plus, Shield, Trash2, UserPlus, Users } from "lucide-react";
+import { Building2, ChevronDown, ChevronRight, Crown, FolderTree, Pencil, Plus, Shield, Trash2, UserPlus, Users } from "lucide-react";
 import { ApiError, orgApi, type Me, type OrgDepartment, type OrgGroup, type WorkspaceMemberInfo } from "@/lib/api";
 import { Avatar } from "@/components/brand";
 import { colorFor } from "@/lib/presence";
 import { ask, askText } from "@/components/ui/ask";
 import { FeishuSelect } from "@/components/feishu-select";
-import { t, useI18n } from "@/lib/i18n";
+import { t as defaultT, useI18n } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { setActiveWorkspaceId, transferWorkspaceOwner } from "@/lib/workspace-switcher";
 import { OrgSyncPanel } from "./org-sync-panel";
 import { OrgSSOPanel } from "./org-sso-panel";
 import { OrgAuditPanel } from "./org-audit-panel";
@@ -15,7 +16,7 @@ import { OrgWebhooksPanel } from "./org-webhooks-panel";
 import { OrgNotificationsPanel } from "./org-notifications-panel";
 import { OrgDeveloperPanel } from "./org-developer-panel";
 
-type OrgTab = "departments" | "groups" | "members" | "sync" | "sso" | "security" | "webhooks" | "notifications" | "developer";
+export type OrgTab = "departments" | "groups" | "members" | "sync" | "sso" | "security" | "webhooks" | "notifications" | "developer";
 
 const WS_ROLE_LABELS: Record<string, string> = {
   owner: "空间所有者",
@@ -23,14 +24,45 @@ const WS_ROLE_LABELS: Record<string, string> = {
   member: "普通成员",
 };
 
-export function OrgPage({ me }: { me: Me }) {
+export async function requestWorkspaceOwnerTransfer(opts: {
+  workspaceId: number;
+  callerUserId: number;
+  member: Pick<WorkspaceMemberInfo, "userId" | "name">;
+  runMutation: (fn: () => Promise<void | string>, successMessage: string) => Promise<void>;
+  invalidateGlobal?: () => Promise<void>;
+  confirmFn?: typeof ask;
+  transferFn?: typeof transferWorkspaceOwner;
+  t?: typeof defaultT;
+}): Promise<boolean> {
+  const t = opts.t ?? defaultT;
+  const confirmFn = opts.confirmFn ?? ask;
+  const transferFn = opts.transferFn ?? transferWorkspaceOwner;
+  const confirmed = await confirmFn(
+    t("将空间所有者转让给「{name}」？", { name: opts.member.name }),
+    t("转让后，{name} 将成为该空间的所有者，你的角色将自动变更为管理员。此操作无法自行撤销。", { name: opts.member.name }),
+  );
+  if (!confirmed) return false;
+  await opts.runMutation(async () => {
+    await transferFn(opts.workspaceId, opts.member.userId);
+    if (opts.invalidateGlobal) {
+      await opts.invalidateGlobal();
+    }
+    setActiveWorkspaceId(opts.callerUserId, opts.workspaceId);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new Event("jiange:workspaces-changed"));
+    }
+  }, t("已将空间所有者转让给 {name}", { name: opts.member.name }));
+  return true;
+}
+
+export function OrgPage({ me, initialTab = "departments" }: { me: Me; initialTab?: OrgTab }) {
   const { t, locale } = useI18n();
   const qc = useQueryClient();
   useEffect(() => { document.title = `${t("组织架构")} - Jiange`; }, [locale, t]);
 
   const [workspaceId, setWorkspaceId] = useState<number>(() => me.workspaces[0]?.id ?? 0);
   const effectiveWsId = me.workspaces.some((w) => w.id === workspaceId) ? workspaceId : (me.workspaces[0]?.id ?? 0);
-  const [tab, setTab] = useState<OrgTab>("departments");
+  const [tab, setTab] = useState<OrgTab>(initialTab);
   const [selectedDeptId, setSelectedDeptId] = useState<number | null>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<number | null>(null);
   const [expandedDepts, setExpandedDepts] = useState<Record<number, boolean>>({});
@@ -58,7 +90,8 @@ export function OrgPage({ me }: { me: Me }) {
   });
 
   const data = orgQuery.data;
-  const canAdmin = data?.callerRole === "owner" || data?.callerRole === "admin";
+  const isOwner = data?.callerRole === "owner";
+  const canAdmin = isOwner || data?.callerRole === "admin";
   const departments = data?.departments ?? [];
   const groups = data?.groups ?? [];
   const members = data?.members ?? [];
@@ -152,6 +185,21 @@ export function OrgPage({ me }: { me: Me }) {
       await orgApi.deleteGroup(effectiveWsId, group.id, me.user.id);
       if (selectedGroupId === group.id) setSelectedGroupId(null);
     }, t("用户组已删除"));
+  };
+
+  const handleTransferOwner = async (member: WorkspaceMemberInfo) => {
+    if (busy || !effectiveWsId) return;
+    await requestWorkspaceOwnerTransfer({
+      workspaceId: effectiveWsId,
+      callerUserId: me.user.id,
+      member,
+      runMutation,
+      invalidateGlobal: async () => {
+        await qc.invalidateQueries({ queryKey: ["me"] });
+        await qc.invalidateQueries({ queryKey: ["workspaces"] });
+      },
+      t,
+    });
   };
 
   const availableDeptMembers = useMemo(() => {
@@ -609,6 +657,18 @@ export function OrgPage({ me }: { me: Me }) {
                             className="h-8 border bg-surface px-2 text-[13px]"
                             menuMinWidth={108}
                           />
+                          {isOwner && member.userId !== me.user.id && (
+                            <button
+                              type="button"
+                              data-transfer-owner={member.userId}
+                              disabled={busy}
+                              onClick={() => void handleTransferOwner(member)}
+                              className="inline-flex h-8 items-center gap-1 rounded-md border border-amber-300 bg-amber-50/70 px-2.5 text-[12px] font-medium text-amber-800 hover:bg-amber-100/80 disabled:opacity-50 dark:border-amber-700/70 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/50"
+                            >
+                              <Crown size={12} />
+                              {t("转让所有者")}
+                            </button>
+                          )}
                           <button
                             type="button"
                             disabled={busy}

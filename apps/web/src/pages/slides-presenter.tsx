@@ -429,60 +429,61 @@ export function PresenterToolDock({
   onInkColorChange: (color: string) => void;
   onClearInk: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div
       data-presenter-tools
       role="toolbar"
-      aria-label="演示标注工具"
+      aria-label={t("演示标注工具")}
       className="flex flex-wrap items-center gap-1 rounded-xl border border-white/12 bg-[#252629]/95 px-2 py-1.5 text-[12px] text-[#e5e7eb] shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md"
     >
       <button
         type="button"
         data-presenter-tool="pointer"
-        aria-label="指针模式"
+        aria-label={t("指针模式")}
         aria-pressed={tool === "pointer"}
-        title="指针模式"
+        title={t("指针模式")}
         onClick={() => onToolChange("pointer")}
         className={`flex h-7 items-center gap-1 rounded-lg px-2 transition-colors ${
           tool === "pointer" ? "bg-[#3370ff] font-medium text-white" : "hover:bg-white/10"
         }`}
       >
         <MousePointer2 size={13} />
-        <span>指针</span>
+        <span>{t("指针")}</span>
       </button>
       <button
         type="button"
         data-presenter-tool="laser"
-        aria-label="激光笔模式"
+        aria-label={t("激光笔模式")}
         aria-pressed={tool === "laser"}
-        title="激光笔模式"
+        title={t("激光笔模式")}
         onClick={() => onToolChange("laser")}
         className={`flex h-7 items-center gap-1 rounded-lg px-2 transition-colors ${
           tool === "laser" ? "bg-[#ff3b30] font-medium text-white" : "hover:bg-white/10"
         }`}
       >
         <Radio size={13} />
-        <span>激光笔</span>
+        <span>{t("激光笔")}</span>
       </button>
       <button
         type="button"
         data-presenter-tool="ink"
-        aria-label="画笔标注模式"
+        aria-label={t("画笔标注模式")}
         aria-pressed={tool === "ink"}
-        title="画笔标注模式"
+        title={t("画笔标注模式")}
         onClick={() => onToolChange("ink")}
         className={`flex h-7 items-center gap-1 rounded-lg px-2 transition-colors ${
           tool === "ink" ? "bg-[#3370ff] font-medium text-white" : "hover:bg-white/10"
         }`}
       >
         <PenTool size={13} />
-        <span>画笔</span>
+        <span>{t("画笔")}</span>
       </button>
 
       {tool === "ink" && (
         <>
           <span className="mx-0.5 h-4 w-px bg-white/15" aria-hidden="true" />
-          <div className="flex items-center gap-1 px-0.5" role="group" aria-label="画笔颜色">
+          <div className="flex items-center gap-1 px-0.5" role="group" aria-label={t("画笔颜色")}>
             {PRESENTER_INK_COLORS.map((color) => {
               const selected = inkColor.toLowerCase() === color.toLowerCase();
               return (
@@ -490,7 +491,7 @@ export function PresenterToolDock({
                   key={color}
                   type="button"
                   data-presenter-ink-color={color}
-                  aria-label={`画笔颜色 ${color}`}
+                  aria-label={t("画笔颜色 {color}", { color })}
                   aria-pressed={selected}
                   onClick={() => onInkColorChange(color)}
                   className={`size-5 rounded-full border transition-transform ${
@@ -508,14 +509,14 @@ export function PresenterToolDock({
       <button
         type="button"
         data-presenter-clear-ink
-        aria-label="清除标注"
-        title="清除当前页画笔标注"
+        aria-label={t("清除标注")}
+        title={t("清除当前页画笔标注")}
         disabled={!hasInk}
         onClick={onClearInk}
         className="flex h-7 items-center gap-1 rounded-lg px-2 text-[#e5e7eb] transition-colors hover:bg-white/10 disabled:opacity-35"
       >
         <Eraser size={13} />
-        <span>清除标注</span>
+        <span>{t("清除标注")}</span>
       </button>
     </div>
   );
@@ -684,7 +685,7 @@ export function PresenterView({
   return <div className="flex h-full min-h-0 w-full flex-col bg-[#111214] text-white" data-presenter-view>
     <style>{`${SLIDE_TRANSITION_KEYFRAMES_CSS}\n${SLIDE_ANIMATION_KEYFRAMES_CSS}`}</style>
     <header className="flex h-16 shrink-0 items-center gap-3 px-4">
-      <button type="button" onClick={onExit} aria-label="退出演示者视图" className="grid size-9 place-items-center rounded-lg bg-[#2b2d30] hover:bg-[#3b3d42]"><X size={18}/></button>
+      <button type="button" onClick={onExit} aria-label={t("退出演示者视图")} className="grid size-9 place-items-center rounded-lg bg-[#2b2d30] hover:bg-[#3b3d42]"><X size={18}/></button>
       {onToggleSyncAudience && (
         <button
           type="button"
@@ -701,7 +702,7 @@ export function PresenterView({
           <span>{syncAudience ? t("已同步放映给观众") : t("同步放映给观众")}</span>
         </button>
       )}
-      <div className="ml-auto flex h-9 items-center gap-2 rounded-lg bg-[#292a2d] px-3 text-[13px] tabular-nums" aria-label="演示计时"><span>{formatPresentationTime(seconds)}</span><button type="button" aria-label={running ? "暂停计时" : "继续计时"} onClick={() => setRunning((value) => !value)}>{running ? <Pause size={15}/> : <Play size={15}/>}</button><button type="button" aria-label="重置计时" onClick={() => { setSeconds(0); setTimerEpoch((epoch) => epoch + 1); }}><RotateCcw size={15}/></button></div>
+      <div className="ml-auto flex h-9 items-center gap-2 rounded-lg bg-[#292a2d] px-3 text-[13px] tabular-nums" aria-label={t("演示计时")}><span>{formatPresentationTime(seconds)}</span><button type="button" aria-label={running ? t("暂停计时") : t("继续计时")} onClick={() => setRunning((value) => !value)}>{running ? <Pause size={15}/> : <Play size={15}/>}</button><button type="button" aria-label={t("重置计时")} onClick={() => { setSeconds(0); setTimerEpoch((epoch) => epoch + 1); }}><RotateCcw size={15}/></button></div>
     </header>
     <div className="flex min-h-0 flex-1 flex-col gap-4 px-4 pb-4 md:flex-row">
       <div className="flex min-h-0 min-w-0 flex-[3] flex-col gap-3">
@@ -736,17 +737,17 @@ export function PresenterView({
         </div>
         <div className="flex shrink-0 flex-wrap items-center justify-center gap-3 text-[13px]">
           <div className="flex items-center gap-3">
-            <button type="button" aria-label="上一页" disabled={!canGoPrev} onClick={handlePrev} className="rounded p-1 hover:bg-white/10 disabled:opacity-30"><ChevronLeft size={18}/></button>
+            <button type="button" aria-label={t("上一页")} disabled={!canGoPrev} onClick={handlePrev} className="rounded p-1 hover:bg-white/10 disabled:opacity-30"><ChevronLeft size={18}/></button>
             <span className="tabular-nums">{index + 1} / {pages.length}</span>
             {totalAnimSteps > 0 && (
               <span
                 data-presenter-anim-step
                 className="rounded-md bg-[#3370ff]/20 px-2 py-0.5 text-[11px] font-medium tabular-nums text-[#94bfff]"
               >
-                动画 {animStep}/{totalAnimSteps}
+                {t("动画 {step}/{total}", { step: animStep, total: totalAnimSteps })}
               </span>
             )}
-            <button type="button" aria-label="下一页" disabled={!canGoNext} onClick={handleNext} className="rounded p-1 hover:bg-white/10 disabled:opacity-30"><ChevronRight size={18}/></button>
+            <button type="button" aria-label={t("下一页")} disabled={!canGoNext} onClick={handleNext} className="rounded p-1 hover:bg-white/10 disabled:opacity-30"><ChevronRight size={18}/></button>
           </div>
           <PresenterToolDock
             tool={tool}
@@ -757,9 +758,9 @@ export function PresenterView({
             onClearInk={() => setInkByPage((prev) => clearSlideInk(prev, currentId))}
           />
         </div>
-        <div className="flex max-h-24 shrink-0 justify-center gap-2 overflow-x-auto pb-1" aria-label="放映页面">{pages.map((page, i) => <button key={page.id} type="button" aria-label={`跳转到第 ${i + 1} 张`} aria-current={page.id === currentId ? "true" : undefined} onClick={() => { onSelect(page.id); setAnimStep(0); }} className={`w-28 shrink-0 overflow-hidden rounded border-2 ${page.id === currentId ? "border-[#3370ff]" : "border-transparent"}`}><SlideSurface content={contentFor(page)} textStyle={textStyles?.[page.id]} master={masters?.[page.id]} slideIndex={i} totalSlides={pages.length}/></button>)}</div>
+        <div className="flex max-h-24 shrink-0 justify-center gap-2 overflow-x-auto pb-1" aria-label={t("放映页面")}>{pages.map((page, i) => <button key={page.id} type="button" aria-label={t("跳转到第 {n} 张", { n: i + 1 })} aria-current={page.id === currentId ? "true" : undefined} onClick={() => { onSelect(page.id); setAnimStep(0); }} className={`w-28 shrink-0 overflow-hidden rounded border-2 ${page.id === currentId ? "border-[#3370ff]" : "border-transparent"}`}><SlideSurface content={contentFor(page)} textStyle={textStyles?.[page.id]} master={masters?.[page.id]} slideIndex={i} totalSlides={pages.length}/></button>)}</div>
       </div>
-      <aside className="min-h-32 min-w-0 flex-[2] overflow-auto rounded-xl bg-[#252629] p-4 text-[14px] text-[#dee0e3]" aria-label="演示者备注"><div className="border-b border-white/10 pb-3 font-medium">演示者备注</div><p className="mt-4 whitespace-pre-wrap break-words">{content.notes || "暂无备注"}</p></aside>
+      <aside className="min-h-32 min-w-0 flex-[2] overflow-auto rounded-xl bg-[#252629] p-4 text-[14px] text-[#dee0e3]" aria-label={t("演示者备注")}><div className="border-b border-white/10 pb-3 font-medium">{t("演示者备注")}</div><p className="mt-4 whitespace-pre-wrap break-words">{content.notes || t("暂无备注")}</p></aside>
     </div>
   </div>;
 }

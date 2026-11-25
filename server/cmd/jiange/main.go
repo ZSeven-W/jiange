@@ -1,7 +1,10 @@
 // Command jiange runs the Jiange API server.
 //
-//	jiange            run migrations and serve
-//	jiange migrate    run migrations and exit
+//	jiange                                  run migrations and serve
+//	jiange migrate                          run migrations and exit
+//	jiange backup <out.tar.gz>              export database and blobs
+//	jiange restore <in.tar.gz>              restore database and blobs
+//	jiange reindex-attachments [wsId]       backfill attachment full-text / OCR index
 package main
 
 import (
@@ -11,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -112,6 +116,38 @@ func run(log *slog.Logger) error {
 				return err
 			}
 			log.Info("backup restored", "path", os.Args[2], "tables", len(manifest.Tables), "blobs", manifest.BlobCount)
+			return nil
+		case "reindex-attachments":
+			var wsID int64
+			if len(os.Args) >= 3 {
+				parsed, err := strconv.ParseInt(os.Args[2], 10, 64)
+				if err != nil || parsed < 0 {
+					return errors.New("usage: jiange reindex-attachments [workspaceId]")
+				}
+				wsID = parsed
+			}
+			var reindexBlobs blob.Store
+			switch {
+			case cfg.BlobDir != "":
+				dir, err := blob.NewDir(cfg.BlobDir)
+				if err != nil {
+					return err
+				}
+				reindexBlobs = dir
+			case cfg.S3Endpoint != "":
+				s3 := &blob.S3{Endpoint: cfg.S3Endpoint, Bucket: cfg.S3Bucket, AccessKey: cfg.S3AccessKey, SecretKey: cfg.S3SecretKey}
+				if err := s3.EnsureBucket(ctx); err != nil {
+					return err
+				}
+				reindexBlobs = s3
+			default:
+				return errors.New("blob storage not configured (set JIANGE_BLOB_DIR or JIANGE_S3_ENDPOINT)")
+			}
+			stats, err := api.ReindexAttachments(ctx, pg, reindexBlobs, wsID)
+			if err != nil {
+				return err
+			}
+			log.Info("attachments reindexed", "workspaceId", wsID, "scanned", stats.Scanned, "indexed", stats.Indexed, "skipped", stats.Skipped, "failed", stats.Failed)
 			return nil
 		}
 	}

@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CheckCircle2,
+  Database,
   Download,
   FileSearch,
+  HardDrive,
   Plus,
   RefreshCw,
   Save,
@@ -18,12 +20,14 @@ import {
 import { ApiError } from "@/lib/api";
 import {
   enterpriseApi,
+  type AttachmentReindexStats,
   type AuditLogEntry,
   type AuditLogPage,
   type DlpAction,
   type DlpCheckResult,
   type RetentionPurgeStats,
   type WorkspaceSecurityPolicy,
+  type WorkspaceStorageUsage,
 } from "@/lib/enterprise-api";
 import {
   DEFAULT_WATERMARK_OPACITY,
@@ -43,6 +47,41 @@ export const MAX_DLP_KEYWORD_RUNES = 120;
 export const DLP_ID_REGEX = "/\\b\\d{17}[\\dXx]\\b/";
 export const DLP_PHONE_REGEX = "/\\b1[3-9]\\d{9}\\b/";
 export const RETENTION_PRESET_DAYS = [0, 30, 90, 180, 365] as const;
+
+export const workspaceStorageQueryKey = (workspaceId: number, userId: number) =>
+  ["workspace-storage-usage", workspaceId, userId] as const;
+
+export function formatStorageBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"] as const;
+  let value = bytes;
+  let idx = 0;
+  while (value >= 1024 && idx < units.length - 1) {
+    value /= 1024;
+    idx += 1;
+  }
+  if (idx === 0) return `${Math.round(value)} B`;
+  const formatted = value >= 100 ? value.toFixed(0) : value >= 10 ? value.toFixed(1) : value.toFixed(2);
+  return `${formatted.replace(/\.00$/, "").replace(/(\.\d)0$/, "$1")} ${units[idx]}`;
+}
+
+type StorageQuotaUnit = "unlimited" | "MB" | "GB";
+
+const STORAGE_MIB = 1024 * 1024;
+const STORAGE_GIB = 1024 * 1024 * 1024;
+
+function deriveQuotaForm(quotaBytes: number): { unit: StorageQuotaUnit; amount: string } {
+  if (!Number.isFinite(quotaBytes) || quotaBytes <= 0) {
+    return { unit: "unlimited", amount: "10" };
+  }
+  if (quotaBytes >= STORAGE_GIB) {
+    const gb = quotaBytes / STORAGE_GIB;
+    const rounded = Number.isInteger(gb) ? String(gb) : String(Number(gb.toFixed(2)));
+    return { unit: "GB", amount: rounded };
+  }
+  const mb = Math.max(1, Math.round(quotaBytes / STORAGE_MIB));
+  return { unit: "MB", amount: String(mb) };
+}
 
 export const auditLogsQueryKey = (
   workspaceId: number,
@@ -89,6 +128,8 @@ export const KNOWN_AUDIT_ACTIONS = [
   "org.sso_update",
   "org.sync_run",
   "base.permissions_update",
+  "workspace.storage_quota_updated",
+  "workspace.attachments_reindexed",
   "audit.export",
 ] as const;
 
@@ -165,6 +206,10 @@ export function formatAuditActionLabel(action: string): string {
       return t("执行目录同步");
     case "base.permissions_update":
       return t("变更表格权限");
+    case "workspace.storage_quota_updated":
+      return t("调整存储配额");
+    case "workspace.attachments_reindexed":
+      return t("重建附件索引");
     case "audit.export":
       return t("导出审计日志");
     default:
@@ -182,6 +227,8 @@ export function formatAuditResourceTypeLabel(resourceType: string): string {
       return t("多维表格");
     case "slides":
       return t("演示文稿");
+    case "file":
+      return t("云盘文件");
     case "wiki":
       return t("知识库");
     case "workspace":
@@ -265,6 +312,16 @@ export function OrgAuditPanel({
   const [retentionResult, setRetentionResult] = useState<RetentionPurgeStats | null>(null);
   const [retentionError, setRetentionError] = useState("");
 
+  // Storage usage, quota & attachment reindex state
+  const [quotaUnitOverride, setQuotaUnitOverride] = useState<StorageQuotaUnit | null>(null);
+  const [quotaAmountOverride, setQuotaAmountOverride] = useState<string | null>(null);
+  const [savingQuota, setSavingQuota] = useState(false);
+  const [quotaError, setQuotaError] = useState("");
+  const [quotaNotice, setQuotaNotice] = useState("");
+  const [reindexing, setReindexing] = useState(false);
+  const [reindexResult, setReindexResult] = useState<AttachmentReindexStats | null>(null);
+  const [reindexError, setReindexError] = useState("");
+
   // Audit filter & pagination state
   const [searchInput, setSearchInput] = useState("");
   const [actionFilter, setActionFilter] = useState("");
@@ -280,6 +337,12 @@ export function OrgAuditPanel({
     setDlpTestError("");
     setRetentionResult(null);
     setRetentionError("");
+    setQuotaUnitOverride(null);
+    setQuotaAmountOverride(null);
+    setQuotaError("");
+    setQuotaNotice("");
+    setReindexResult(null);
+    setReindexError("");
     setSearchInput("");
     setActionFilter("");
     setResourceFilter("");
@@ -346,6 +409,37 @@ export function OrgAuditPanel({
     q: trimmedQuery,
     offset,
   });
+
+  const storageKey = workspaceStorageQueryKey(workspaceId, userId);
+  const storageQuery = useQuery<WorkspaceStorageUsage>({
+    queryKey: storageKey,
+    queryFn: ({ signal }) => enterpriseApi.getWorkspaceStorage(workspaceId, userId, signal),
+    enabled: workspaceId > 0 && canAdmin,
+  });
+
+  const storageUsage = storageQuery.data;
+  const derivedQuota = useMemo(
+    () => deriveQuotaForm(storageUsage?.quotaBytes ?? 0),
+    [storageUsage?.quotaBytes],
+  );
+  const quotaUnit: StorageQuotaUnit = quotaUnitOverride ?? derivedQuota.unit;
+  const quotaAmount = quotaAmountOverride ?? derivedQuota.amount;
+
+  const quotaUnitOptions = useMemo<FeishuSelectOption[]>(
+    () => [
+      { value: "unlimited", label: t("不限制") },
+      { value: "MB", label: "MB" },
+      { value: "GB", label: "GB" },
+    ],
+    [t],
+  );
+
+  const storageUsedBytes = storageUsage?.usedBytes ?? 0;
+  const storageQuotaBytes = storageUsage?.quotaBytes ?? 0;
+  const storageRatio =
+    storageQuotaBytes > 0 ? Math.min(1, Math.max(0, storageUsedBytes / storageQuotaBytes)) : 0;
+  const storagePercent = storageQuotaBytes > 0 ? Math.round((storageUsedBytes / storageQuotaBytes) * 100) : 0;
+  const storageBarPercent = storageQuotaBytes > 0 ? Math.min(100, Math.round(storageRatio * 100)) : 0;
 
   const auditQuery = useQuery<AuditLogPage>({
     queryKey: auditKey,
@@ -449,6 +543,9 @@ export function OrgAuditPanel({
       qc.setQueryData(policyKey, saved);
       setDraftOverride(null);
       await qc.invalidateQueries({ queryKey: ["workspace-audit-logs", workspaceId] });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("jiange:mfa-updated"));
+      }
       setNotice(t("安全策略已保存并同步至全套件"));
     } catch (e) {
       if (e instanceof ApiError) setError(e.message);
@@ -554,6 +651,78 @@ export function OrgAuditPanel({
       else setRetentionError(t("执行数据保留清理失败"));
     } finally {
       setRunningRetention(false);
+    }
+  };
+
+  const handleSaveQuota = async () => {
+    if (!canAdmin || savingQuota || !workspaceId) return;
+    setQuotaError("");
+    setQuotaNotice("");
+    setError("");
+
+    let nextQuotaBytes = 0;
+    if (quotaUnit !== "unlimited") {
+      const parsed = Number(quotaAmount.trim());
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        setQuotaError(t("请输入大于 0 的有效配额数值"));
+        return;
+      }
+      nextQuotaBytes = Math.round(parsed * (quotaUnit === "GB" ? STORAGE_GIB : STORAGE_MIB));
+      if (!Number.isSafeInteger(nextQuotaBytes) || nextQuotaBytes <= 0) {
+        setQuotaError(t("请输入大于 0 的有效配额数值"));
+        return;
+      }
+    }
+
+    setSavingQuota(true);
+    try {
+      const updated = await enterpriseApi.updateWorkspaceStorageQuota(
+        workspaceId,
+        nextQuotaBytes,
+        userId,
+      );
+      qc.setQueryData(storageKey, updated);
+      setQuotaUnitOverride(null);
+      setQuotaAmountOverride(null);
+      await qc.invalidateQueries({ queryKey: ["workspace-audit-logs", workspaceId] });
+      setQuotaNotice(t("存储配额已更新"));
+      setNotice(t("存储配额已更新"));
+    } catch (e) {
+      if (e instanceof ApiError) setQuotaError(e.message);
+      else if (e instanceof Error) setQuotaError(e.message);
+      else setQuotaError(t("保存存储配额失败"));
+    } finally {
+      setSavingQuota(false);
+    }
+  };
+
+  const handleReindexAttachments = async () => {
+    if (!canAdmin || reindexing || !workspaceId) return;
+    setReindexing(true);
+    setReindexError("");
+    setReindexResult(null);
+    setError("");
+    try {
+      const stats = await enterpriseApi.reindexWorkspaceAttachments(workspaceId, userId);
+      setReindexResult(stats);
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: storageKey }),
+        qc.invalidateQueries({ queryKey: ["workspace-audit-logs", workspaceId] }),
+      ]);
+      setNotice(
+        t("附件索引重建完成：扫描 {scanned} 个、成功索引 {indexed} 个、跳过 {skipped} 个、失败 {failed} 个", {
+          scanned: stats.scanned,
+          indexed: stats.indexed,
+          skipped: stats.skipped,
+          failed: stats.failed,
+        }),
+      );
+    } catch (e) {
+      if (e instanceof ApiError) setReindexError(e.message);
+      else if (e instanceof Error) setReindexError(e.message);
+      else setReindexError(t("重建附件全文索引失败"));
+    } finally {
+      setReindexing(false);
     }
   };
 
@@ -1192,6 +1361,317 @@ export function OrgAuditPanel({
           )}
         </div>
       </section>
+
+      {/* Section 2.5: Workspace Storage Usage, Quota Enforcement & Attachment Full-Text Index */}
+      {canAdmin && (
+        <section className="rounded-lg border bg-surface p-4" data-storage-usage-card="">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3">
+            <div>
+              <h2 className="flex items-center gap-1.5 text-[15px] font-semibold">
+                <HardDrive size={16} className="text-primary" aria-hidden />
+                {t("存储空间与附件索引")}
+              </h2>
+              <p className="mt-0.5 text-[12px] text-subtle">
+                {t("监控空间附件存储用量、配置存储容量配额，并一键回溯重建附件与图片 OCR 全文索引。")}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void storageQuery.refetch()}
+                disabled={storageQuery.isFetching}
+                data-storage-refresh=""
+                className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-2.5 text-[12px] transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw
+                  size={13}
+                  className={cn(storageQuery.isFetching && "animate-spin")}
+                  aria-hidden
+                />
+                {t("刷新")}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleReindexAttachments()}
+                disabled={reindexing}
+                data-storage-reindex-btn=""
+                className="inline-flex h-8 shrink-0 cursor-pointer items-center gap-1.5 rounded-md border bg-surface px-3 text-[12px] font-medium transition-colors hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Database
+                  size={13}
+                  className={cn(reindexing && "animate-pulse")}
+                  aria-hidden
+                />
+                {reindexing ? t("重建中…") : t("重建附件全文索引")}
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-4 space-y-4">
+            {storageQuery.isLoading ? (
+              <p className="py-4 text-[13px] text-subtle">{t("正在加载存储空间用量…")}</p>
+            ) : storageQuery.isError ? (
+              <p className="py-2 text-[13px] text-destructive" role="alert">
+                {storageQuery.error instanceof Error
+                  ? storageQuery.error.message
+                  : t("加载存储空间用量失败")}
+              </p>
+            ) : (
+              <>
+                {/* Usage bar + attachment index coverage */}
+                <div className="rounded-md border bg-background/60 p-3.5 space-y-2.5">
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <div className="flex flex-wrap items-baseline gap-2">
+                      <span className="text-[12px] font-medium text-subtle">{t("已用空间")}</span>
+                      <span className="font-mono text-[15px] font-semibold text-foreground" data-storage-used-label="">
+                        {formatStorageBytes(storageUsedBytes)}
+                      </span>
+                      <span className="text-[13px] text-subtle">/</span>
+                      <span className="font-mono text-[13px] text-muted-foreground" data-storage-quota-label="">
+                        {storageQuotaBytes > 0 ? formatStorageBytes(storageQuotaBytes) : t("无限制")}
+                      </span>
+                      {storageQuotaBytes > 0 && (
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 font-mono text-[11px] font-medium",
+                            storagePercent >= 95
+                              ? "bg-[#fde2e2] text-[#d83931] dark:bg-[#4c1d1d] dark:text-[#ff7875]"
+                              : storagePercent > 80
+                                ? "bg-[#fff3e0] text-[#c26a00] dark:bg-[#4a2f0b] dark:text-[#ffb74d]"
+                                : "bg-[#e1eaff] text-[#1456f0] dark:bg-[#1d3461] dark:text-[#6698ff]",
+                          )}
+                        >
+                          {t("已用 {percent}%", { percent: storagePercent })}
+                        </span>
+                      )}
+                    </div>
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full border bg-surface px-2.5 py-0.5 text-[12px] text-muted-foreground"
+                      data-storage-indexed-badge=""
+                    >
+                      <Database size={12} className="text-primary" aria-hidden />
+                      {t("已索引 {indexed} / {total} 个附件", {
+                        indexed: storageUsage?.indexedCount ?? 0,
+                        total: storageUsage?.attachmentCount ?? 0,
+                      })}
+                    </span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div
+                    role="progressbar"
+                    aria-label={t("存储用量占比")}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={storageQuotaBytes > 0 ? storageBarPercent : 0}
+                    data-storage-progress=""
+                    className="h-2.5 w-full overflow-hidden rounded-full bg-muted"
+                  >
+                    <div
+                      className={cn(
+                        "h-full rounded-full transition-all",
+                        storageQuotaBytes <= 0
+                          ? "bg-primary/35"
+                          : storagePercent >= 95
+                            ? "bg-[#d83931] dark:bg-[#ff7875]"
+                            : storagePercent > 80
+                              ? "bg-[#de7802] dark:bg-[#ffb74d]"
+                              : "bg-primary",
+                      )}
+                      style={{
+                        width:
+                          storageQuotaBytes > 0
+                            ? `${Math.max(storageUsedBytes > 0 ? 2 : 0, storageBarPercent)}%`
+                            : storageUsedBytes > 0
+                              ? "18%"
+                              : "0%",
+                      }}
+                    />
+                  </div>
+
+                  {storageQuotaBytes > 0 && storagePercent >= 95 && (
+                    <p className="text-[12px] font-medium text-[#d83931] dark:text-[#ff7875]">
+                      {t("配额即将耗尽：空间用量已达 95% 以上")}
+                    </p>
+                  )}
+                  {storageQuotaBytes > 0 && storagePercent > 80 && storagePercent < 95 && (
+                    <p className="text-[12px] font-medium text-[#c26a00] dark:text-[#ffb74d]">
+                      {t("高水位告警：空间用量已超过 80%")}
+                    </p>
+                  )}
+
+                  {/* Kind breakdown pills */}
+                  <div className="pt-1">
+                    <p className="mb-1.5 text-[11px] font-medium text-subtle">{t("按类型分布")}</p>
+                    {(storageUsage?.byKind ?? []).length === 0 ? (
+                      <span className="text-[12px] text-subtle">{t("暂无附件占用记录")}</span>
+                    ) : (
+                      <div className="flex flex-wrap items-center gap-1.5" data-storage-by-kind="">
+                        {(storageUsage?.byKind ?? []).map((bk) => (
+                          <span
+                            key={bk.kind}
+                            className="inline-flex items-center gap-1.5 rounded-full border bg-surface px-2.5 py-0.5 text-[12px] text-foreground"
+                          >
+                            <span className="font-medium">{formatAuditResourceTypeLabel(bk.kind)}</span>
+                            <span className="font-mono text-[11px] text-subtle">
+                              {bk.count} · {formatStorageBytes(bk.bytes)}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Reindex feedback */}
+                {reindexError && (
+                  <p className="text-[12px] text-destructive" role="alert" data-storage-reindex-error="">
+                    {reindexError}
+                  </p>
+                )}
+                {reindexResult && (
+                  <p
+                    className="inline-flex items-center gap-1.5 text-[12px] font-medium text-[#008026] dark:text-[#52c41a]"
+                    role="status"
+                    data-storage-reindex-result=""
+                  >
+                    <CheckCircle2 size={13} aria-hidden />
+                    {t("附件索引重建完成：扫描 {scanned} 个、成功索引 {indexed} 个、跳过 {skipped} 个、失败 {failed} 个", {
+                      scanned: reindexResult.scanned,
+                      indexed: reindexResult.indexed,
+                      skipped: reindexResult.skipped,
+                      failed: reindexResult.failed,
+                    })}
+                  </p>
+                )}
+
+                {/* Top largest attachments list */}
+                {(storageUsage?.topAttachments ?? []).length > 0 && (
+                  <div className="space-y-1.5" data-storage-top-attachments="">
+                    <p className="text-[12px] font-medium text-foreground">
+                      {t("最大附件 Top {count}", { count: storageUsage!.topAttachments.length })}
+                    </p>
+                    <div className="overflow-x-auto rounded-md border">
+                      <table className="w-full min-w-[520px] border-collapse text-left text-[12px]">
+                        <thead>
+                          <tr className="border-b bg-muted/50 text-[11px] text-muted-foreground">
+                            <th className="px-3 py-1.5 font-medium">{t("文件名")}</th>
+                            <th className="px-3 py-1.5 font-medium">{t("所属文档")}</th>
+                            <th className="px-3 py-1.5 text-right font-medium">{t("大小")}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {storageUsage!.topAttachments.map((att) => (
+                            <tr
+                              key={att.id}
+                              className="border-b last:border-b-0 transition-colors hover:bg-hover/40"
+                            >
+                              <td className="max-w-[220px] px-3 py-1.5">
+                                <div className="truncate font-medium text-foreground" title={att.name}>
+                                  {att.name}
+                                </div>
+                                {att.mime && (
+                                  <div className="truncate font-mono text-[10px] text-subtle">
+                                    {att.mime}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="max-w-[200px] px-3 py-1.5">
+                                <div className="flex items-center gap-1.5">
+                                  <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                                    {formatAuditResourceTypeLabel(att.docKind)}
+                                  </span>
+                                  <span className="truncate text-muted-foreground" title={att.docTitle}>
+                                    {att.docTitle || `#${att.docId}`}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="whitespace-nowrap px-3 py-1.5 text-right font-mono text-foreground">
+                                {formatStorageBytes(att.size)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Quota configuration control */}
+                <div className="space-y-2 rounded-md border bg-background/60 p-3">
+                  <p className="text-[12px] font-medium text-foreground">{t("空间存储配额")}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="w-[140px]">
+                      <FeishuSelect
+                        ariaLabel={t("选择存储配额单位")}
+                        value={quotaUnit}
+                        options={quotaUnitOptions}
+                        disabled={savingQuota}
+                        onChange={(val) => {
+                          const next: StorageQuotaUnit =
+                            val === "MB" || val === "GB" ? val : "unlimited";
+                          setQuotaUnitOverride(next);
+                          setQuotaError("");
+                          setQuotaNotice("");
+                        }}
+                        className="h-9 w-full border"
+                        menuMinWidth={140}
+                        dataAttr={{ "data-storage-quota-unit-select": true }}
+                      />
+                    </div>
+                    {quotaUnit !== "unlimited" && (
+                      <input
+                        type="number"
+                        min={1}
+                        step="any"
+                        value={quotaAmount}
+                        disabled={savingQuota}
+                        aria-label={t("输入配额数值")}
+                        placeholder={t("输入配额数值")}
+                        onChange={(e) => {
+                          setQuotaAmountOverride(e.target.value);
+                          setQuotaError("");
+                          setQuotaNotice("");
+                        }}
+                        data-storage-quota-input=""
+                        className="h-9 w-[140px] rounded-md border bg-surface px-3 font-mono text-[13px] placeholder:text-subtle disabled:cursor-not-allowed disabled:opacity-60"
+                      />
+                    )}
+                    <button
+                      type="button"
+                      disabled={savingQuota}
+                      onClick={() => void handleSaveQuota()}
+                      data-storage-quota-save=""
+                      className="inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-md bg-primary px-3 text-[12px] font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Save size={13} aria-hidden />
+                      {savingQuota ? t("保存中…") : t("保存配额")}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-subtle">
+                    {t("达到配额上限后，新上传的云盘文件与文档附件将被拦截，设为「不限制」则不设上限。")}
+                  </p>
+                  {quotaError && (
+                    <p className="text-[12px] text-destructive" role="alert" data-storage-quota-error="">
+                      {quotaError}
+                    </p>
+                  )}
+                  {quotaNotice && (
+                    <p
+                      className="inline-flex items-center gap-1 text-[12px] font-medium text-[#008026] dark:text-[#52c41a]"
+                      role="status"
+                      data-storage-quota-notice=""
+                    >
+                      <CheckCircle2 size={13} aria-hidden />
+                      {quotaNotice}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+      )}
 
       {/* Section 3: Enterprise Security Audit Logs */}
       <section className="rounded-lg border bg-surface p-4" data-audit-logs-section="">

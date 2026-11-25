@@ -102,30 +102,30 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
   const posterUrlSafe = isSafeSlideMediaUrl(posterUrlInput.trim());
 
   const controls = [
-    { name: "宽度", label: "图形宽度", value: shape.width ?? 16, min: 5, max: 100, unit: "%", set: (n: number) => ({ width: n }) },
-    { name: "高度", label: "图形高度", value: shape.height ?? 20, min: 5, max: 100, unit: "%", set: (n: number) => ({ height: n }) },
-    { name: "旋转", label: "图形旋转角度", value: shape.rotation ?? 0, min: 0, max: 359, unit: "°", set: (n: number) => ({ rotation: n }) },
+    { name: t("宽度"), label: t("图形宽度"), value: shape.width ?? 16, min: 5, max: 100, unit: "%", set: (n: number) => ({ width: n }) },
+    { name: t("高度"), label: t("图形高度"), value: shape.height ?? 20, min: 5, max: 100, unit: "%", set: (n: number) => ({ height: n }) },
+    { name: t("旋转"), label: t("图形旋转角度"), value: shape.rotation ?? 0, min: 0, max: 359, unit: "°", set: (n: number) => ({ rotation: n }) },
   ];
-  const orders: [ShapeOrderAction, string, typeof BringToFront][] = [["front", "置于顶层", BringToFront], ["forward", "上移一层", ChevronUp], ["backward", "下移一层", ChevronDown], ["back", "置于底层", SendToBack]];
-  const alignments: [ShapeAlignment, string, typeof BringToFront][] = [["left", "左对齐到页面", AlignStartHorizontal], ["hcenter", "水平居中到页面", AlignCenterHorizontal], ["right", "右对齐到页面", AlignEndHorizontal], ["top", "顶对齐到页面", AlignStartVertical], ["vcenter", "垂直居中到页面", AlignCenterVertical], ["bottom", "底对齐到页面", AlignEndVertical]];
+  const orders: [ShapeOrderAction, string, typeof BringToFront][] = [["front", t("置于顶层"), BringToFront], ["forward", t("上移一层"), ChevronUp], ["backward", t("下移一层"), ChevronDown], ["back", t("置于底层"), SendToBack]];
+  const alignments: [ShapeAlignment, string, typeof BringToFront][] = [["left", t("左对齐到页面"), AlignStartHorizontal], ["hcenter", t("水平居中到页面"), AlignCenterHorizontal], ["right", t("右对齐到页面"), AlignEndHorizontal], ["top", t("顶对齐到页面"), AlignStartVertical], ["vcenter", t("垂直居中到页面"), AlignCenterVertical], ["bottom", t("底对齐到页面"), AlignEndVertical]];
   const groupAriaLabel = text
-    ? "文本框格式"
+    ? t("文本框格式")
     : image
-      ? "图片格式"
+      ? t("图片格式")
       : video
         ? t("视频格式")
         : audio
           ? t("音频格式")
-          : "图形格式";
+          : t("图形格式");
   const deleteLabel = text
-    ? "删除文本框"
+    ? t("删除文本框")
     : image
-      ? "删除图片"
+      ? t("删除图片")
       : video
         ? t("删除视频")
         : audio
           ? t("删除音频")
-          : "删除图形";
+          : t("删除图形");
 
   return (
     <div
@@ -138,10 +138,10 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
         aria-label={groupAriaLabel}
       >
         {!image && !media && (
-          <label className="relative flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 hover:bg-[#f2f3f5]" title={text ? "文字颜色" : "图形颜色"}>
-            <span>颜色</span>
+          <label className="relative flex cursor-pointer items-center gap-1 rounded px-1 py-0.5 hover:bg-[#f2f3f5]" title={text ? t("文字颜色") : t("图形颜色")}>
+            <span>{t("颜色")}</span>
             <span className="size-4 rounded border border-[#d0d3d6] shadow-2xs" style={{ backgroundColor: shape.color }} />
-            <input type="color" aria-label={text ? "文字颜色" : "图形颜色"} value={shape.color} onChange={(event) => onChange({ color: event.target.value })} className="sr-only" />
+            <input type="color" aria-label={text ? t("文字颜色") : t("图形颜色")} value={shape.color} onChange={(event) => onChange({ color: event.target.value })} className="sr-only" />
           </label>
         )}
         {image && (
@@ -204,15 +204,15 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
         {text && (
           <>
             <label className="flex items-center gap-1">
-              字号
-              <input type="number" aria-label="文字字号" min={12} max={96} value={shape.fontSize ?? 24} onChange={(event) => { const n = event.target.valueAsNumber; if (Number.isFinite(n)) onChange({ fontSize: Math.max(12, Math.min(96, n)) }); }} className="h-6 w-11 rounded border border-[#d0d3d6] px-1 text-[12px] outline-none focus:border-[#3370ff]" />
+              {t("字号")}
+              <input type="number" aria-label={t("文字字号")} min={12} max={96} value={shape.fontSize ?? 24} onChange={(event) => { const n = event.target.valueAsNumber; if (Number.isFinite(n)) onChange({ fontSize: Math.max(12, Math.min(96, n)) }); }} className="h-6 w-11 rounded border border-[#d0d3d6] px-1 text-[12px] outline-none focus:border-[#3370ff]" />
             </label>
-            <button type="button" aria-label="加粗文字" aria-pressed={!!shape.bold} onClick={() => onChange({ bold: !shape.bold })} className={`grid size-6 place-items-center rounded font-bold ${shape.bold ? "bg-[#e8efff] text-[#3370ff]" : "hover:bg-[#f2f3f5]"}`}>B</button>
+            <button type="button" aria-label={t("加粗文字")} aria-pressed={!!shape.bold} onClick={() => onChange({ bold: !shape.bold })} className={`grid size-6 place-items-center rounded font-bold ${shape.bold ? "bg-[#e8efff] text-[#3370ff]" : "hover:bg-[#f2f3f5]"}`}>B</button>
             <FeishuSelect
-              ariaLabel="文字对齐"
-              title="文字对齐"
+              ariaLabel={t("文字对齐")}
+              title={t("文字对齐")}
               value={shape.align ?? "left"}
-              options={[{ value: "left", label: "左对齐" }, { value: "center", label: "居中" }, { value: "right", label: "右对齐" }]}
+              options={[{ value: "left", label: t("左对齐") }, { value: "center", label: t("居中") }, { value: "right", label: t("右对齐") }]}
               onChange={(val) => onChange({ align: val as "left" | "center" | "right" })}
               className="h-6 border border-[#d0d3d6] px-1.5 text-[12px]"
               chevronSize={11}
@@ -229,11 +229,11 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
           </label>
         ))}
         <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
-        <div className="flex items-center gap-0.5" role="group" aria-label="对象层级">{orders.map(([action, label, Icon]) => <button key={action} type="button" aria-label={label} title={label} onClick={() => onOrder(action)} className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Icon size={13} /></button>)}</div>
+        <div className="flex items-center gap-0.5" role="group" aria-label={t("对象层级")}>{orders.map(([action, label, Icon]) => <button key={action} type="button" aria-label={label} title={label} onClick={() => onOrder(action)} className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Icon size={13} /></button>)}</div>
         <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
-        <div className="flex items-center gap-0.5" role="group" aria-label="对象对齐到页面">{alignments.map(([alignment, label, Icon]) => <button key={alignment} type="button" aria-label={label} title={label} onClick={() => onAlign(alignment)} className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Icon size={13} /></button>)}</div>
+        <div className="flex items-center gap-0.5" role="group" aria-label={t("对象对齐到页面")}>{alignments.map(([alignment, label, Icon]) => <button key={alignment} type="button" aria-label={label} title={label} onClick={() => onAlign(alignment)} className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5]"><Icon size={13} /></button>)}</div>
         <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
-        <button type="button" onClick={onDelete} title={deleteLabel} aria-label={deleteLabel} className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={13} /><span>删除</span></button>
+        <button type="button" onClick={onDelete} title={deleteLabel} aria-label={deleteLabel} className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"><Trash2 size={13} /><span>{t("删除")}</span></button>
       </div>
 
       {image && cropOpen && (
@@ -254,7 +254,7 @@ export function SlideShapeControls({ shape, onChange, onDelete, onOrder, onAlign
                   onClick={() => onChange({ crop: preset.crop })}
                   className="h-6 rounded border border-[#dee0e3] px-2 text-[11px] text-[#4e5969] hover:border-[#3370ff] hover:bg-[#edf2ff] hover:text-[#3370ff]"
                 >
-                  {preset.id === "free" ? t(preset.label) : preset.label}
+                  {preset.id === "free" ? t("自由") : preset.label}
                 </button>
               ))}
             </div>
@@ -398,52 +398,53 @@ export function SlideMultiShapeControls({
   onDistributeVertical: () => void;
   onDelete: () => void;
 }) {
+  const { t } = useI18n();
   const alignments: [ShapeAlignment, string, typeof AlignStartHorizontal][] = [
-    ["left", "左对齐", AlignStartHorizontal],
-    ["hcenter", "水平居中", AlignCenterHorizontal],
-    ["right", "右对齐", AlignEndHorizontal],
-    ["top", "顶对齐", AlignStartVertical],
-    ["vcenter", "垂直居中", AlignCenterVertical],
-    ["bottom", "底对齐", AlignEndVertical],
+    ["left", t("左对齐"), AlignStartHorizontal],
+    ["hcenter", t("水平居中"), AlignCenterHorizontal],
+    ["right", t("右对齐"), AlignEndHorizontal],
+    ["top", t("顶对齐"), AlignStartVertical],
+    ["vcenter", t("垂直居中"), AlignCenterVertical],
+    ["bottom", t("底对齐"), AlignEndVertical],
   ];
   const canDistribute = count >= 3;
   return (
     <div
       data-slides-multi-controls
       role="group"
-      aria-label="多选对象操作"
+      aria-label={t("多选对象操作")}
       onPointerDown={(e) => e.stopPropagation()}
       className="pointer-events-auto absolute left-1/2 top-2.5 z-20 flex max-w-[calc(100%-24px)] -translate-x-1/2 items-center gap-1.5 overflow-x-auto whitespace-nowrap rounded-lg border border-[#dee0e3] bg-white/95 px-2.5 py-1 text-[12px] text-[#4e5969] shadow-[0_4px_16px_rgba(31,35,41,0.12)] backdrop-blur-xs [&>*]:shrink-0"
     >
       <span className="rounded bg-[#e8efff] px-1.5 py-0.5 text-[11px] font-medium text-[#3370ff]">
-        已选 {count} 项
+        {t("已选 {count} 项", { count })}
       </span>
       <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
       {grouped ? (
         <button
           type="button"
-          aria-label="取消编组"
-          title="取消编组"
+          aria-label={t("取消编组")}
+          title={t("取消编组")}
           onClick={onUngroup}
           className="inline-flex h-6 items-center gap-1 rounded bg-[#e8efff] px-1.5 font-medium text-[#3370ff] hover:bg-[#d8e5ff]"
         >
           <Ungroup size={13} />
-          <span>取消编组</span>
+          <span>{t("取消编组")}</span>
         </button>
       ) : (
         <button
           type="button"
-          aria-label="编组"
-          title="编组"
+          aria-label={t("编组")}
+          title={t("编组")}
           onClick={onGroup}
           className="inline-flex h-6 items-center gap-1 rounded px-1.5 text-[#4e5969] hover:bg-[#f2f3f5]"
         >
           <Group size={13} />
-          <span>编组</span>
+          <span>{t("编组")}</span>
         </button>
       )}
       <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
-      <div className="flex items-center gap-0.5" role="group" aria-label="多选对齐">
+      <div className="flex items-center gap-0.5" role="group" aria-label={t("多选对齐")}>
         {alignments.map(([alignment, label, Icon]) => (
           <button
             key={alignment}
@@ -458,11 +459,11 @@ export function SlideMultiShapeControls({
         ))}
       </div>
       <span className="h-4 w-px bg-[#e5e6eb]" aria-hidden="true" />
-      <div className="flex items-center gap-0.5" role="group" aria-label="等距分布">
+      <div className="flex items-center gap-0.5" role="group" aria-label={t("等距分布")}>
         <button
           type="button"
-          aria-label="水平等距分布"
-          title={canDistribute ? "水平等距分布" : "水平等距分布（需选中至少 3 项）"}
+          aria-label={t("水平等距分布")}
+          title={canDistribute ? t("水平等距分布") : t("水平等距分布（需选中至少 3 项）")}
           disabled={!canDistribute}
           onClick={onDistributeHorizontal}
           className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-35"
@@ -471,8 +472,8 @@ export function SlideMultiShapeControls({
         </button>
         <button
           type="button"
-          aria-label="垂直等距分布"
-          title={canDistribute ? "垂直等距分布" : "垂直等距分布（需选中至少 3 项）"}
+          aria-label={t("垂直等距分布")}
+          title={canDistribute ? t("垂直等距分布") : t("垂直等距分布（需选中至少 3 项）")}
           disabled={!canDistribute}
           onClick={onDistributeVertical}
           className="grid size-6 place-items-center rounded text-[#646a73] hover:bg-[#f2f3f5] disabled:opacity-35"
@@ -484,12 +485,12 @@ export function SlideMultiShapeControls({
       <button
         type="button"
         onClick={onDelete}
-        title="批量删除"
-        aria-label="批量删除"
+        title={t("批量删除")}
+        aria-label={t("批量删除")}
         className="flex h-6 items-center gap-1 rounded px-1.5 text-[#d83931] hover:bg-[#fff2f0]"
       >
         <Trash2 size={13} />
-        <span>批量删除</span>
+        <span>{t("批量删除")}</span>
       </button>
     </div>
   );

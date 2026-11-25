@@ -110,6 +110,63 @@ import { SheetConflictBar } from "./sheet-conflict-bar";
 import { sheetHistoryApi, type SheetDefinedNameRecord } from "@/lib/sheet-history-api";
 import { definedNameRecordsToSdk, parseDefinedNameTarget, sdkDefinedNamesToRecords } from "./sheet-history-panel";
 import { SheetPrintDialog } from "./sheet-print-dialog";
+import {
+  deleteSheetOfflineCells,
+  loadSheetOfflineCells,
+  queueSheetOfflineCells,
+  type QueueSheetOfflineCellInput,
+  type SheetOfflineDelta,
+} from "@/lib/offline-collab";
+import { getOfflineSnapshot } from "@/lib/offline-db";
+import { flushOfflineQueue, subscribeOfflineState } from "@/lib/offline-sync";
+
+function isOfflineOrNetworkError(err: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true;
+  if (err instanceof ApiError) return false;
+  if (err instanceof TypeError) return true;
+  return /Failed to fetch|NetworkError|Load failed|fetch failed|ERR_INTERNET_DISCONNECTED/i.test(String(err));
+}
+
+function applyStylePatchLocally(base: SheetCellStyle | undefined, patch: SheetStylePatch): SheetCellStyle {
+  const next: Record<string, unknown> = { ...(base ?? {}) };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null) delete next[key];
+    else if (value !== undefined) next[key] = value;
+  }
+  return next as SheetCellStyle;
+}
+
+function overlaySheetOfflineDelta(snapshot: SheetSnapshot, delta: SheetOfflineDelta): SheetSnapshot {
+  if (!delta.edits.length) return snapshot;
+  let changed = false;
+  const nextSheets = snapshot.sheets.map((ws) => {
+    const wsEdits = delta.edits.filter((e) => (e.worksheetId ?? delta.worksheetId) === ws.id);
+    if (wsEdits.length === 0) return ws;
+    const byKey = new Map<string, SheetCell>();
+    for (const c of ws.cells) byKey.set(`${c.rowId}:${c.columnId}`, c);
+    let wsChanged = false;
+    for (const edit of wsEdits) {
+      const rowId = edit.rowId ?? ws.rows[edit.row]?.id;
+      const columnId = edit.columnId ?? ws.columns[edit.col]?.id;
+      if (!rowId || !columnId) continue;
+      const key = `${rowId}:${columnId}`;
+      const prev = byKey.get(key);
+      if (prev && prev.raw === edit.raw) continue;
+      byKey.set(key, {
+        rowId,
+        columnId,
+        raw: edit.raw,
+        style: prev?.style ?? {},
+        revision: prev?.revision ?? edit.expectedRevision ?? delta.baseRevision ?? 0,
+      });
+      wsChanged = true;
+    }
+    if (!wsChanged) return ws;
+    changed = true;
+    return { ...ws, cells: [...byKey.values()] };
+  });
+  return changed ? { ...snapshot, sheets: nextSheets } : snapshot;
+}
 
 const EMPTY_DEFINED_NAMES: SheetDefinedName[] = [];
 
@@ -232,7 +289,27 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
 
   const meta = useQuery({
     queryKey: metaQueryKey,
-    queryFn: () => docsApi.getForAccount(sheetId, userId),
+    queryFn: async () => {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        const existing = qc.getQueryData<DocMeta>(metaQueryKey);
+        if (existing) return existing;
+        const cached = await getOfflineSnapshot(`doc:${sheetId}`);
+        const data = cached?.data as DocMeta | undefined;
+        if (data && data.id === sheetId) return data;
+      }
+      try {
+        return await docsApi.getForAccount(sheetId, userId);
+      } catch (err) {
+        if (isOfflineOrNetworkError(err)) {
+          const existing = qc.getQueryData<DocMeta>(metaQueryKey);
+          if (existing) return existing;
+          const cached = await getOfflineSnapshot(`doc:${sheetId}`);
+          const data = cached?.data as DocMeta | undefined;
+          if (data && data.id === sheetId) return data;
+        }
+        throw err;
+      }
+    },
     retry: false,
     refetchInterval: 15000,
     refetchIntervalInBackground: false,
@@ -253,7 +330,27 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   });
   const workbook = useQuery({
     queryKey: workbookQueryKey,
-    queryFn: () => sheetsApi.get(sheetId, userId),
+    queryFn: async () => {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) {
+        const existing = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
+        if (existing) return existing;
+        const cached = await getOfflineSnapshot(`sheet:${sheetId}`);
+        const data = cached?.data as SheetSnapshot | undefined;
+        if (data && Array.isArray(data.sheets)) return data;
+      }
+      try {
+        return await sheetsApi.get(sheetId, userId);
+      } catch (err) {
+        if (isOfflineOrNetworkError(err)) {
+          const existing = qc.getQueryData<SheetSnapshot>(workbookQueryKey);
+          if (existing) return existing;
+          const cached = await getOfflineSnapshot(`sheet:${sheetId}`);
+          const data = cached?.data as SheetSnapshot | undefined;
+          if (data && Array.isArray(data.sheets)) return data;
+        }
+        throw err;
+      }
+    },
     enabled: !!isSheetKind && !meta.isError,
     retry: false,
   });
@@ -289,6 +386,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
   const [editingTitle, setEditingTitle] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
   const [savingCount, setSavingCount] = useState(0);
+  const [offlinePendingCount, setOfflinePendingCount] = useState(0);
+  const offlinePendingCountRef = useRef(0);
+  offlinePendingCountRef.current = offlinePendingCount;
   const [statusMessage, setStatusMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [fullscreen, setFullscreen] = useState(false);
@@ -701,8 +801,91 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
     return computeSheetSelectionStats(b, activeEvalMap, (row, col) => gridMap.cellByKey.get(pointKey({ row, col }))?.raw);
   }, [activeSheet, selection, activeEvalMap, gridMap]);
 
+  // Hydrate pending offline cell edits from IndexedDB onto loaded workbook data.
+  useEffect(() => {
+    if (!isSheetKind || !workbook.data) return;
+    let cancelled = false;
+    void loadSheetOfflineCells(userId, sheetId)
+      .then((delta) => {
+        if (cancelled || !mountedRef.current) return;
+        const count = delta?.edits.length ?? 0;
+        offlinePendingCountRef.current = count;
+        setOfflinePendingCount(count);
+        if (delta && count > 0) {
+          qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) =>
+            old ? overlaySheetOfflineDelta(old, delta) : old,
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isSheetKind, sheetId, userId, activeSheetId, workbook.dataUpdatedAt, qc, workbookQueryKey]);
+
+  // Flush and refresh cleanly when offline deltas sync on reconnect.
+  useEffect(() => {
+    if (!isSheetKind) return;
+    let lastCompletedAt: number | null = null;
+    const syncAfterFlush = () => {
+      void loadSheetOfflineCells(userId, sheetId)
+        .then((delta) => {
+          if (!mountedRef.current) return;
+          const nextCount = delta?.edits.length ?? 0;
+          const hadPending = offlinePendingCountRef.current > 0;
+          offlinePendingCountRef.current = nextCount;
+          setOfflinePendingCount(nextCount);
+          if (hadPending && nextCount === 0) {
+            setStatusMessage(t("离线修改已同步到云端"));
+            void qc.invalidateQueries({ queryKey: workbookQueryKey });
+          } else if (delta && nextCount > 0) {
+            qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) =>
+              old ? overlaySheetOfflineDelta(old, delta) : old,
+            );
+          }
+        })
+        .catch(() => {});
+    };
+
+    const unsub = subscribeOfflineState((snapshot) => {
+      const completedAt = snapshot.lastSyncSummary?.completedAt ?? null;
+      if (completedAt !== null && completedAt !== lastCompletedAt) {
+        lastCompletedAt = completedAt;
+        syncAfterFlush();
+      }
+    });
+
+    const handleOnline = () => {
+      if (offlinePendingCountRef.current > 0) {
+        void flushOfflineQueue(undefined, { forceOnline: true }).finally(syncAfterFlush);
+      } else {
+        syncAfterFlush();
+      }
+    };
+    const handleOfflineSynced = () => {
+      syncAfterFlush();
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("online", handleOnline);
+      window.addEventListener("jiange:offline-synced", handleOfflineSynced);
+    }
+    return () => {
+      unsub();
+      if (typeof window !== "undefined") {
+        window.removeEventListener("online", handleOnline);
+        window.removeEventListener("jiange:offline-synced", handleOfflineSynced);
+      }
+    };
+  }, [isSheetKind, sheetId, userId, qc, workbookQueryKey]);
+
   const applyLocalWriteResult = useCallback(
-    (wid: number, nextWbRev: number, updated: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle; revision: number }[]) => {
+    (
+      wid: number,
+      nextWbRev: number,
+      updated: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle; revision: number }[],
+      preserveWorksheetRevision = false,
+    ) => {
       qc.setQueryData<SheetSnapshot>(workbookQueryKey, (old) => {
         if (!old) return old;
         return {
@@ -723,7 +906,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
                 revision: item.revision,
               });
             }
-            return { ...ws, revision: ws.revision + 1, cells: [...byKey.values()] };
+            return { ...ws, revision: preserveWorksheetRevision ? ws.revision : ws.revision + 1, cells: [...byKey.values()] };
           }),
         };
       });
@@ -740,9 +923,10 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
       if (!canEdit || !targetWS || edits.length === 0) return false;
       const { cellByKey } = buildWorksheetGridMap(targetWS);
       const writes: SheetCellWrite[] = [];
+      const offlineEdits: QueueSheetOfflineCellInput[] = [];
       const forwardUndo: UndoEntry["forward"] = [];
       const backwardUndo: UndoEntry["backward"] = [];
-      const localMap: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle }[] = [];
+      const localMap: { rowId: number; columnId: number; raw?: string; style?: SheetCellStyle; expectedRevision: number }[] = [];
 
       const seen = new Set<string>();
       let warningMsg = "";
@@ -779,22 +963,73 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             if (!warningMsg) warningMsg = valCheck.message;
           }
         }
+        const expectedRev = edit.expectedRevision ?? (cur?.revision ?? 0);
+        const resolvedLocalStyle = nextStylePatch
+          ? applyStylePatchLocally(cur?.style, nextStylePatch)
+          : nextStyle;
         writes.push({
           rowId,
           columnId,
-          expectedRevision: edit.expectedRevision ?? (cur?.revision ?? 0),
+          expectedRevision: expectedRev,
           ...(nextRaw !== undefined ? { raw: nextRaw } : {}),
           ...(nextStylePatch ? { stylePatch: nextStylePatch } : nextStyle !== undefined ? { style: nextStyle } : {}),
         });
-        forwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: nextRaw } : {}), ...(nextStyle !== undefined ? { style: nextStyle } : {}) });
-        backwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: cur?.raw ?? "" } : {}), ...(nextStyle !== undefined ? { style: cur?.style ?? {} } : {}) });
-        localMap.push({ rowId, columnId, raw: nextRaw, style: nextStyle });
+        offlineEdits.push({
+          worksheetId: targetWS.id,
+          row: edit.row,
+          col: edit.col,
+          rowId,
+          columnId,
+          raw: nextRaw !== undefined ? nextRaw : (cur?.raw ?? ""),
+          expectedRevision: expectedRev,
+        });
+        forwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: nextRaw } : {}), ...(resolvedLocalStyle !== undefined ? { style: resolvedLocalStyle } : {}) });
+        backwardUndo.push({ rowId, columnId, ...(nextRaw !== undefined ? { raw: cur?.raw ?? "" } : {}), ...(resolvedLocalStyle !== undefined ? { style: cur?.style ?? {} } : {}) });
+        localMap.push({ rowId, columnId, raw: nextRaw, style: resolvedLocalStyle, expectedRevision: expectedRev });
       }
       if (writes.length === 0) return true;
+
+      const persistOfflineDelta = async (): Promise<boolean> => {
+        applyLocalWriteResult(
+          targetWS.id,
+          workbook.data?.workbookRevision ?? 0,
+          localMap.map((m) => ({
+            rowId: m.rowId,
+            columnId: m.columnId,
+            raw: m.raw,
+            style: m.style,
+            revision: m.expectedRevision,
+          })),
+          true,
+        );
+        if (options.recordUndo !== false && forwardUndo.length > 0) {
+          setUndoStack((prev) => [...prev.slice(-49), { worksheetId: targetWS.id, forward: forwardUndo, backward: backwardUndo }]);
+          setRedoStack([]);
+        }
+        const queued = await queueSheetOfflineCells(userId, sheetId, {
+          worksheetId: targetWS.id,
+          baseRevision: targetWS.revision,
+          edits: offlineEdits,
+        });
+        if (!mountedRef.current) return true;
+        const nextPending = queued?.edits.length ?? offlineEdits.length;
+        offlinePendingCountRef.current = nextPending;
+        setOfflinePendingCount(nextPending);
+        setErrorMessage("");
+        setStatusMessage(
+          warningMsg
+            ? `${t("已暂存至本地，联网后将自动同步")}（${t("校验警告")}：${warningMsg}）`
+            : t("已暂存至本地，联网后将自动同步"),
+        );
+        return true;
+      };
 
       setSavingCount((n) => n + 1);
       setErrorMessage("");
       try {
+        if (typeof navigator !== "undefined" && navigator.onLine === false) {
+          return await persistOfflineDelta();
+        }
         const res = await sheetsApi.writeCells(sheetId, userId, {
           mutationId: makeMutationId(),
           worksheetId: targetWS.id,
@@ -833,6 +1068,27 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         }
 
         const committedKeys = new Set(res.cells.map((c) => `${c.rowId}:${c.columnId}`));
+        if (offlinePendingCountRef.current > 0 && committedKeys.size > 0) {
+          void loadSheetOfflineCells(userId, sheetId)
+            .then(async (pending) => {
+              if (!pending || !mountedRef.current) return;
+              const remaining = pending.edits.filter(
+                (e) =>
+                  (e.worksheetId ?? pending.worksheetId) !== targetWS.id ||
+                  !committedKeys.has(`${e.rowId ?? targetWS.rows[e.row]?.id}:${e.columnId ?? targetWS.columns[e.col]?.id}`),
+              );
+              if (remaining.length === 0) {
+                await deleteSheetOfflineCells(userId, sheetId);
+                if (mountedRef.current) {
+                  offlinePendingCountRef.current = 0;
+                  setOfflinePendingCount(0);
+                }
+              } else {
+                void flushOfflineQueue(undefined, { forceOnline: true });
+              }
+            })
+            .catch(() => {});
+        }
         if (options.recordUndo !== false && committedKeys.size > 0) {
           const committedForward = forwardUndo.filter((f) => committedKeys.has(`${f.rowId}:${f.columnId}`));
           const committedBackward = backwardUndo.filter((b) => committedKeys.has(`${b.rowId}:${b.columnId}`));
@@ -863,6 +1119,9 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         return true;
       } catch (err) {
         if (!mountedRef.current) return false;
+        if (isOfflineOrNetworkError(err)) {
+          return await persistOfflineDelta();
+        }
         if (err instanceof ApiError && err.status === 409) {
           setErrorMessage(t("表格内容已被其他协作者修改，已刷新最新数据，请重试。"));
           void qc.invalidateQueries({ queryKey: workbookQueryKey });
@@ -878,7 +1137,7 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
         if (mountedRef.current) setSavingCount((n) => Math.max(0, n - 1));
       }
     },
-    [activeSheet, canEdit, role, sheetId, userId, applyLocalWriteResult, qc, workbookQueryKey],
+    [activeSheet, canEdit, role, sheetId, userId, applyLocalWriteResult, qc, workbookQueryKey, workbook.data?.workbookRevision],
   );
 
   const handleResolveCellConflicts = useCallback(
@@ -2152,7 +2411,19 @@ export function SheetPage({ sheetId, me, onGlobalSearch }: { sheetId: number; me
             </button>
           </div>
           <div className="mt-0.5 flex min-w-0 items-center gap-2 text-[11px] text-[#8f959e]">
-            <span data-sheet-save-status className="truncate">{savingCount > 0 ? t("正在保存…") : canEdit ? t("已经保存到云端") : t("只读权限")}</span>
+            <span
+              data-sheet-save-status
+              data-sheet-offline-pending={offlinePendingCount > 0 ? offlinePendingCount : undefined}
+              className={`truncate ${offlinePendingCount > 0 ? "text-[#b25900]" : ""}`}
+            >
+              {savingCount > 0
+                ? t("正在保存…")
+                : offlinePendingCount > 0
+                  ? t("离线暂存 {count} 处修改，联网后自动同步", { count: offlinePendingCount })
+                  : canEdit
+                    ? t("已经保存到云端")
+                    : t("只读权限")}
+            </span>
             {formatBrush && <span className="truncate rounded bg-[#edf3ff] px-1.5 text-[#3370ff]">{t("格式刷激活：点击单元格应用样式")}</span>}
           </div>
         </div>
