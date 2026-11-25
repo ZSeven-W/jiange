@@ -57,7 +57,148 @@
 | **AI 原生工作區** | **混合語意向量 + BM25 RAG 全空間知識庫問答**（128 維本機向量 + 選配遠端 `/embeddings` + 權限隔離 + 文件與 PDF／Office／OCR 附件引用溯源）、**全空間與單一文件雙路 SSE 逐字串流輸出**（`POST /api/ai/workspace-ask/stream` · `POST /api/ai/doc/stream`）、試算表 AI 公式產生、多維表格 AI 批次填寫、OpenAI / Anthropic 相容多模型接入（未設定金鑰時自動降級至本機引擎） |
 | **企業身分認證與目錄同步** | **OIDC / OAuth2 + SAML 2.0 SP**（Metadata XML、AuthnRequest、原生 XML-DSig RSA/ECDSA 驗簽與 XXE/XSW 防護）、**SCIM 2.0（RFC 7644 完整實作）**（`ServiceProviderConfig`、`Schemas`、`ResourceTypes`、`Users`/`Groups` 完整 `PUT`/`PATCH`/`DELETE`/篩選/分頁）、**LDAP v3／企業微信／釘釘主動拉取與排程同步**（原生 ASN.1 BER 用戶端 + 加密憑證）、**TOTP MFA + 8 組復原碼 + 工作空間強制 MFA 原則與全域頂部引導橫幅**、**WebAuthn / Passkeys（FIDO2 ES256/RS256）無密碼登入**、**帳號安全自助閉環**（登入／MFA／Passkey／公開連結防暴力破解限流、變更密碼、SMTP 忘記／重設密碼、活躍登入裝置清單與遠端登出） |
 | **安全合規與開放生態** | **企業 DLP 敏感詞與安全 RE2 正規表示式防外洩**（涵蓋 Doc / Sheet / Base / Slides / Survey，攔截或告警公開分享與 CSV／公開附件匯出）、**資料保留週期原則與背景排程／手動清理**、全套件防外洩浮水印、公開分享密碼、企業安全稽核日誌與 CSV 匯出、**OpenAPI 3.1.0 完整契約（361 個 API 端點 100% 路由覆蓋驗證 + 27 個資料模型 + 互動式開發者入口）**、**個人存取權杖（PAT）**、**全部 6 類空間事件 HMAC-SHA256 Webhook**、**外部通知管道**（SMTP／飛書／釘釘／企業微信／Slack） |
-| **高可用、國際化與雲原生維運** | **4 大即時協作 Hub 全量多副本水平擴展**（Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 皆基於 Postgres `LISTEN/NOTIFY` 跨節點廣播）、**全倉中／英雙語完整國際化**（5,332 條詞條，0 處使用者可見遺漏）、**路由層級 `React.lazy` + Rollup 程式碼分割**（主套件 308 KB / gzip 84 KB）、PWA + IndexedDB 離線編輯與重連自動合併（Doc / Base / Sheet / Slides）、`/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`、SHA-256 校驗全量備份與還原 CLI（`jiange backup` / `restore` / `reindex-attachments`）、生產級 **Helm Chart** 與 **Kustomize** 部署清單 |
+| **高可用、國際化與雲原生維運** | **4 大即時協作 Hub 全量多副本水平擴展**（Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 皆基於 Postgres `LISTEN/NOTIFY` 跨節點廣播）、**全倉中／英雙語完整國際化**（5,355 條詞條，0 處使用者可見遺漏）、**路由層級 `React.lazy` + Rollup 程式碼分割**（主套件 308 KB / gzip 84 KB）、PWA + IndexedDB 離線編輯與重連自動合併（Doc / Base / Sheet / Slides）、`/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`、SHA-256 校驗全量備份與還原 CLI（`jiange backup` / `restore` / `reindex-attachments`）、生產級 **Helm Chart** 與 **Kustomize** 部署清單 |
+
+---
+
+## 快速使用
+
+你可以依需求以 **完整自託管套件**、**npm TypeScript/WebGPU SDK**、**Go 可嵌入後端 SDK** 或 **Go CLI / AI MCP Server** 四種方式導入 Jiange：
+
+### 1. 一鍵執行完整協作套件（Docker）
+
+```bash
+# 方式 A：Docker Compose 一鍵啟動（Postgres 16 + MinIO + Jiange 完整套件）
+git clone https://github.com/ZSeven-W/jiange.git && cd jiange
+docker compose up -d --build
+# 開啟 http://localhost:8080 註冊首位空間管理員即可使用
+
+# 方式 B：直接拉取 GHCR 預建置多架構映像檔（linux/amd64 & linux/arm64）
+docker pull ghcr.io/zseven-w/jiange:latest
+docker run -d --name jiange -p 8080:8080 \
+  -e DATABASE_URL="postgres://jiange:jiange@host.docker.internal:5432/jiange?sslmode=disable" \
+  -e JIANGE_SECURE_COOKIES="false" \
+  -e JIANGE_SECRET_KEY="$(openssl rand -hex 32)" \
+  -v jiange_blobs:/data/blobs \
+  ghcr.io/zseven-w/jiange:latest
+```
+
+> 生產環境 Kubernetes 部署請直接使用 Helm Chart（`helm upgrade --install jiange ./deploy/helm/jiange`），詳見 [deploy/README.md](deploy/README.md)。
+
+### 2. 使用 TypeScript / WebGPU SDK（npm `@zseven-w/*`）
+
+全部 **13 套零第三方依賴套件** 均已發佈至 npmjs.com（`0.2.0`），支援依模組獨立安裝：
+
+```bash
+# 依需求安裝 Headless 引擎（Node.js / 瀏覽器 / Edge / AI Agent 皆可執行）
+npm install @zseven-w/sheet-sdk        # 試算表（148 公式 + XLSX/CSV + AI 工具）
+npm install @zseven-w/doc-sdk          # 雲端文件（CRDT + MD/HTML/DOCX + 註解與修訂）
+npm install @zseven-w/base-sdk         # 多維表格（23 欄位 + 7 檢視 + 公式關聯）
+npm install @zseven-w/slides-sdk       # 簡報（PPTX + 純 TS 16:9 SVG）
+npm install @zseven-w/whiteboard-sdk   # 白板與心智圖（Mermaid + DAG 版面配置 + XMind）
+
+# 選配：依需求安裝 WebGPU/WebGL2 + 虛擬列表 UI 元件（零 Canvas 2D，含原生 mount / React / Web Components）
+npm install @zseven-w/sheet-ui @zseven-w/doc-ui @zseven-w/base-ui @zseven-w/slides-ui @zseven-w/whiteboard-ui
+```
+
+Headless 公式運算 + AI 工具預檢試算（`dryRun`）+ 匯出 `.xlsx` 範例：
+
+```ts
+import { Workbook, createSheetTools } from "@zseven-w/sheet-sdk";
+
+const wb = Workbook.fromCsv("Product,Units,UnitPrice\nPro,120,49\nEnterprise,25,299\n", "Q4");
+const tools = createSheetTools(wb);
+
+// AI Agent 先透過 dryRun 驗證再提交，自動增量重算公式
+tools.execute("sheet_apply", {
+  ops: [
+    {
+      op: "setCells",
+      sheet: "Q4",
+      cells: [
+        { a1: "D1", raw: "Revenue" },
+        { a1: "D2", raw: "=B2*C2" },
+        { a1: "D3", raw: "=B3*C3" },
+        { a1: "D4", raw: "=SUM(D2:D3)" },
+      ],
+    },
+  ],
+});
+
+console.log(wb.sheet("Q4").getValue("D4")); // 13355
+const xlsxBytes = await wb.toXlsxAsync();   // 標準 DEFLATE .xlsx 位元組串流
+```
+
+在瀏覽器中掛載 WebGPU/WebGL2 虛擬格線（原生 DOM / React / `<jiange-sheet>` 皆適用）：
+
+```ts
+import { mountSheetView } from "@zseven-w/sheet-ui";
+
+const view = await mountSheetView(document.getElementById("sheet-root")!, wb);
+// 銷毀時呼叫 view.dispose()
+```
+
+### 3. 在 Go 服務中嵌入後端 SDK（`sdk/go` & `sdk/go-pgstore`）
+
+```bash
+go get github.com/ZSeven-W/jiange/sdk/go@v0.2.0
+go get github.com/ZSeven-W/jiange/sdk/go-pgstore@v0.2.0   # 選配 PostgreSQL 持久化配接器
+```
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"github.com/ZSeven-W/jiange/sdk/go/server"
+	"github.com/ZSeven-W/jiange/sdk/go/storage"
+)
+
+func main() {
+	app := server.New(server.Config{
+		Store:   storage.NewMemoryStore(), // 生產環境可改用 pgstore.New(db)
+		Auth:    storage.NewBearerTokenAuth(map[string]storage.Principal{"my-token": {ID: "u-1", Name: "Admin", Roles: []string{"admin"}}}),
+		Version: "0.2.0",
+	})
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", app))
+	_ = http.ListenAndServe(":8090", mux)
+}
+```
+
+### 4. 使用 Go CLI 與 AI Agent MCP Server（`jiange`）
+
+```bash
+# 從 Go Module 安裝（或直接前往 GitHub Releases 下載 5 平台預編譯靜態二進位檔）
+go install github.com/ZSeven-W/jiange/cli/cmd/jiange@v0.2.0
+
+# 本機直接讀寫辦公檔案（零 Node.js 依賴）
+jiange sheet inspect budget.xlsx --detail full
+jiange sheet patch budget.xlsx --ops '[{"op":"setCell","sheet":"Sheet1","a1":"B2","raw":"=SUM(A1:A10)"}]' --out out.xlsx
+jiange doc convert spec.md --out spec.docx
+jiange slides render deck.pptx --slide 0 --out slide1.svg
+jiange board render arch.mmd --out arch.svg
+
+# 啟動 MCP Server（支援 stdio 或 Streamable HTTP）
+jiange mcp --transport stdio
+jiange mcp --transport http --addr 127.0.0.1:8787
+```
+
+在 **Claude Desktop / Cursor / Antigravity** 等 MCP 用戶端中直接設定：
+
+```json
+{
+  "mcpServers": {
+    "jiange": {
+      "command": "jiange",
+      "args": ["mcp", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+> 預編譯 CLI 二進位檔（Linux / macOS / Windows `amd64` & `arm64`）與全部 SDK 離線套件請見 [GitHub Releases (`sdk-v0.2.0`)](https://github.com/ZSeven-W/jiange/releases/tag/sdk-v0.2.0)，完整 API 參考請見 [sdk-docs/getting-started.md](sdk-docs/getting-started.md)。
 
 ---
 

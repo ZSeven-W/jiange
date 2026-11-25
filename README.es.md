@@ -57,7 +57,148 @@
 | **Espacio de trabajo nativo de IA** | **Preguntas y respuestas RAG híbridas (vectores semánticos + BM25) sobre todo el espacio de conocimiento** (vectores locales de 128 dimensiones + `/embeddings` remoto opcional + aislamiento de permisos + citas de origen para documentos y adjuntos PDF/Office/OCR), **streaming SSE palabra por palabra de doble canal para todo el espacio y documento individual** (`POST /api/ai/workspace-ask/stream` · `POST /api/ai/doc/stream`), generación de fórmulas con IA en hojas de cálculo, relleno masivo con IA en Base, integración multimodelo compatible con OpenAI / Anthropic (con degradación automática al motor local si no hay clave API) |
 | **Identidad empresarial y sincronización de directorios (IAM)** | **OIDC / OAuth2 + SAML 2.0 SP** (Metadata XML, AuthnRequest, verificación nativa de firmas XML-DSig RSA/ECDSA y protección XXE/XSW), **SCIM 2.0 (implementación completa RFC 7644)** (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`, operaciones completas de `Users`/`Groups` con `PUT`/`PATCH`/`DELETE`/filtrado/paginación), **extracción activa y sincronización programada para LDAP v3 / WeCom / DingTalk** (cliente ASN.1 BER nativo + credenciales cifradas), **MFA TOTP + 8 códigos de recuperación + política MFA obligatoria por espacio de trabajo con banner superior global**, **inicio de sesión sin contraseña WebAuthn / Passkeys (FIDO2 ES256/RS256)** y **ciclo completo de autoservicio de seguridad de cuenta** (limitación de tasa contra fuerza bruta en login/MFA/Passkey/enlaces públicos, cambio de contraseña, recuperación/restablecimiento por SMTP, lista de sesiones activas y cierre remoto) |
 | **Seguridad, cumplimiento y ecosistema abierto** | **DLP empresarial con palabras sensibles y expresiones regulares RE2 seguras** (cobertura para Doc / Sheet / Base / Slides / Survey, bloqueo o alerta en compartición pública y exportaciones CSV/adjuntos públicos), **políticas de retención de datos con limpieza programada en segundo plano o manual**, marcas de agua antifugas en toda la suite, contraseñas en enlaces públicos, registros de auditoría de seguridad empresarial con exportación CSV, **contrato OpenAPI 3.1.0 completo (361 endpoints con verificación de cobertura de rutas al 100% + 27 modelos de datos + portal interactivo para desarrolladores)**, **tokens de acceso personal (PAT)**, **webhooks HMAC-SHA256 para las 6 categorías de eventos del espacio** y **canales de notificación externos** (SMTP / Feishu / DingTalk / WeCom / Slack) |
-| **Alta disponibilidad, internacionalización y despliegue nativo en la nube** | **Escalado horizontal multirréplica en los 4 hubs de colaboración en tiempo real** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, todos con difusión entre nodos vía Postgres `LISTEN/NOTIFY`), **internacionalización bilingüe completa chino/inglés en todo el repositorio** (5,332 entradas, 0 omisiones visibles para el usuario), **`React.lazy` por ruta + división de paquetes con Rollup** (paquete principal de 308 KB / gzip 84 KB), edición sin conexión PWA + IndexedDB con fusión automática al reconectar (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, CLI de copia de seguridad y restauración completa verificada con SHA-256 (`jiange backup` / `restore` / `reindex-attachments`), **Helm Chart** y manifiestos **Kustomize** listos para producción |
+| **Alta disponibilidad, internacionalización y despliegue nativo en la nube** | **Escalado horizontal multirréplica en los 4 hubs de colaboración en tiempo real** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, todos con difusión entre nodos vía Postgres `LISTEN/NOTIFY`), **internacionalización bilingüe completa chino/inglés en todo el repositorio** (5,355 entradas, 0 omisiones visibles para el usuario), **`React.lazy` por ruta + división de paquetes con Rollup** (paquete principal de 308 KB / gzip 84 KB), edición sin conexión PWA + IndexedDB con fusión automática al reconectar (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, CLI de copia de seguridad y restauración completa verificada con SHA-256 (`jiange backup` / `restore` / `reindex-attachments`), **Helm Chart** y manifiestos **Kustomize** listos para producción |
+
+---
+
+## Inicio rápido
+
+Puedes integrar Jiange según tus necesidades de cuatro formas: **suite completa autoalojada**, **SDK de TypeScript/WebGPU en npm**, **SDK backend embebible en Go** o **CLI en Go / servidor MCP para IA**:
+
+### 1. Ejecutar la suite colaborativa completa en un solo paso (Docker)
+
+```bash
+# Opción A: inicio en un comando con Docker Compose (Postgres 16 + MinIO + suite completa de Jiange)
+git clone https://github.com/ZSeven-W/jiange.git && cd jiange
+docker compose up -d --build
+# Abre http://localhost:8080 y registra al primer administrador del espacio de trabajo para empezar
+
+# Opción B: descargar directamente la imagen multiarquitectura precompilada desde GHCR (linux/amd64 y linux/arm64)
+docker pull ghcr.io/zseven-w/jiange:latest
+docker run -d --name jiange -p 8080:8080 \
+  -e DATABASE_URL="postgres://jiange:jiange@host.docker.internal:5432/jiange?sslmode=disable" \
+  -e JIANGE_SECURE_COOKIES="false" \
+  -e JIANGE_SECRET_KEY="$(openssl rand -hex 32)" \
+  -v jiange_blobs:/data/blobs \
+  ghcr.io/zseven-w/jiange:latest
+```
+
+> Para despliegues en producción en Kubernetes, utiliza directamente el Helm Chart (`helm upgrade --install jiange ./deploy/helm/jiange`); consulta [deploy/README.md](deploy/README.md) para más detalles.
+
+### 2. Usar los SDK de TypeScript / WebGPU (npm `@zseven-w/*`)
+
+Los **13 paquetes sin dependencias de terceros** ya están publicados en npmjs.com (`0.2.0`) y se pueden instalar de forma independiente por módulo:
+
+```bash
+# Instala los motores Headless según necesites (compatibles con Node.js / navegador / Edge / agentes de IA)
+npm install @zseven-w/sheet-sdk        # Hojas de cálculo (148 fórmulas + XLSX/CSV + herramientas de IA)
+npm install @zseven-w/doc-sdk          # Documentos en la nube (CRDT + MD/HTML/DOCX + comentarios y revisiones)
+npm install @zseven-w/base-sdk         # Tablas multidimensionales (23 campos + 7 vistas + fórmulas y relaciones)
+npm install @zseven-w/slides-sdk       # Presentaciones (PPTX + SVG 16:9 en TS puro)
+npm install @zseven-w/whiteboard-sdk   # Pizarra y mapas mentales (Mermaid + diseño DAG + XMind)
+
+# Opcional: instala los componentes de UI WebGPU/WebGL2 + lista virtual según necesites (cero Canvas 2D, con mount nativo / React / Web Components)
+npm install @zseven-w/sheet-ui @zseven-w/doc-ui @zseven-w/base-ui @zseven-w/slides-ui @zseven-w/whiteboard-ui
+```
+
+Ejemplo de cálculo de fórmulas Headless + simulación de herramientas de IA (`dryRun`) + exportación a `.xlsx`:
+
+```ts
+import { Workbook, createSheetTools } from "@zseven-w/sheet-sdk";
+
+const wb = Workbook.fromCsv("Product,Units,UnitPrice\nPro,120,49\nEnterprise,25,299\n", "Q4");
+const tools = createSheetTools(wb);
+
+// El agente de IA valida primero con dryRun antes de aplicar, con recálculo incremental automático de fórmulas
+tools.execute("sheet_apply", {
+  ops: [
+    {
+      op: "setCells",
+      sheet: "Q4",
+      cells: [
+        { a1: "D1", raw: "Revenue" },
+        { a1: "D2", raw: "=B2*C2" },
+        { a1: "D3", raw: "=B3*C3" },
+        { a1: "D4", raw: "=SUM(D2:D3)" },
+      ],
+    },
+  ],
+});
+
+console.log(wb.sheet("Q4").getValue("D4")); // 13355
+const xlsxBytes = await wb.toXlsxAsync();   // Flujo de bytes .xlsx DEFLATE estándar
+```
+
+Montar la cuadrícula virtual WebGPU/WebGL2 en el navegador (DOM nativo / React / `<jiange-sheet>`):
+
+```ts
+import { mountSheetView } from "@zseven-w/sheet-ui";
+
+const view = await mountSheetView(document.getElementById("sheet-root")!, wb);
+// Llama a view.dispose() al destruir la vista
+```
+
+### 3. Embeber el SDK backend en un servicio Go (`sdk/go` y `sdk/go-pgstore`)
+
+```bash
+go get github.com/ZSeven-W/jiange/sdk/go@v0.2.0
+go get github.com/ZSeven-W/jiange/sdk/go-pgstore@v0.2.0   # Adaptador opcional de persistencia en PostgreSQL
+```
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"github.com/ZSeven-W/jiange/sdk/go/server"
+	"github.com/ZSeven-W/jiange/sdk/go/storage"
+)
+
+func main() {
+	app := server.New(server.Config{
+		Store:   storage.NewMemoryStore(), // En producción sustitúyelo por pgstore.New(db)
+		Auth:    storage.NewBearerTokenAuth(map[string]storage.Principal{"my-token": {ID: "u-1", Name: "Admin", Roles: []string{"admin"}}}),
+		Version: "0.2.0",
+	})
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", app))
+	_ = http.ListenAndServe(":8090", mux)
+}
+```
+
+### 4. Usar el CLI en Go y el servidor MCP para agentes de IA (`jiange`)
+
+```bash
+# Instalar desde Go Module (o descargar los binarios estáticos precompilados para 5 plataformas en GitHub Releases)
+go install github.com/ZSeven-W/jiange/cli/cmd/jiange@v0.2.0
+
+# Leer y editar archivos ofimáticos directamente en local (cero dependencias de Node.js)
+jiange sheet inspect budget.xlsx --detail full
+jiange sheet patch budget.xlsx --ops '[{"op":"setCell","sheet":"Sheet1","a1":"B2","raw":"=SUM(A1:A10)"}]' --out out.xlsx
+jiange doc convert spec.md --out spec.docx
+jiange slides render deck.pptx --slide 0 --out slide1.svg
+jiange board render arch.mmd --out arch.svg
+
+# Iniciar el servidor MCP (compatible con stdio o Streamable HTTP)
+jiange mcp --transport stdio
+jiange mcp --transport http --addr 127.0.0.1:8787
+```
+
+Configúralo directamente en clientes MCP como **Claude Desktop / Cursor / Antigravity**:
+
+```json
+{
+  "mcpServers": {
+    "jiange": {
+      "command": "jiange",
+      "args": ["mcp", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+> Los binarios precompilados del CLI (Linux / macOS / Windows `amd64` y `arm64`) y todos los paquetes SDK sin conexión están disponibles en [GitHub Releases (`sdk-v0.2.0`)](https://github.com/ZSeven-W/jiange/releases/tag/sdk-v0.2.0); la referencia completa de la API se encuentra en [sdk-docs/getting-started.md](sdk-docs/getting-started.md).
 
 ---
 

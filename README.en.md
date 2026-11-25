@@ -57,7 +57,148 @@
 | **Workspace AI** | **Hybrid semantic vector + BM25 RAG workspace-wide Q&A** (128-dim local embeddings + optional remote `/embeddings` + permission-scoped retrieval + citation provenance across docs and PDF/Office/OCR attachments), **dual SSE token-streaming endpoints for workspace Q&A & single-doc writing** (`POST /api/ai/workspace-ask/stream` · `POST /api/ai/doc/stream`), Sheet AI formula generation, Base AI batch autofill, and OpenAI / Anthropic-compatible multi-provider routing (with automatic fallback to a local engine when no API key is configured) |
 | **Enterprise IAM** | **OIDC / OAuth2 + SAML 2.0 SP** (Metadata XML, AuthnRequest, native XML-DSig RSA/ECDSA verification with XXE/XSW hardening), **full SCIM 2.0 (RFC 7644)** (`ServiceProviderConfig`, `Schemas`, `ResourceTypes`, full `Users`/`Groups` `PUT`/`PATCH`/`DELETE`/filter/pagination), **LDAP v3 / WeCom / DingTalk active pull & scheduled directory sync** (native ASN.1 BER client + encrypted credentials), **TOTP MFA + 8 recovery codes + workspace-enforced MFA policy & global top onboarding banner**, **WebAuthn / Passkeys (FIDO2 ES256/RS256) passwordless login**, and **self-service account security** (brute-force rate limiting across login/MFA/Passkey/public links, password change, SMTP forgot/reset password, active device session list & remote revocation) |
 | **Governance & Open Ecosystem** | **Enterprise DLP keyword & safe-RE2 regex leak prevention** (covering Doc / Sheet / Base / Slides / Survey; blocks or alerts on public sharing and CSV/public attachment exports), **data retention policies with background scheduled & manual sweeps**, suite-wide anti-leak watermarks, password-protected public shares, enterprise security audit logs with CSV export, **complete OpenAPI 3.1.0 contract (361 endpoints with 100% route-coverage verification + 27 schemas + interactive developer portal)**, **Personal Access Tokens (PATs)**, **HMAC-SHA256 webhooks for all 6 workspace event types**, and **external notification channels** (SMTP / Feishu / DingTalk / WeCom / Slack) |
-| **Scale, i18n & Cloud-Native Ops** | **Horizontal multi-replica scaling across all 4 real-time collaboration hubs** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, all broadcasting cross-node via Postgres `LISTEN/NOTIFY`), **complete repo-wide Chinese/English i18n** (5,332 translation keys, 0 user-visible gaps), **route-level `React.lazy` + Rollup code splitting** (main bundle 308 KB / 84 KB gzipped), PWA + IndexedDB offline editing & auto-merge on reconnect (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256-verified full backup/restore CLI (`jiange backup` / `restore` / `reindex-attachments`), and production-grade **Helm Chart** & **Kustomize** manifests |
+| **Scale, i18n & Cloud-Native Ops** | **Horizontal multi-replica scaling across all 4 real-time collaboration hubs** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, all broadcasting cross-node via Postgres `LISTEN/NOTIFY`), **complete repo-wide Chinese/English i18n** (5,355 translation keys, 0 user-visible gaps), **route-level `React.lazy` + Rollup code splitting** (main bundle 308 KB / 84 KB gzipped), PWA + IndexedDB offline editing & auto-merge on reconnect (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256-verified full backup/restore CLI (`jiange backup` / `restore` / `reindex-attachments`), and production-grade **Helm Chart** & **Kustomize** manifests |
+
+---
+
+## Quick Start
+
+Adopt Jiange in any of four ways depending on your needs: as the **full self-hosted suite**, **npm TypeScript/WebGPU SDKs**, an **embeddable Go backend SDK**, or a **Go CLI / AI MCP Server**:
+
+### 1. Run the Full Collaborative Suite (Docker)
+
+```bash
+# Option A: One-command Docker Compose startup (Postgres 16 + MinIO + full Jiange suite)
+git clone https://github.com/ZSeven-W/jiange.git && cd jiange
+docker compose up -d --build
+# Open http://localhost:8080 and register the initial workspace admin to get started
+
+# Option B: Pull the prebuilt multi-arch image from GHCR (linux/amd64 & linux/arm64)
+docker pull ghcr.io/zseven-w/jiange:latest
+docker run -d --name jiange -p 8080:8080 \
+  -e DATABASE_URL="postgres://jiange:jiange@host.docker.internal:5432/jiange?sslmode=disable" \
+  -e JIANGE_SECURE_COOKIES="false" \
+  -e JIANGE_SECRET_KEY="$(openssl rand -hex 32)" \
+  -v jiange_blobs:/data/blobs \
+  ghcr.io/zseven-w/jiange:latest
+```
+
+> For production Kubernetes deployments, install the Helm Chart directly (`helm upgrade --install jiange ./deploy/helm/jiange`). See [deploy/README.md](deploy/README.md) for details.
+
+### 2. Use the TypeScript / WebGPU SDKs (npm `@zseven-w/*`)
+
+All **13 zero-dependency packages** are published on npmjs.com (`0.2.0`) and can be installed individually per module:
+
+```bash
+# Install headless engines on demand (runs in Node.js, browsers, Edge, and AI agents)
+npm install @zseven-w/sheet-sdk        # Sheet (148 formulas + XLSX/CSV + AI tools)
+npm install @zseven-w/doc-sdk          # Cloud Doc (CRDT + MD/HTML/DOCX + comments & Track Changes)
+npm install @zseven-w/base-sdk         # Base (23 field types + 7 views + formulas & links)
+npm install @zseven-w/slides-sdk       # Slides (PPTX + pure-TS 16:9 SVG)
+npm install @zseven-w/whiteboard-sdk   # Board & MindMap (Mermaid + DAG layout + XMind)
+
+# Optional: install WebGPU/WebGL2 + virtual list UI components (Zero Canvas 2D; native mount / React / Web Components)
+npm install @zseven-w/sheet-ui @zseven-w/doc-ui @zseven-w/base-ui @zseven-w/slides-ui @zseven-w/whiteboard-ui
+```
+
+Headless formula evaluation + AI tool dry-run validation (`dryRun`) + `.xlsx` export example:
+
+```ts
+import { Workbook, createSheetTools } from "@zseven-w/sheet-sdk";
+
+const wb = Workbook.fromCsv("Product,Units,UnitPrice\nPro,120,49\nEnterprise,25,299\n", "Q4");
+const tools = createSheetTools(wb);
+
+// AI agents can validate via dryRun before applying; formulas recalculate incrementally
+tools.execute("sheet_apply", {
+  ops: [
+    {
+      op: "setCells",
+      sheet: "Q4",
+      cells: [
+        { a1: "D1", raw: "Revenue" },
+        { a1: "D2", raw: "=B2*C2" },
+        { a1: "D3", raw: "=B3*C3" },
+        { a1: "D4", raw: "=SUM(D2:D3)" },
+      ],
+    },
+  ],
+});
+
+console.log(wb.sheet("Q4").getValue("D4")); // 13355
+const xlsxBytes = await wb.toXlsxAsync();   // Standard DEFLATE .xlsx byte stream
+```
+
+Mount the WebGPU/WebGL2 virtual grid in the browser (native DOM, React, or `<jiange-sheet>`):
+
+```ts
+import { mountSheetView } from "@zseven-w/sheet-ui";
+
+const view = await mountSheetView(document.getElementById("sheet-root")!, wb);
+// Call view.dispose() on teardown
+```
+
+### 3. Embed the Backend SDK in a Go Service (`sdk/go` & `sdk/go-pgstore`)
+
+```bash
+go get github.com/ZSeven-W/jiange/sdk/go@v0.2.0
+go get github.com/ZSeven-W/jiange/sdk/go-pgstore@v0.2.0   # Optional PostgreSQL persistence adapter
+```
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"github.com/ZSeven-W/jiange/sdk/go/server"
+	"github.com/ZSeven-W/jiange/sdk/go/storage"
+)
+
+func main() {
+	app := server.New(server.Config{
+		Store:   storage.NewMemoryStore(), // Replace with pgstore.New(db) in production
+		Auth:    storage.NewBearerTokenAuth(map[string]storage.Principal{"my-token": {ID: "u-1", Name: "Admin", Roles: []string{"admin"}}}),
+		Version: "0.2.0",
+	})
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", app))
+	_ = http.ListenAndServe(":8090", mux)
+}
+```
+
+### 4. Use the Go CLI & AI Agent MCP Server (`jiange`)
+
+```bash
+# Install via Go modules (or download prebuilt static binaries for 5 platforms from GitHub Releases)
+go install github.com/ZSeven-W/jiange/cli/cmd/jiange@v0.2.0
+
+# Read and write office files locally (zero Node.js dependencies)
+jiange sheet inspect budget.xlsx --detail full
+jiange sheet patch budget.xlsx --ops '[{"op":"setCell","sheet":"Sheet1","a1":"B2","raw":"=SUM(A1:A10)"}]' --out out.xlsx
+jiange doc convert spec.md --out spec.docx
+jiange slides render deck.pptx --slide 0 --out slide1.svg
+jiange board render arch.mmd --out arch.svg
+
+# Start the MCP Server (supports stdio or Streamable HTTP)
+jiange mcp --transport stdio
+jiange mcp --transport http --addr 127.0.0.1:8787
+```
+
+Configure directly in MCP clients such as **Claude Desktop / Cursor / Antigravity**:
+
+```json
+{
+  "mcpServers": {
+    "jiange": {
+      "command": "jiange",
+      "args": ["mcp", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+> Prebuilt CLI binaries (Linux / macOS / Windows `amd64` & `arm64`) and offline archives for all SDKs are available on [GitHub Releases (`sdk-v0.2.0`)](https://github.com/ZSeven-W/jiange/releases/tag/sdk-v0.2.0). See [sdk-docs/getting-started.md](sdk-docs/getting-started.md) for the full API reference.
 
 ---
 

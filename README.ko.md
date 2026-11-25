@@ -57,7 +57,148 @@
 | **AI 네이티브 워크스페이스** | **하이브리드 시맨틱 벡터 + BM25 RAG 기반 전체 워크스페이스 지식 베이스 Q&A**(128차원 로컬 벡터 + 선택적 원격 `/embeddings` + 권한 격리 + 문서 및 PDF / Office / OCR 첨부 파일 출처 인용 추적), **워크스페이스 전체 및 단일 문서 듀얼 SSE 토큰 스트리밍 출력**(`POST /api/ai/workspace-ask/stream` · `POST /api/ai/doc/stream`), 스프레드시트 AI 수식 생성, 다차원 테이블 AI 일괄 채우기, OpenAI / Anthropic 호환 멀티 모델 연동(API 키가 없으면 로컬 엔진으로 자동 폴백) |
 | **엔터프라이즈 IAM & 디렉터리 동기화** | **OIDC / OAuth2 + SAML 2.0 SP**(Metadata XML, AuthnRequest, 네이티브 XML-DSig RSA/ECDSA 서명 검증 및 XXE/XSW 방어), **SCIM 2.0(RFC 7644 완전 구현)**(`ServiceProviderConfig`, `Schemas`, `ResourceTypes`, `Users` / `Groups` 전체 `PUT` / `PATCH` / `DELETE` / 필터링 / 페이지네이션), **LDAP v3 / WeCom / DingTalk 수동 풀(Pull) 및 예약 동기화**(네이티브 ASN.1 BER 클라이언트 + 암호화된 자격 증명), **TOTP MFA + 복구 코드 8개 + 워크스페이스 강제 MFA 정책 및 전역 상단 안내 배너**, **WebAuthn / Passkeys(FIDO2 ES256/RS256) 비밀번호 없는 로그인**, **계정 보안 셀프서비스 완결 흐름**(로그인 / MFA / Passkey / 공개 링크 무차별 대입 방지 속도 제한, 비밀번호 변경, SMTP 비밀번호 찾기·재설정, 활성 로그인 기기 목록 및 원격 로그아웃) |
 | **보안 컴플라이언스 & 오픈 생태계** | **엔터프라이즈 DLP 민감어 및 안전한 RE2 정규식 유출 방지**(Doc / Sheet / Base / Slides / Survey 적용, 공개 공유 및 CSV / 공개 첨부 파일 내보내기 차단·경고), **데이터 보존 기간 정책 및 백그라운드 예약/수동 정리**, 전체 스위트 유출 방지 워터마크, 공개 공유 비밀번호, 엔터프라이즈 보안 감사 로그 및 CSV 내보내기, **OpenAPI 3.1.0 전체 명세(361개 엔드포인트 100% 라우트 커버리지 검증 + 27개 데이터 모델 + 인터랙티브 개발자 포털)**, **PAT 개인 액세스 토큰**, **전체 6종 워크스페이스 이벤트 HMAC-SHA256 Webhook**, **외부 알림 채널**(SMTP / Feishu / DingTalk / WeCom / Slack) |
-| **고가용성 · 국제화 · 클라우드 네이티브** | **4대 실시간 협업 Hub 전체 멀티 레플리카 수평 확장**(Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 모두 PostgreSQL `LISTEN/NOTIFY` 기반 노드 간 브로드캐스트 지원), **저장소 전체 중국어/영어 완전 이중 언어 국제화**(5,332개 항목, 사용자 노출 누락 0건), **라우트 단위 `React.lazy` + Rollup 코드 스플리팅**(메인 번들 308 KB / gzip 84 KB), PWA + IndexedDB 오프라인 편집 및 재연결 자동 병합(Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256 무결성 검증 전체 백업·복원 CLI(`jiange backup` / `restore` / `reindex-attachments`), 프로덕션급 **Helm Chart** 및 **Kustomize** 매니페스트 |
+| **고가용성 · 국제화 · 클라우드 네이티브** | **4대 실시간 협업 Hub 전체 멀티 레플리카 수평 확장**(Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 모두 PostgreSQL `LISTEN/NOTIFY` 기반 노드 간 브로드캐스트 지원), **저장소 전체 중국어/영어 완전 이중 언어 국제화**(5,355개 항목, 사용자 노출 누락 0건), **라우트 단위 `React.lazy` + Rollup 코드 스플리팅**(메인 번들 308 KB / gzip 84 KB), PWA + IndexedDB 오프라인 편집 및 재연결 자동 병합(Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256 무결성 검증 전체 백업·복원 CLI(`jiange backup` / `restore` / `reindex-attachments`), 프로덕션급 **Helm Chart** 및 **Kustomize** 매니페스트 |
+
+---
+
+## 빠른 시작
+
+필요에 따라 **완전한 셀프호스팅 스위트**, **npm TypeScript/WebGPU SDK**, **Go 임베딩 가능 백엔드 SDK**, 또는 **Go CLI / AI MCP Server**의 4가지 방식으로 Jiange를 도입할 수 있습니다:
+
+### 1. 전체 협업 스위트 원클릭 실행 (Docker)
+
+```bash
+# 방식 A: Docker Compose 원클릭 실행 (Postgres 16 + MinIO + Jiange 전체 스위트)
+git clone https://github.com/ZSeven-W/jiange.git && cd jiange
+docker compose up -d --build
+# http://localhost:8080 에 접속해 첫 워크스페이스 관리자를 등록하면 바로 사용할 수 있습니다
+
+# 방식 B: GHCR 사전 빌드 멀티 아키텍처 이미지 직접 풀 (linux/amd64 & linux/arm64)
+docker pull ghcr.io/zseven-w/jiange:latest
+docker run -d --name jiange -p 8080:8080 \
+  -e DATABASE_URL="postgres://jiange:jiange@host.docker.internal:5432/jiange?sslmode=disable" \
+  -e JIANGE_SECURE_COOKIES="false" \
+  -e JIANGE_SECRET_KEY="$(openssl rand -hex 32)" \
+  -v jiange_blobs:/data/blobs \
+  ghcr.io/zseven-w/jiange:latest
+```
+
+> 프로덕션 Kubernetes 배포에는 Helm Chart(`helm upgrade --install jiange ./deploy/helm/jiange`)를 바로 사용하세요. 자세한 내용은 [deploy/README.md](deploy/README.md)를 참고하세요.
+
+### 2. TypeScript / WebGPU SDK 사용 (npm `@zseven-w/*`)
+
+**서드파티 의존성이 전혀 없는 13개 패키지**가 모두 npmjs.com(`0.2.0`)에 배포되어 있으며, 모듈별로 개별 설치할 수 있습니다:
+
+```bash
+# 필요한 헤드리스 엔진만 선택 설치 (Node.js / 브라우저 / Edge / AI Agent 모두 지원)
+npm install @zseven-w/sheet-sdk        # 스프레드시트 (148개 수식 + XLSX/CSV + AI 도구)
+npm install @zseven-w/doc-sdk          # 클라우드 문서 (CRDT + MD/HTML/DOCX + 댓글 및 변경 추적)
+npm install @zseven-w/base-sdk         # 다차원 테이블 (23종 필드 + 7종 뷰 + 수식·관계)
+npm install @zseven-w/slides-sdk       # 슬라이드 (PPTX + 순수 TS 16:9 SVG)
+npm install @zseven-w/whiteboard-sdk   # 화이트보드 & 마인드맵 (Mermaid + DAG 레이아웃 + XMind)
+
+# 선택 사항: WebGPU/WebGL2 + 가상 리스트 UI 컴포넌트 설치 (제로 Canvas 2D, 네이티브 mount / React / Web Components 포함)
+npm install @zseven-w/sheet-ui @zseven-w/doc-ui @zseven-w/base-ui @zseven-w/slides-ui @zseven-w/whiteboard-ui
+```
+
+헤드리스 수식 계산 + AI 도구 사전 검증(`dryRun`) + `.xlsx` 내보내기 예제:
+
+```ts
+import { Workbook, createSheetTools } from "@zseven-w/sheet-sdk";
+
+const wb = Workbook.fromCsv("Product,Units,UnitPrice\nPro,120,49\nEnterprise,25,299\n", "Q4");
+const tools = createSheetTools(wb);
+
+// AI Agent가 dryRun으로 먼저 검증한 뒤 적용하며, 수식은 자동으로 증분 재계산됩니다
+tools.execute("sheet_apply", {
+  ops: [
+    {
+      op: "setCells",
+      sheet: "Q4",
+      cells: [
+        { a1: "D1", raw: "Revenue" },
+        { a1: "D2", raw: "=B2*C2" },
+        { a1: "D3", raw: "=B3*C3" },
+        { a1: "D4", raw: "=SUM(D2:D3)" },
+      ],
+    },
+  ],
+});
+
+console.log(wb.sheet("Q4").getValue("D4")); // 13355
+const xlsxBytes = await wb.toXlsxAsync();   // 표준 DEFLATE .xlsx 바이트 스트림
+```
+
+브라우저에 WebGPU/WebGL2 가상 그리드 마운트 (네이티브 DOM / React / `<jiange-sheet>` 모두 지원):
+
+```ts
+import { mountSheetView } from "@zseven-w/sheet-ui";
+
+const view = await mountSheetView(document.getElementById("sheet-root")!, wb);
+// 정리 시 view.dispose() 호출
+```
+
+### 3. Go 서비스에 백엔드 SDK 임베딩 (`sdk/go` & `sdk/go-pgstore`)
+
+```bash
+go get github.com/ZSeven-W/jiange/sdk/go@v0.2.0
+go get github.com/ZSeven-W/jiange/sdk/go-pgstore@v0.2.0   # 선택적 PostgreSQL 영속화 어댑터
+```
+
+```go
+package main
+
+import (
+	"net/http"
+
+	"github.com/ZSeven-W/jiange/sdk/go/server"
+	"github.com/ZSeven-W/jiange/sdk/go/storage"
+)
+
+func main() {
+	app := server.New(server.Config{
+		Store:   storage.NewMemoryStore(), // 프로덕션에서는 pgstore.New(db)로 교체 가능
+		Auth:    storage.NewBearerTokenAuth(map[string]storage.Principal{"my-token": {ID: "u-1", Name: "Admin", Roles: []string{"admin"}}}),
+		Version: "0.2.0",
+	})
+	mux := http.NewServeMux()
+	mux.Handle("/api/v1/", http.StripPrefix("/api/v1", app))
+	_ = http.ListenAndServe(":8090", mux)
+}
+```
+
+### 4. Go CLI 및 AI Agent MCP Server 사용 (`jiange`)
+
+```bash
+# Go Module로 설치 (또는 GitHub Releases에서 5개 플랫폼 사전 빌드 정적 바이너리 직접 다운로드)
+go install github.com/ZSeven-W/jiange/cli/cmd/jiange@v0.2.0
+
+# 로컬에서 오피스 파일 직접 읽기/쓰기 (Node.js 의존성 제로)
+jiange sheet inspect budget.xlsx --detail full
+jiange sheet patch budget.xlsx --ops '[{"op":"setCell","sheet":"Sheet1","a1":"B2","raw":"=SUM(A1:A10)"}]' --out out.xlsx
+jiange doc convert spec.md --out spec.docx
+jiange slides render deck.pptx --slide 0 --out slide1.svg
+jiange board render arch.mmd --out arch.svg
+
+# MCP Server 실행 (stdio 또는 Streamable HTTP 지원)
+jiange mcp --transport stdio
+jiange mcp --transport http --addr 127.0.0.1:8787
+```
+
+**Claude Desktop / Cursor / Antigravity** 등의 MCP 클라이언트에서 바로 설정할 수 있습니다:
+
+```json
+{
+  "mcpServers": {
+    "jiange": {
+      "command": "jiange",
+      "args": ["mcp", "--transport", "stdio"]
+    }
+  }
+}
+```
+
+> 사전 빌드된 CLI 바이너리(Linux / macOS / Windows `amd64` & `arm64`)와 전체 SDK 오프라인 패키지는 [GitHub Releases (`sdk-v0.2.0`)](https://github.com/ZSeven-W/jiange/releases/tag/sdk-v0.2.0)에서 확인할 수 있으며, 전체 API 레퍼런스는 [sdk-docs/getting-started.md](sdk-docs/getting-started.md)를 참고하세요.
 
 ---
 
