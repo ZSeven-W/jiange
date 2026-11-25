@@ -5,6 +5,17 @@
 </p>
 
 <p align="center">
+  <b>简体中文</b> ·
+  <a href="README.en.md">English</a> ·
+  <a href="README.zh-TW.md">繁體中文</a> ·
+  <a href="README.ja.md">日本語</a> ·
+  <a href="README.ko.md">한국어</a> ·
+  <a href="README.fr.md">Français</a> ·
+  <a href="README.de.md">Deutsch</a> ·
+  <a href="README.es.md">Español</a>
+</p>
+
+<p align="center">
   <strong>开源的飞书文档 + 电子表格 + 多维表格 + 幻灯片 + 画板/脑图完整协作套件</strong><br />
   <sub>AI 原生 · 轻量可拆 · 政企安全合规 · 多副本高可用 · 全仓双语与离线 CRDT · 零 Canvas 2D（WebGPU/WebGL2 + 虚拟列表）</sub>
 </p>
@@ -111,7 +122,7 @@ Requirements: Node 20+, pnpm 10, Go 1.23+ (`server/` requires Go matching `serve
 pnpm install
 docker compose up -d postgres            # postgres://jiange:jiange@localhost:5432/jiange
 
-cd server && go run ./cmd/jiange         # :8080, runs migrations (0001..0091) on start
+cd server && go run ./cmd/jiange         # :8080, runs migrations (0001..0092) on start
 # 另开终端 / another terminal
 pnpm --filter @jiange/web dev            # http://localhost:5173 (proxies /api & /scim -> :8080)
 ```
@@ -199,4 +210,4 @@ Application (`apps/`, `server/`, etc.): free for personal & non-commercial use; 
 
 ---
 
-文件及目录默认使用 kebab-case，代码标识符遵循各语言惯例。Go 平台及测试后缀、已应用的数据库迁移文件名、`README.md`、`CHANGELOG.md`、`Dockerfile`、`Chart.yaml`、`NOTES.txt`、`_helpers.tpl`、许可证文件等保留工具约定；`pnpm lint:names` 可检查 Git 跟踪的路径。SDK 保留旧的 camelCase 子路径作为兼容入口，新代码请使用 kebab-case 子路径。
+文件及目录默认使用 kebab-case，代码标识符遵循各语言惯例。Go 平台及测试后缀、已应用的数据库迁移文件名、`README.md` / `README.<lang>.md`、`CHANGELOG.md`、`Dockerfile`、`Chart.yaml`、`NOTES.txt`、`_helpers.tpl`、许可证文件等保留工具约定；`pnpm lint:names` 可检查 Git 跟踪的路径。SDK 保留旧的 camelCase 子路径作为兼容入口，新代码请使用 kebab-case 子路径。
