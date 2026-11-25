@@ -12,7 +12,8 @@
   <b>한국어</b> ·
   <a href="README.fr.md">Français</a> ·
   <a href="README.de.md">Deutsch</a> ·
-  <a href="README.es.md">Español</a>
+  <a href="README.es.md">Español</a> ·
+  <a href="README.ru.md">Русский</a>
 </p>
 
 <p align="center">
