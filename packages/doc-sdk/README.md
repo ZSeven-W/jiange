@@ -1,16 +1,16 @@
-# @jiange/doc-sdk
+# @zseven-w/doc-sdk
 
-AI-native headless block Document SDK (`v0.2.0`) over `@jiange/collab` and `@jiange/ooxml`: CRDT-backed `Document` Facade, Markdown / HTML / DOCX (DEFLATE) round-trip conversion, heading outline & section reading, mark-preserving `replaceText`, suggestions & comments, multi-column layouts, and self-describing AI tools.
+AI-native headless block Document SDK (`v0.2.0`) over `@zseven-w/collab` and `@zseven-w/ooxml`: CRDT-backed `Document` Facade, Markdown / HTML / DOCX (DEFLATE) round-trip conversion, heading outline & section reading, mark-preserving `replaceText`, suggestions & comments, multi-column layouts, and self-describing AI tools.
 
-Decoupled from `@jiange/whiteboard-sdk` (flowchart blocks serialize to Mermaid via a built-in zero-dependency converter or an optional `renderFlowchart` hook).
+Decoupled from `@zseven-w/whiteboard-sdk` (flowchart blocks serialize to Mermaid via a built-in zero-dependency converter or an optional `renderFlowchart` hook).
 
 ## Install
 
 ```bash
-npm install @jiange/doc-sdk
+npm install @zseven-w/doc-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/collab`, `@jiange/ooxml` (0 third-party dependencies)
+- **Runtime dependencies**: `@zseven-w/collab`, `@zseven-w/ooxml` (0 third-party dependencies)
 - **Bundle size**: ~58.1 KB gzip
 
 ## Features
@@ -23,7 +23,7 @@ npm install @jiange/doc-sdk
 ## Quickstart
 
 ```ts
-import { Document, createDocTools } from "@jiange/doc-sdk";
+import { Document, createDocTools } from "@zseven-w/doc-sdk";
 
 const doc = Document.fromMarkdown(
   "# Architecture Spec\n\n## Overview\n\nJiange Doc SDK runs headless on Node.js and browsers.\n",
@@ -51,16 +51,16 @@ void [outline, res, docxBytes, md, html];
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/doc-sdk` | Full barrel export (`Document`, `createDocTools`, Markdown, HTML, DOCX, CRDT block ops, column models) |
-| `@jiange/doc-sdk/document` | `Document`, `DocOp`, `DocInspectResult`, `DocApplyResult`, `DocSuggestion`, `DocComment` |
-| `@jiange/doc-sdk/ai-tools` | `createDocTools` |
-| `@jiange/doc-sdk/markdown` | `parseMarkdown`, `toMarkdown`, `viewToMarkdown`, `parseInline`, `serializeInline` |
-| `@jiange/doc-sdk/html` | `parseHtml`, `blocksToHtml` |
-| `@jiange/doc-sdk/docx` | `buildDocx`, `buildDocxAsync`, `parseDocx`, `docxExportLosses`, `readDocxFile`, `safeDocxLink`, `imageInfo` |
-| `@jiange/doc-sdk/model` | Low-level CRDT block ops (`splitBlock`, `bodyBlocks`, selection & formatting helpers) |
-| `@jiange/doc-sdk/table-cells` / `./block-styles` / `./column-widths` / `./column-move` | Table cell rich-text model, block styles, column width weights, column move *(deprecated camelCase aliases: `./tableCells`, `./blockStyles`, `./columnWidths`, `./columnMove`)* |
-| `@jiange/doc-sdk/zip` / `./xml` | Re-exports from `@jiange/ooxml` |
-| `@jiange/doc-sdk/column-archive-experimental` | Unstable identity-preserving column archive helpers (`prepareColumnArchive`, `recoverColumnArchive`, `toggleArchivedColumn`) |
+| `@zseven-w/doc-sdk` | Full barrel export (`Document`, `createDocTools`, Markdown, HTML, DOCX, CRDT block ops, column models) |
+| `@zseven-w/doc-sdk/document` | `Document`, `DocOp`, `DocInspectResult`, `DocApplyResult`, `DocSuggestion`, `DocComment` |
+| `@zseven-w/doc-sdk/ai-tools` | `createDocTools` |
+| `@zseven-w/doc-sdk/markdown` | `parseMarkdown`, `toMarkdown`, `viewToMarkdown`, `parseInline`, `serializeInline` |
+| `@zseven-w/doc-sdk/html` | `parseHtml`, `blocksToHtml` |
+| `@zseven-w/doc-sdk/docx` | `buildDocx`, `buildDocxAsync`, `parseDocx`, `docxExportLosses`, `readDocxFile`, `safeDocxLink`, `imageInfo` |
+| `@zseven-w/doc-sdk/model` | Low-level CRDT block ops (`splitBlock`, `bodyBlocks`, selection & formatting helpers) |
+| `@zseven-w/doc-sdk/table-cells` / `./block-styles` / `./column-widths` / `./column-move` | Table cell rich-text model, block styles, column width weights, column move *(deprecated camelCase aliases: `./tableCells`, `./blockStyles`, `./columnWidths`, `./columnMove`)* |
+| `@zseven-w/doc-sdk/zip` / `./xml` | Re-exports from `@zseven-w/ooxml` |
+| `@zseven-w/doc-sdk/column-archive-experimental` | Unstable identity-preserving column archive helpers (`prepareColumnArchive`, `recoverColumnArchive`, `toggleArchivedColumn`) |
 
 ## Documentation
 

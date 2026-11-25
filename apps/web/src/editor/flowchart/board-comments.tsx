@@ -6,7 +6,7 @@ import {
   parseFlowCommentAnchor,
   resolveFlowCommentPosition,
   type FlowCommentAnchor,
-} from "@jiange/whiteboard-sdk/comment-anchor";
+} from "@zseven-w/whiteboard-sdk/comment-anchor";
 import type { FlowGraph } from "./model";
 
 export interface BoardCommentActions {

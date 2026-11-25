@@ -1,1 +1,1 @@
-export * from "@jiange/whiteboard-sdk/mindmap";
+export * from "@zseven-w/whiteboard-sdk/mindmap";

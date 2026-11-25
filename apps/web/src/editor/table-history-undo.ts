@@ -1,5 +1,5 @@
-import { idKey, Tx, type Doc, type Op } from "@jiange/collab";
-import type { UndoManager } from "@jiange/collab";
+import { idKey, Tx, type Doc, type Op } from "@zseven-w/collab";
+import type { UndoManager } from "@zseven-w/collab";
 import { applyTableEdit, parseTableData } from "./model";
 import type { TableCellHistory } from "./table-cell-history";
 import { tableDataOf, tableRowsOf, writeTable } from "./table-cells";

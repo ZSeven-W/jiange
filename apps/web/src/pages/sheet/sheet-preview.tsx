@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlignCenter, AlignLeft, AlignRight, Bold, Brush, ChevronDown, ChevronLeft, Download, Eraser, FileUp, Grid2X2, Italic, Menu, MessageSquare, MoreHorizontal, Pencil, Plus, Redo2, Search, Strikethrough, Underline, Undo2 } from "lucide-react";
-import { writeXlsx } from "@jiange/sheet-sdk/xlsx";
-import { readXlsx, XLSX_MAX_INPUT_BYTES } from "@jiange/sheet-sdk/xlsx-read";
+import { writeXlsx } from "@zseven-w/sheet-sdk/xlsx";
+import { readXlsx, XLSX_MAX_INPUT_BYTES } from "@zseven-w/sheet-sdk/xlsx-read";
 import { t, useI18n } from "@/lib/i18n";
 import { calculateSheet } from "./formula";
 import { applyCellChanges, clearSelection, columnName, pointKey, PREVIEW_COLS, PREVIEW_ROWS, selected, selectionOutline, selectionText, sheetAddress, type CellEdit, type SheetCells, type SheetPoint, type SheetSelection } from "./grid-model";

@@ -1,10 +1,10 @@
 /**
- * Optional zero-bundle-cost React adapter factory for `@jiange/whiteboard-ui`.
+ * Optional zero-bundle-cost React adapter factory for `@zseven-w/whiteboard-ui`.
  * Call `createWhiteboardViewComponent(React)` to obtain a React component without
  * pulling React into vanilla/Vue/Svelte bundles.
  */
 
-import type { Board } from "@jiange/whiteboard-sdk";
+import type { Board } from "@zseven-w/whiteboard-sdk";
 import { mountWhiteboardView, type MountedWhiteboardView, type WhiteboardViewOptions } from "./whiteboard-view.js";
 
 export interface WhiteboardReactLike {

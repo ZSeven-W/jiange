@@ -1,4 +1,4 @@
-import { Doc, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, UndoManager } from "@jiange/collab";
+import { Doc, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, UndoManager } from "@zseven-w/collab";
 import { conditionalBatchBase64, type ConditionalOpsStatus } from "@/lib/api";
 import { conditionalOpsDigest, conditionalResolution, type ConditionalAttempt, type ConditionalJournalEnvironment, type ConditionalObservation } from "@/lib/conditional-journal";
 import { TITLE } from "./model";

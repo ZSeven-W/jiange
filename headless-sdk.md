@@ -4,7 +4,7 @@
 
 Jiange 提供一套**超轻量、可独立安装、AI-Native、零 Canvas 2D（WebGPU/WebGL2 + 虚拟列表）**的前端/Headless TypeScript SDK 套件、**独立零外部依赖的 Go 后端可嵌入 SDK**（`sdk/go/`）+ 可选 PostgreSQL 适配器（`sdk/go-pgstore/`），以及 **Go 单静态二进制原生 CLI & Streamable HTTP/stdio MCP Server**（`cli/`）。
 
-- **零臃肿 / 独立安装**：各业务 Headless SDK 之间**零交叉依赖**（仅共享 ~4.9 KB gzip 的 `@jiange/ooxml` 或 ~17.5 KB gzip 的 `@jiange/render-gpu`），全部 Headless SDK、Go 后端 SDK、PostgreSQL 适配器与 Go CLI/MCP 均**零第三方运行时依赖**。
+- **零臃肿 / 独立安装**：各业务 Headless SDK 之间**零交叉依赖**（仅共享 ~4.9 KB gzip 的 `@zseven-w/ooxml` 或 ~17.5 KB gzip 的 `@zseven-w/render-gpu`），全部 Headless SDK、Go 后端 SDK、PostgreSQL 适配器与 Go CLI/MCP 均**零第三方运行时依赖**。
 - **零 Canvas 2D**：所有图形/表格/幻灯片/白板/仪表盘 UI 均基于 **WebGPU（主后端）+ WebGL2（自动降级）+ 4 条 SDF/GlyphAtlas 管线 + 稀疏 Fenwick 树虚拟列表 / 池化 2D 虚拟网格**，通过静态校验确保零 `getContext("2d")`。
 - **100% 单元测试覆盖率**：全部 13 个 TypeScript 包（Statements / Branches / Functions / Lines 四项 100%，零 `v8/c8/istanbul ignore`）、4 个 Go CLI/MCP 包（100.0% Statements + `-race`）、10 个 Go 后端 SDK 包（100.0% Statements + `-race`）与 `sdk/go-pgstore`（100.0% Statements + `-race`）均通过严格覆盖率门禁。
 
@@ -12,19 +12,19 @@ Jiange 提供一套**超轻量、可独立安装、AI-Native、零 Canvas 2D（W
 
 | 包 | 层级 | 运行时依赖 | Gzip 体积 | V8 覆盖率 (S/B/F/L) | 核心能力 |
 | --- | --- | --- | ---: | :---: | --- |
-| `@jiange/ooxml` | L0 基础 | 0 | 4.9 KB | 100 / 100 / 100 / 100 | 同步 STORE + 异步 DEFLATE (`createZipAsync`) + 可配置限额 + 有界安全 XML 解析 |
-| `@jiange/collab` | L0 协同 | 0 | 35.1 KB | 100 / 100 / 100 / 100 | RGA 文档 CRDT、`SyncClient`、`UndoManager` + 可选子路径 `./table`、`./ws`、`./storage`、`./ai-agent` |
-| `@jiange/sheet-sdk` | L1 Headless | `@jiange/ooxml` | 72.6 KB | 100 / 100 / 100 / 100 | `Workbook` Facade、AST+DAG 增量公式引擎（148 个内置函数含 `LET`/`LAMBDA`/`ARRAYFORMULA`/`QUERY`/`REGEX*`/`IMAGE` + 动态数组 `#SPILL!` + Worker）、DEFLATE XLSX（含条件格式 `<conditionalFormatting>` 与批注 `comments*.xml`）、CSV/TSV、`createSheetTools` |
-| `@jiange/doc-sdk` | L1 Headless | `@jiange/collab`, `@jiange/ooxml` | 58.1 KB | 100 / 100 / 100 / 100 | `Document` Facade、Markdown/HTML/DOCX(DEFLATE) 双向、大纲/章节读取、保样式 `replaceText`、批注与修订、`createDocTools` |
-| `@jiange/slides-sdk` | L1 Headless | `@jiange/ooxml` | 25.8 KB | 100 / 100 / 100 / 100 | `Presentation` Facade、主题/富段落/原生表格/图表/视频音频媒体与图片裁剪、DEFLATE `.pptx`、纯 TS 16:9 SVG 渲染、视觉诊断 `verify()`、`createSlidesTools` |
-| `@jiange/whiteboard-sdk` | L1 Headless | `@jiange/ooxml` | 36.8 KB | 100 / 100 / 100 / 100 | `Board` Facade、Mermaid 双向、DAG 自动布局/对齐分布、纯 TS SVG、DEFLATE `.xmind`、拓扑诊断 `verify()`、`createWhiteboardTools` |
-| `@jiange/base-sdk` | L1 Headless | **0** | 14.7 KB | 100 / 100 / 100 / 100 | `Base` Facade（含 `version`）、23 种字段类型（含货币/进度/自动编号/按钮/地理位置）、7 种视图（含层级树）、拓扑 `[Field]` 公式引擎、跨表 `link`/`lookup`、多级分组、仪表盘聚合、CSV 推类型、`createBaseTools` |
-| `@jiange/render-gpu` | L2 渲染核 | **0** | 17.5 KB | 100 / 100 / 100 / 100 | WebGPU + WebGL2 + Headless 后端、Rect/Line/Arc SDF + R8 位图 `GlyphAtlas` 四管线、百万行稀疏 `FenwickVirtualizer`、`VirtualList1D`/`VirtualGrid2D` 复用池、`SpatialIndex`、零 GC `InstanceBatch` |
-| `@jiange/sheet-ui` | L2 UI | `sheet-sdk`, `render-gpu` | 7.4 KB | 100 / 100 / 100 / 100 | 4 象限冻结窗格 GPU Scissor + 池化文本层 + 单例 IME + 内嵌图表 + `mountSheetView` / `./react` / `<jiange-sheet>` |
-| `@jiange/doc-ui` | L2 UI | `doc-sdk`, `render-gpu` | 2.8 KB | 100 / 100 / 100 / 100 | `VirtualList1D`（版本缓存）+ 动态块高追踪 + 大纲跳转 + `mountDocView` / `./react` / `<jiange-doc>` |
-| `@jiange/slides-ui` | L2 UI | `slides-sdk`, `render-gpu` | 4.2 KB | 100 / 100 / 100 / 100 | GPU SDF 舞台 + 虚拟缩略图栏 + 缩放控制柄 + 放映模式 + `mountSlidesView` / `./react` / `<jiange-slides>` |
-| `@jiange/whiteboard-ui` | L2 UI | `whiteboard-sdk`, `render-gpu` | 4.5 KB | 100 / 100 / 100 / 100 | 无限画布相机 + `SpatialIndex` 视锥剔除 + GPU SDF 图形/连线/脑图/笔迹 + `mountWhiteboardView` / `./react` / `<jiange-whiteboard>` |
-| `@jiange/base-ui` | L2 UI | `base-sdk`, `render-gpu` | 4.3 KB | 100 / 100 / 100 / 100 | 网格（版本缓存 + 条件填色）+ 看板 + 甘特图 + 仪表盘 GPU 视图 + `mountBaseView` / `./react` / `<jiange-base>` |
+| `@zseven-w/ooxml` | L0 基础 | 0 | 4.9 KB | 100 / 100 / 100 / 100 | 同步 STORE + 异步 DEFLATE (`createZipAsync`) + 可配置限额 + 有界安全 XML 解析 |
+| `@zseven-w/collab` | L0 协同 | 0 | 35.1 KB | 100 / 100 / 100 / 100 | RGA 文档 CRDT、`SyncClient`、`UndoManager` + 可选子路径 `./table`、`./ws`、`./storage`、`./ai-agent` |
+| `@zseven-w/sheet-sdk` | L1 Headless | `@zseven-w/ooxml` | 72.6 KB | 100 / 100 / 100 / 100 | `Workbook` Facade、AST+DAG 增量公式引擎（148 个内置函数含 `LET`/`LAMBDA`/`ARRAYFORMULA`/`QUERY`/`REGEX*`/`IMAGE` + 动态数组 `#SPILL!` + Worker）、DEFLATE XLSX（含条件格式 `<conditionalFormatting>` 与批注 `comments*.xml`）、CSV/TSV、`createSheetTools` |
+| `@zseven-w/doc-sdk` | L1 Headless | `@zseven-w/collab`, `@zseven-w/ooxml` | 58.1 KB | 100 / 100 / 100 / 100 | `Document` Facade、Markdown/HTML/DOCX(DEFLATE) 双向、大纲/章节读取、保样式 `replaceText`、批注与修订、`createDocTools` |
+| `@zseven-w/slides-sdk` | L1 Headless | `@zseven-w/ooxml` | 25.8 KB | 100 / 100 / 100 / 100 | `Presentation` Facade、主题/富段落/原生表格/图表/视频音频媒体与图片裁剪、DEFLATE `.pptx`、纯 TS 16:9 SVG 渲染、视觉诊断 `verify()`、`createSlidesTools` |
+| `@zseven-w/whiteboard-sdk` | L1 Headless | `@zseven-w/ooxml` | 36.8 KB | 100 / 100 / 100 / 100 | `Board` Facade、Mermaid 双向、DAG 自动布局/对齐分布、纯 TS SVG、DEFLATE `.xmind`、拓扑诊断 `verify()`、`createWhiteboardTools` |
+| `@zseven-w/base-sdk` | L1 Headless | **0** | 14.7 KB | 100 / 100 / 100 / 100 | `Base` Facade（含 `version`）、23 种字段类型（含货币/进度/自动编号/按钮/地理位置）、7 种视图（含层级树）、拓扑 `[Field]` 公式引擎、跨表 `link`/`lookup`、多级分组、仪表盘聚合、CSV 推类型、`createBaseTools` |
+| `@zseven-w/render-gpu` | L2 渲染核 | **0** | 17.5 KB | 100 / 100 / 100 / 100 | WebGPU + WebGL2 + Headless 后端、Rect/Line/Arc SDF + R8 位图 `GlyphAtlas` 四管线、百万行稀疏 `FenwickVirtualizer`、`VirtualList1D`/`VirtualGrid2D` 复用池、`SpatialIndex`、零 GC `InstanceBatch` |
+| `@zseven-w/sheet-ui` | L2 UI | `sheet-sdk`, `render-gpu` | 7.4 KB | 100 / 100 / 100 / 100 | 4 象限冻结窗格 GPU Scissor + 池化文本层 + 单例 IME + 内嵌图表 + `mountSheetView` / `./react` / `<jiange-sheet>` |
+| `@zseven-w/doc-ui` | L2 UI | `doc-sdk`, `render-gpu` | 2.8 KB | 100 / 100 / 100 / 100 | `VirtualList1D`（版本缓存）+ 动态块高追踪 + 大纲跳转 + `mountDocView` / `./react` / `<jiange-doc>` |
+| `@zseven-w/slides-ui` | L2 UI | `slides-sdk`, `render-gpu` | 4.2 KB | 100 / 100 / 100 / 100 | GPU SDF 舞台 + 虚拟缩略图栏 + 缩放控制柄 + 放映模式 + `mountSlidesView` / `./react` / `<jiange-slides>` |
+| `@zseven-w/whiteboard-ui` | L2 UI | `whiteboard-sdk`, `render-gpu` | 4.5 KB | 100 / 100 / 100 / 100 | 无限画布相机 + `SpatialIndex` 视锥剔除 + GPU SDF 图形/连线/脑图/笔迹 + `mountWhiteboardView` / `./react` / `<jiange-whiteboard>` |
+| `@zseven-w/base-ui` | L2 UI | `base-sdk`, `render-gpu` | 4.3 KB | 100 / 100 / 100 / 100 | 网格（版本缓存 + 条件填色）+ 看板 + 甘特图 + 仪表盘 GPU 视图 + `mountBaseView` / `./react` / `<jiange-base>` |
 
 ## 二、Go 后端可嵌入 SDK 与 PostgreSQL 适配器（11 包，零第三方依赖，100.0% 覆盖）
 

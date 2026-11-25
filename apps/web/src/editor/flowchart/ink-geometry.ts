@@ -1,1 +1,1 @@
-export * from "@jiange/whiteboard-sdk/ink-geometry";
+export * from "@zseven-w/whiteboard-sdk/ink-geometry";

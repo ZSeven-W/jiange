@@ -1,4 +1,4 @@
-import type { Anchor, OpId } from "@jiange/collab";
+import type { Anchor, OpId } from "@zseven-w/collab";
 
 export interface Presence {
   name: string;

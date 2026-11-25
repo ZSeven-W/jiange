@@ -1,6 +1,6 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Doc, encodeOps, eqId, idKey, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
+import { Doc, encodeOps, eqId, idKey, ROOT, Tx, UndoManager, type Op } from "@zseven-w/collab";
 import { conditionalBatchBase64, queryConditionalOpsStatus } from "@/lib/api";
 import { conditionalOpsDigest, type ConditionalAttempt, type ConditionalObservation } from "@/lib/conditional-journal";
 import { TITLE } from "./model";

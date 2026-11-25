@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Anchor } from "@jiange/collab";
+import type { Anchor } from "@zseven-w/collab";
 import type { RemotePeer } from "./use-sync-doc";
 import type { Presence } from "./presence";
 import {

@@ -1,4 +1,4 @@
-# Changelog — @jiange/sheet-ui
+# Changelog — @zseven-w/sheet-ui
 
 ## [0.2.0] - 2026-11-21
 

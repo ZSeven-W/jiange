@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AlignCenter, AlignLeft, AlignRight, Download, MessageSquarePlus, RefreshCw, Trash2 } from "lucide-react";
-import type { SyncStatus } from "@jiange/collab";
+import type { SyncStatus } from "@zseven-w/collab";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";
 import { isSafeMarkdownImageUrl } from "@/lib/markdown-image-import";

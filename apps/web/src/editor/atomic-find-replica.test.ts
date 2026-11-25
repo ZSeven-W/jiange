@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Doc, encodeServerMsg } from "@jiange/collab";
+import { Doc, encodeServerMsg } from "@zseven-w/collab";
 import { allocateAtomicFindReplica } from "./atomic-find-replica";
 
 class FakeSocket {

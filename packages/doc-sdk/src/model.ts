@@ -1,4 +1,4 @@
-import { eqId, idKey, ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
+import { eqId, idKey, ROOT, Tx, type Doc, type OpId } from "@zseven-w/collab";
 
 export const TITLE: OpId = { client: 0, clock: 1 };
 export interface Pos {

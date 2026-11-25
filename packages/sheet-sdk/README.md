@@ -1,4 +1,4 @@
-# @jiange/sheet-sdk
+# @zseven-w/sheet-sdk
 
 AI-native headless Spreadsheet engine (`v0.2.0`): incremental AST + DAG formula engine (**144 Excel functions** + dynamic arrays + Web Worker protocol), bounded DEFLATE XLSX / CSV / TSV I/O, data validations, conditional formatting, charts, pivot tables, and self-describing AI tools.
 
@@ -7,10 +7,10 @@ Independently installable with zero UI, framework, or cross-domain SDK bloat.
 ## Install
 
 ```bash
-npm install @jiange/sheet-sdk
+npm install @zseven-w/sheet-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/ooxml` (0 third-party dependencies)
+- **Runtime dependencies**: `@zseven-w/ooxml` (0 third-party dependencies)
 - **Bundle size**: ~72.6 KB gzip
 
 ## Features
@@ -26,7 +26,7 @@ npm install @jiange/sheet-sdk
 ## Quickstart
 
 ```ts
-import { Workbook, createSheetTools, SUPPORTED_FORMULA_FUNCTIONS } from "@jiange/sheet-sdk";
+import { Workbook, createSheetTools, SUPPORTED_FORMULA_FUNCTIONS } from "@zseven-w/sheet-sdk";
 
 const wb = Workbook.fromCsv("Item,Qty,Price\nPro,120,49\nEnterprise,25,299\n", "Sales");
 const tools = createSheetTools(wb);
@@ -74,17 +74,17 @@ void [preview, xlsxBytes];
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/sheet-sdk` | Full barrel export (`Workbook`, `createSheetTools`, formulas, XLSX, CSV/TSV, rules, analytics, worker) |
-| `@jiange/sheet-sdk/workbook` | `Workbook`, `WorksheetProxy`, `WorkbookOp`, `WorkbookInspectSummary` |
-| `@jiange/sheet-sdk/ai-tools` | `createSheetTools` |
-| `@jiange/sheet-sdk/formula-engine` | `IncrementalFormulaEngine`, `calculateWorkbook`, `evalScalarRaw`, sorting/filtering helpers |
-| `@jiange/sheet-sdk/formula-functions` | `SUPPORTED_FORMULA_FUNCTIONS` (144 Excel functions) |
-| `@jiange/sheet-sdk/formula-ast` | Formula tokenizer & AST parser |
-| `@jiange/sheet-sdk/formula` | Legacy `calculateSheet`, `translateSheetFormula` |
-| `@jiange/sheet-sdk/worker` | `createFormulaWorkerHost`, `FormulaWorkerClient` |
-| `@jiange/sheet-sdk/xlsx` / `./xlsx-read` / `./workbook-xlsx` | `writeXlsx`, `writeXlsxAsync`, `readXlsx`, `XlsxError`, `resolveXlsxLimits` *(deprecated alias: `./xlsxRead`)* |
-| `@jiange/sheet-sdk/csv` / `./tsv` / `./numfmt` / `./clipboard` | RFC 4180 CSV, TSV, Excel number formatter, clipboard codec |
-| `@jiange/sheet-sdk/rules` / `./analytics` / `./collab` / `./grid` / `./types` | Data validation, conditional format, charts, pivots, collab delta helpers, A1 grid math, types |
+| `@zseven-w/sheet-sdk` | Full barrel export (`Workbook`, `createSheetTools`, formulas, XLSX, CSV/TSV, rules, analytics, worker) |
+| `@zseven-w/sheet-sdk/workbook` | `Workbook`, `WorksheetProxy`, `WorkbookOp`, `WorkbookInspectSummary` |
+| `@zseven-w/sheet-sdk/ai-tools` | `createSheetTools` |
+| `@zseven-w/sheet-sdk/formula-engine` | `IncrementalFormulaEngine`, `calculateWorkbook`, `evalScalarRaw`, sorting/filtering helpers |
+| `@zseven-w/sheet-sdk/formula-functions` | `SUPPORTED_FORMULA_FUNCTIONS` (144 Excel functions) |
+| `@zseven-w/sheet-sdk/formula-ast` | Formula tokenizer & AST parser |
+| `@zseven-w/sheet-sdk/formula` | Legacy `calculateSheet`, `translateSheetFormula` |
+| `@zseven-w/sheet-sdk/worker` | `createFormulaWorkerHost`, `FormulaWorkerClient` |
+| `@zseven-w/sheet-sdk/xlsx` / `./xlsx-read` / `./workbook-xlsx` | `writeXlsx`, `writeXlsxAsync`, `readXlsx`, `XlsxError`, `resolveXlsxLimits` *(deprecated alias: `./xlsxRead`)* |
+| `@zseven-w/sheet-sdk/csv` / `./tsv` / `./numfmt` / `./clipboard` | RFC 4180 CSV, TSV, Excel number formatter, clipboard codec |
+| `@zseven-w/sheet-sdk/rules` / `./analytics` / `./collab` / `./grid` / `./types` | Data validation, conditional format, charts, pivots, collab delta helpers, A1 grid math, types |
 
 ## Documentation
 

@@ -1,5 +1,5 @@
 {
-  "name": "@jiange/doc-sdk",
+  "name": "@zseven-w/doc-sdk",
   "version": "0.2.0",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -120,8 +120,8 @@
     "vitest": "^2.1.8"
   },
   "dependencies": {
-    "@jiange/collab": "workspace:*",
-    "@jiange/ooxml": "workspace:*"
+    "@zseven-w/collab": "workspace:*",
+    "@zseven-w/ooxml": "workspace:*"
   },
   "homepage": "https://github.com/ZSeven-W/jiange#readme",
   "repository": {

@@ -1,14 +1,14 @@
-# @jiange/whiteboard-sdk
+# @zseven-w/whiteboard-sdk
 
-AI-native headless Whiteboard, Flowchart & MindMap SDK (`v0.2.0`) over `@jiange/ooxml`: unified `Board` Facade, bidirectional Mermaid diagrams, layered DAG auto-layout, alignment/distribution, pure-TS SVG rendering, DEFLATE `.xmind` import/export, freehand ink geometry, topology auditing (`verify()`), and self-describing AI tools.
+AI-native headless Whiteboard, Flowchart & MindMap SDK (`v0.2.0`) over `@zseven-w/ooxml`: unified `Board` Facade, bidirectional Mermaid diagrams, layered DAG auto-layout, alignment/distribution, pure-TS SVG rendering, DEFLATE `.xmind` import/export, freehand ink geometry, topology auditing (`verify()`), and self-describing AI tools.
 
 ## Install
 
 ```bash
-npm install @jiange/whiteboard-sdk
+npm install @zseven-w/whiteboard-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/ooxml` (0 third-party dependencies)
+- **Runtime dependencies**: `@zseven-w/ooxml` (0 third-party dependencies)
 - **Bundle size**: ~36.8 KB gzip
 
 ## Features
@@ -22,7 +22,7 @@ npm install @jiange/whiteboard-sdk
 ## Quickstart
 
 ```ts
-import { Board, createWhiteboardTools } from "@jiange/whiteboard-sdk";
+import { Board, createWhiteboardTools } from "@zseven-w/whiteboard-sdk";
 
 const board = Board.fromMermaid(`
 flowchart LR
@@ -44,14 +44,14 @@ void [diagnostics, svg, mermaid, xmindBytes];
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/whiteboard-sdk` | Full barrel export (`Board`, `createWhiteboardTools`, Mermaid, SVG, XMind, mindmap, ink, viewport) |
-| `@jiange/whiteboard-sdk/board` | `Board`, `BoardOp`, `BoardDiagnostic`, `BoardInspectResult`, `BoardApplyResult` |
-| `@jiange/whiteboard-sdk/ai-tools` | `createWhiteboardTools` |
-| `@jiange/whiteboard-sdk/mermaid` | `fromMermaid` |
-| `@jiange/whiteboard-sdk/svg` | `renderBoardToSvg` |
-| `@jiange/whiteboard-sdk/xmind` | `exportMindMapToXmind`, `exportMindMapToXmindAsync`, `parseXmindToMindMap`, `XmindError` |
-| `@jiange/whiteboard-sdk/model` / `./mindmap` | `readFlow`, `flowWrites`, `FlowGraph`, `FlowNode`, `FlowEdge`, mind-map layout & tree helpers |
-| `@jiange/whiteboard-sdk/ink-geometry` / `./comment-anchor` / `./history` / `./viewport` | Ink scaling (`scaleInk`, `scaleSelectionProportionally`), comment anchors, undo history, viewport math *(deprecated camelCase alias: `./inkGeometry`)* |
+| `@zseven-w/whiteboard-sdk` | Full barrel export (`Board`, `createWhiteboardTools`, Mermaid, SVG, XMind, mindmap, ink, viewport) |
+| `@zseven-w/whiteboard-sdk/board` | `Board`, `BoardOp`, `BoardDiagnostic`, `BoardInspectResult`, `BoardApplyResult` |
+| `@zseven-w/whiteboard-sdk/ai-tools` | `createWhiteboardTools` |
+| `@zseven-w/whiteboard-sdk/mermaid` | `fromMermaid` |
+| `@zseven-w/whiteboard-sdk/svg` | `renderBoardToSvg` |
+| `@zseven-w/whiteboard-sdk/xmind` | `exportMindMapToXmind`, `exportMindMapToXmindAsync`, `parseXmindToMindMap`, `XmindError` |
+| `@zseven-w/whiteboard-sdk/model` / `./mindmap` | `readFlow`, `flowWrites`, `FlowGraph`, `FlowNode`, `FlowEdge`, mind-map layout & tree helpers |
+| `@zseven-w/whiteboard-sdk/ink-geometry` / `./comment-anchor` / `./history` / `./viewport` | Ink scaling (`scaleInk`, `scaleSelectionProportionally`), comment anchors, undo history, viewport math *(deprecated camelCase alias: `./inkGeometry`)* |
 
 ## Documentation
 

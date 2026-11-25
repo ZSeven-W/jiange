@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-// BaseFieldData mirrors @jiange/base-sdk BaseField.
+// BaseFieldData mirrors @zseven-w/base-sdk BaseField.
 type BaseFieldData struct {
 	ID        int      `json:"id"`
 	TableID   int      `json:"tableId"`
@@ -21,13 +21,13 @@ type BaseFieldData struct {
 	Options   []string `json:"options,omitempty"`
 }
 
-// BaseTableData mirrors @jiange/base-sdk BaseTable.
+// BaseTableData mirrors @zseven-w/base-sdk BaseTable.
 type BaseTableData struct {
 	ID   int    `json:"id"`
 	Name string `json:"name"`
 }
 
-// BaseRecordData mirrors @jiange/base-sdk BaseRecord.
+// BaseRecordData mirrors @zseven-w/base-sdk BaseRecord.
 type BaseRecordData struct {
 	ID      int            `json:"id"`
 	TableID int            `json:"tableId"`

@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/shape-order";
+export * from "@zseven-w/slides-sdk/shape-order";

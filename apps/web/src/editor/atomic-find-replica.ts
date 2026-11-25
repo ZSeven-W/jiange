@@ -1,4 +1,4 @@
-import { SyncClient } from "@jiange/collab";
+import { SyncClient } from "@zseven-w/collab";
 
 /** Obtain an isolated operation author from the authenticated sync service.
  * The returned ID must be used by only one in-flight planner at a time. */

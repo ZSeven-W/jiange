@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { SyncClient } from "@jiange/collab";
+import type { SyncClient } from "@zseven-w/collab";
 import { ApiError } from "@/lib/api";
 import { namedVersionPoint } from "./named-version-safety";
 import { versionSaveError } from "./named-version-dialog";

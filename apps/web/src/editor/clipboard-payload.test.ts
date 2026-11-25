@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { blockClipboardHTML, blockClipboardPlain, blockPayloadFromHTML, clipboardBlocks, columnClipboardBlocks, confirmBlockClipboard, cutConfirmedBlock, hasHiddenTableContent, writeBlockClipboard } from "./clipboard-payload";
 import { deleteRange, mathSpans, pasteBlocks } from "./model";
 import { cellAlignKey, cellFillKey, cellTableWrites, tableCellAlign, tableCellFill, tableRowsOf, writeTable } from "./table-cells";

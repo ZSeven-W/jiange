@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { captureLinkRange, resolveLinkRange } from "./link-range";
 function fixture() { const doc = new Doc(1), tx = new Tx(doc), b = tx.create("paragraph", null, ROOT); tx.insert(b, 0, "文本链接尾"); tx.format(b, 2, 4, "link", "https://example.test/"); return { doc, b }; }
 describe("stable link ranges", () => {

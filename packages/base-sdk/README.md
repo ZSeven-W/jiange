@@ -1,14 +1,14 @@
-# @jiange/base-sdk
+# @zseven-w/base-sdk
 
 Zero-dependency AI-native headless Multidimensional Base / Bitable SDK (`v0.2.0`): multi-table relational schemas across **18 field types**, topological `[Field]` formula engine (**35 built-in functions** + `#CYCLE` detection), cross-table `link`/`lookup`, view query engine, dashboard aggregator, RFC 4180 CSV/TSV with type inference, and self-describing AI tools.
 
 ## Install
 
 ```bash
-npm install @jiange/base-sdk
+npm install @zseven-w/base-sdk
 ```
 
-- **Runtime dependencies**: `0` (completely standalone — does not even require `@jiange/ooxml`)
+- **Runtime dependencies**: `0` (completely standalone — does not even require `@zseven-w/ooxml`)
 - **Bundle size**: ~14.7 KB gzip
 
 ## Features
@@ -23,7 +23,7 @@ npm install @jiange/base-sdk
 ## Quickstart
 
 ```ts
-import { Base, createBaseTools } from "@jiange/base-sdk";
+import { Base, createBaseTools } from "@zseven-w/base-sdk";
 
 const base = Base.create({ name: "CRM Pipeline", defaultTableName: "Deals" });
 const tools = createBaseTools(base);
@@ -49,14 +49,14 @@ void [queried, summary, csv, issues];
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/base-sdk` | Full barrel export (`Base`, `createBaseTools`, formulas, query, dashboard, CSV, types) |
-| `@jiange/base-sdk/base` | `Base`, `BaseOp`, `BaseDiagnostic`, `BaseInspectResult`, `BaseApplyResult` |
-| `@jiange/base-sdk/ai-tools` | `createBaseTools` |
-| `@jiange/base-sdk/formula` | `FUNCS` (35 functions), `parseFormula`, `evalFormula`, `evalRecordFormulas`, `formulaRefs`, `formulaValid`, `FormulaError` |
-| `@jiange/base-sdk/query` | `queryRecords`, `evaluateFilterRule`, `matchFillRule`, `computeSelectionStats`, `formatCellText`, `isCellEmpty` |
-| `@jiange/base-sdk/dashboard` | `computeMetricSummary`, `computeGroupedSeries`, `defaultDashboardWidgets`, `DASHBOARD_PALETTE`, `isGroupableField`, `isNumericField` |
-| `@jiange/base-sdk/csv` | `exportTableToCsv`, `parseCsvToTableData`, `parseDelimitedRows` |
-| `@jiange/base-sdk/types` | `FieldType`, `BaseTable`, `BaseField`, `BaseRecord`, `BaseView`, `BaseSnapshot`, `DashboardWidget`, `FilterRule`, `FillRule` |
+| `@zseven-w/base-sdk` | Full barrel export (`Base`, `createBaseTools`, formulas, query, dashboard, CSV, types) |
+| `@zseven-w/base-sdk/base` | `Base`, `BaseOp`, `BaseDiagnostic`, `BaseInspectResult`, `BaseApplyResult` |
+| `@zseven-w/base-sdk/ai-tools` | `createBaseTools` |
+| `@zseven-w/base-sdk/formula` | `FUNCS` (35 functions), `parseFormula`, `evalFormula`, `evalRecordFormulas`, `formulaRefs`, `formulaValid`, `FormulaError` |
+| `@zseven-w/base-sdk/query` | `queryRecords`, `evaluateFilterRule`, `matchFillRule`, `computeSelectionStats`, `formatCellText`, `isCellEmpty` |
+| `@zseven-w/base-sdk/dashboard` | `computeMetricSummary`, `computeGroupedSeries`, `defaultDashboardWidgets`, `DASHBOARD_PALETTE`, `isGroupableField`, `isNumericField` |
+| `@zseven-w/base-sdk/csv` | `exportTableToCsv`, `parseCsvToTableData`, `parseDelimitedRows` |
+| `@zseven-w/base-sdk/types` | `FieldType`, `BaseTable`, `BaseField`, `BaseRecord`, `BaseView`, `BaseSnapshot`, `DashboardWidget`, `FilterRule`, `FillRule` |
 
 ## Documentation
 

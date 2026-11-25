@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createZip, listZip } from "@jiange/ooxml/zip";
+import { createZip, listZip } from "@zseven-w/ooxml/zip";
 import { exportMindMapToXmind, parseXmindToMindMap, XmindError } from "../src/xmind.js";
 import type { FlowGraph } from "../src/model.js";
 

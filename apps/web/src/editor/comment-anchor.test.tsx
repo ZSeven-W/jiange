@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 import { commentSelection, projectCommentAnchors, scrollToCommentAnchor, scrollToCommentThread } from "./comment-anchor";
 import { FormatToolbar } from "./format-toolbar";
 import { Editor } from "./editor";

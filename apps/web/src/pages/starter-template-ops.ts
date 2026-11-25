@@ -1,4 +1,4 @@
-import { ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
+import { ROOT, Tx, type Doc, type OpId } from "@zseven-w/collab";
 import { bodyBlocks, TITLE } from "@/editor/model";
 import { parseMarkdown, type MdBlock } from "@/lib/markdown";
 import { isSafeMarkdownImageUrl } from "@/lib/markdown-image-import";

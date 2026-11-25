@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/line-endpoints";
+export * from "@zseven-w/slides-sdk/line-endpoints";

@@ -1,10 +1,10 @@
 /**
- * SSR-safe Web Component registration helper for `@jiange/base-ui`.
+ * SSR-safe Web Component registration helper for `@zseven-w/base-ui`.
  * Registers `<jiange-base>` when `customElements` and `HTMLElement` are available;
  * safely returns `false` in Node.js / SSR environments.
  */
 
-import type { Base } from "@jiange/base-sdk";
+import type { Base } from "@zseven-w/base-sdk";
 import { mountBaseView, type BaseViewOptions, type MountedBaseView } from "./base-view.js";
 
 export interface JiangeBaseElement extends HTMLElement {

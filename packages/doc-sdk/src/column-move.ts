@@ -1,4 +1,4 @@
-import { eqId, idKey, keyBetween, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
+import { eqId, idKey, keyBetween, ROOT, type Doc, type OpId, type Tx } from "@zseven-w/collab";
 
 const POSITION = /^[0-9A-Za-z]{1,512}$/;
 export const validColumnPosition = (value: string): boolean => POSITION.test(value) && !value.endsWith("0");

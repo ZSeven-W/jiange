@@ -1,4 +1,4 @@
-import { eqId, type OpId, type Tx } from "@jiange/collab";
+import { eqId, type OpId, type Tx } from "@zseven-w/collab";
 import { insertSlashBlock, type SlashInsertion } from "./slash-insert";
 import type { Pos } from "./model";
 

@@ -25,7 +25,7 @@ import {
   type BaseRecord,
 } from "../src/index.js";
 
-describe("@jiange/base-sdk full branch coverage", () => {
+describe("@zseven-w/base-sdk full branch coverage", () => {
   it("covers all formula tokenizer, parser, evaluator, FUNCS, and dependency edge cases", () => {
     // Default env when omitted
     expect(evalFormula("[Missing]")).toBeNull();

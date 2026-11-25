@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, type CSSProperties } from "react";
-import { eqId, type Anchor, type OpId } from "@jiange/collab";
+import { eqId, type Anchor, type OpId } from "@zseven-w/collab";
 import { diff } from "@/lib/textdiff";
 import { cpIndex, utf16Index, type Presence } from "@/lib/presence";
 import type { SyncDoc } from "@/lib/use-sync-doc";

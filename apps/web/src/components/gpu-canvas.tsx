@@ -5,7 +5,7 @@ import {
   type GpuBackendKind,
   type GpuFrameStats,
   type RgbaTuple,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 
 export type RGBA = RgbaTuple;
 
@@ -87,7 +87,7 @@ let gpuInstanceCounter = 0;
 
 /**
  * Reusable WebGPU-primary (WebGL2 SDF fallback, zero Canvas 2D) React canvas layer
- * powered by `@jiange/render-gpu`. Safe under SSR (`renderToStaticMarkup`).
+ * powered by `@zseven-w/render-gpu`. Safe under SSR (`renderToStaticMarkup`).
  */
 export const GpuLayer = forwardRef<GpuLayerHandle, GpuLayerProps>(function GpuLayer(
   {

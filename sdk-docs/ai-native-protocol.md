@@ -21,8 +21,8 @@ flowchart LR
 ### 1.1 分级探测与 Token 预算（`inspect`）
 
 - **`detail` 分级**：
-  - `@jiange/sheet-sdk` / `@jiange/doc-sdk`：`outline` | `summary` | `full`
-  - `@jiange/slides-sdk` / `@jiange/whiteboard-sdk` / `@jiange/base-sdk`：`summary` | `standard` | `full`
+  - `@zseven-w/sheet-sdk` / `@zseven-w/doc-sdk`：`outline` | `summary` | `full`
+  - `@zseven-w/slides-sdk` / `@zseven-w/whiteboard-sdk` / `@zseven-w/base-sdk`：`summary` | `standard` | `full`
 - **软预算裁剪（`maxTokens`）**：按字符估算 token（默认约 `2000`），超出预算时自动截断采样并设置 `truncated: true`（Sheet/Doc 还支持 `cursor` 续读与 `focus` 聚焦单工作表/单章节）。
 - **实测开销**：10,000 行（50,000 单元格）工作簿执行 `wb.inspect({ detail: "summary", maxTokens: 1500 })` 耗时仅 **`2.25 ms`**，输出仅 **`89 tokens`**。
 
@@ -112,7 +112,7 @@ flowchart LR
 ### 3.1 OpenAI Function Calling
 
 ```ts
-import { Workbook, createSheetTools } from "@jiange/sheet-sdk";
+import { Workbook, createSheetTools } from "@zseven-w/sheet-sdk";
 
 const wb = Workbook.fromCsv("Item,Qty,Price\nA,2,10\n", "Sales");
 const toolkit = createSheetTools(wb);
@@ -138,7 +138,7 @@ void [openAiTools, handleToolCall];
 ### 3.2 Google Gemini (`functionDeclarations`)
 
 ```ts
-import { Document, createDocTools } from "@jiange/doc-sdk";
+import { Document, createDocTools } from "@zseven-w/doc-sdk";
 
 const doc = Document.fromMarkdown("# Plan\n\nInitial draft.\n");
 const toolkit = createDocTools(doc);
@@ -161,7 +161,7 @@ void geminiTools;
 ### 3.3 Anthropic Claude (`tools`)
 
 ```ts
-import { Presentation, createSlidesTools } from "@jiange/slides-sdk";
+import { Presentation, createSlidesTools } from "@zseven-w/slides-sdk";
 
 const deck = Presentation.create({ title: "Pitch" });
 const toolkit = createSlidesTools(deck);

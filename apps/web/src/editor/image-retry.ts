@@ -1,4 +1,4 @@
-import type { SyncStatus } from "@jiange/collab";
+import type { SyncStatus } from "@zseven-w/collab";
 
 export interface ImageFailure { version: number; status: SyncStatus }
 

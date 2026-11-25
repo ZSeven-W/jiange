@@ -1,4 +1,4 @@
-import { SUPPORTED_FORMULA_FUNCTIONS } from "@jiange/sheet-sdk/formula-functions";
+import { SUPPORTED_FORMULA_FUNCTIONS } from "@zseven-w/sheet-sdk/formula-functions";
 
 export type FormulaCategory =
   | "math"

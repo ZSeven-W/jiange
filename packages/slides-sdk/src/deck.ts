@@ -1,5 +1,5 @@
 /**
- * AI-Native Presentation Facade for `@jiange/slides-sdk`.
+ * AI-Native Presentation Facade for `@zseven-w/slides-sdk`.
  *
  * Provides structured slide/shape authoring, atomic `apply()` with dry-run & undo/redo,
  * token-budgeted `inspect()`, `query()`, pure-TS SVG rendering, PPTX export/import,

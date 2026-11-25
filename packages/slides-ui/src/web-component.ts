@@ -1,10 +1,10 @@
 /**
- * SSR-safe Web Component registration helper for `@jiange/slides-ui`.
+ * SSR-safe Web Component registration helper for `@zseven-w/slides-ui`.
  * Registers `<jiange-slides>` when `customElements` and `HTMLElement` are available;
  * safely returns `false` in Node.js / SSR environments.
  */
 
-import type { Presentation } from "@jiange/slides-sdk";
+import type { Presentation } from "@zseven-w/slides-sdk";
 import { mountSlidesView, type MountedSlidesView, type SlidesViewOptions } from "./slides-view.js";
 
 export interface JiangeSlidesElement extends HTMLElement {

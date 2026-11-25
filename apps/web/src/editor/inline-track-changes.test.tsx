@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 import type { DocSuggestion } from "@/lib/api";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import { InlineTrackChanges, computeInlineDiff, formatSuggestionTimestamp } from "./inline-track-changes";

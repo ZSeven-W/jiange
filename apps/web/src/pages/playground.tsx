@@ -1,5 +1,5 @@
 import { useMemo, useReducer, useState } from "react";
-import { Doc, encodeOps, type Op, type OpId } from "@jiange/collab";
+import { Doc, encodeOps, type Op, type OpId } from "@zseven-w/collab";
 import { diff } from "@/lib/textdiff";
 import { useI18n } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";

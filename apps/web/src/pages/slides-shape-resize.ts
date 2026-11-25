@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/shape-resize";
+export * from "@zseven-w/slides-sdk/shape-resize";

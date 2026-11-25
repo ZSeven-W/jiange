@@ -1,4 +1,4 @@
-import { decodeOps, encodeOps, type Op } from "@jiange/collab";
+import { decodeOps, encodeOps, type Op } from "@zseven-w/collab";
 
 export interface PendingOpsDraft { clientId: number; ops: Op[]; blocked?: string | null; historyEpoch?: number | null }
 export interface PendingSession { key: string; draft: PendingOpsDraft | null; legacy: boolean; otherDrafts: boolean; corrupt: boolean; release: () => Promise<void> }

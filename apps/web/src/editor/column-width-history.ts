@@ -1,4 +1,4 @@
-import { idKey, type Doc, type OpId, type UndoManager } from "@jiange/collab";
+import { idKey, type Doc, type OpId, type UndoManager } from "@zseven-w/collab";
 import { captureColumnWidths, COLUMN_WIDTHS, validColumnWidths } from "./column-widths";
 import { TableCellHistory } from "./table-cell-history";
 import type { ConditionalAlignmentPlan } from "./column-alignment-history";

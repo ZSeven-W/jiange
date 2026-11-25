@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx } from "@jiange/collab";
-import { buildDocx } from "@jiange/doc-sdk/docx";
-import { toMarkdown } from "@jiange/doc-sdk/markdown";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
+import { buildDocx } from "@zseven-w/doc-sdk/docx";
+import { toMarkdown } from "@zseven-w/doc-sdk/markdown";
 import {
   cellRichKey,
   setTableCellRich,

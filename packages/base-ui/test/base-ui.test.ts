@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Base } from "@jiange/base-sdk";
+import { Base } from "@zseven-w/base-sdk";
 import {
   createBaseViewComponent,
   defineBaseElement,
@@ -35,7 +35,7 @@ function makeDomNode(tag: string) {
   };
 }
 
-describe("@jiange/base-ui (WebGPU/WebGL2 Grid, Kanban, Gantt & Dashboard)", () => {
+describe("@zseven-w/base-ui (WebGPU/WebGL2 Grid, Kanban, Gantt & Dashboard)", () => {
   it("renders grid with conditional row fills, kanban groups, gantt bars, and dashboard GPU charts", async () => {
     const base = Base.create({ name: "Roadmap" });
     const tid = base.getTables()[0].id;

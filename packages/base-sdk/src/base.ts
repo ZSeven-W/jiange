@@ -1,5 +1,5 @@
 /**
- * AI-Native `Base` Facade for `@jiange/base-sdk`.
+ * AI-Native `Base` Facade for `@zseven-w/base-sdk`.
  *
  * Manages multiple tables, typed fields, records (with live formula + link/lookup evaluation),
  * saved views, dashboard widgets, CSV/TSV I/O, undo/redo, token-budgeted `inspect()`,

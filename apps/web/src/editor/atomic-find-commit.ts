@@ -1,4 +1,4 @@
-import { decodeOps, encodeOps, eqId, type Op } from "@jiange/collab";
+import { decodeOps, encodeOps, eqId, type Op } from "@zseven-w/collab";
 import { ApiError, cancelConditionalOps, commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalResolution, type ConditionalAttempt, type ConditionalObservation, type ConditionalResolution } from "@/lib/conditional-journal";
 import { TITLE } from "./model";

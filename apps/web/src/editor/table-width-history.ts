@@ -1,4 +1,4 @@
-import { eqId, idKey, ROOT, type Doc, type Op, type OpId, type UndoManager } from "@jiange/collab";
+import { eqId, idKey, ROOT, type Doc, type Op, type OpId, type UndoManager } from "@zseven-w/collab";
 import { isCellTable, tableRowsOf, TBL_BASE, TBL_COLS, TBL_ROWS } from "./table-cells";
 import { TableCellHistory } from "./table-cell-history";
 import { validTableWidths } from "./table-widths";

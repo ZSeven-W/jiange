@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { captureInlineLink, captureInlineLinkSelection, insertInlineLink } from "./slash-link";
 
 function fixture(text: string) { const doc = new Doc(1), tx = new Tx(doc), block = tx.create("paragraph", null, ROOT); tx.insert(block, 0, text); return { doc, block }; }

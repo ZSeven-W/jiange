@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { isSafeSheetImageUrl } from "@jiange/sheet-sdk/formula-functions";
+import { isSafeSheetImageUrl } from "@zseven-w/sheet-sdk/formula-functions";
 import { ExternalLink, Image as ImageIcon, Upload, X } from "lucide-react";
 import { FeishuSelect } from "@/components/feishu-select";
 import { ApiError, driveApi } from "@/lib/api";

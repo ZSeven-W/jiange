@@ -1,6 +1,6 @@
-import { writeXlsx, type XlsxCell, type XlsxStyle } from "@jiange/sheet-sdk/xlsx";
-import { readXlsx, XLSX_MAX_INPUT_BYTES } from "@jiange/sheet-sdk/xlsx-read";
-import { numFmtFromCode } from "@jiange/sheet-sdk/workbook-xlsx";
+import { writeXlsx, type XlsxCell, type XlsxStyle } from "@zseven-w/sheet-sdk/xlsx";
+import { readXlsx, XLSX_MAX_INPUT_BYTES } from "@zseven-w/sheet-sdk/xlsx-read";
+import { numFmtFromCode } from "@zseven-w/sheet-sdk/workbook-xlsx";
 import type { BaseRecord, Cell, Field, User } from "@/lib/api";
 import { displayValue, evalFormulas, formatTime, memberName, personIDs, REGISTRY, setFormulaCache } from "./registry";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { bodyBlocks } from "./model";
 import { captureSlashInsertion, safeSlashUndo } from "./slash-insert";
 import { insertUploadedFiles, uploadTargetUnchanged, validateUploadCommand } from "./upload-insert";

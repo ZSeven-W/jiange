@@ -1,5 +1,5 @@
 /**
- * Mermaid parser (`flowchart`/`graph` and `mindmap`) -> `FlowGraph` for `@jiange/whiteboard-sdk`.
+ * Mermaid parser (`flowchart`/`graph` and `mindmap`) -> `FlowGraph` for `@zseven-w/whiteboard-sdk`.
  * Zero third-party dependencies.
  */
 

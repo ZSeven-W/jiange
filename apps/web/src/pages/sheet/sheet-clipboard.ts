@@ -1,1 +1,1 @@
-export * from "@jiange/sheet-sdk/clipboard";
+export * from "@zseven-w/sheet-sdk/clipboard";

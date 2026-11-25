@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { BOARD_SEED, MINDMAP_SEED, hasBoard, peekBoardKind, stageBoard, takeBoard } from "./board-starter";
 import { insertStarterBlocks } from "./starter-template-ops";
 import { bodyBlocks } from "@/editor/model";

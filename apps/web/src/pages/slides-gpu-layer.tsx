@@ -3,7 +3,7 @@ import {
   InstanceBatch,
   type GpuBackendKind,
   type GpuSurface,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 import type { SlideShape } from "@/lib/api";
 import { cssColorToRGBA, GpuLayer } from "@/components/gpu-canvas";
 
@@ -53,7 +53,7 @@ export interface SlidesGpuLayerProps {
 
 /**
  * Hardware-accelerated WebGPU / WebGL2 SDF Presentation Stage Layer
- * powered by `@jiange/render-gpu`. Renders slide backdrop, SDF rectangles,
+ * powered by `@zseven-w/render-gpu`. Renders slide backdrop, SDF rectangles,
  * rounded rectangles, ellipses, lines/arrowheads, and chart bars directly on GPU.
  */
 export function SlidesGpuLayer({

@@ -1,5 +1,5 @@
 /**
- * AI Tool Definitions (JSON Schema) and executor for `@jiange/whiteboard-sdk`.
+ * AI Tool Definitions (JSON Schema) and executor for `@zseven-w/whiteboard-sdk`.
  */
 
 import { Board, type BoardOp } from "./board.js";

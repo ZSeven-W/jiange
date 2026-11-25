@@ -1,7 +1,7 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx, encodeOps, type Op } from "@jiange/collab";
-import { prepareColumnArchive, prepareColumnArchiveTransition, recoverColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
+import { Doc, ROOT, Tx, encodeOps, type Op } from "@zseven-w/collab";
+import { prepareColumnArchive, prepareColumnArchiveTransition, recoverColumnArchive } from "@zseven-w/doc-sdk/column-archive-experimental";
 import { ApiError, queryConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalJournalStorageKey, type ConditionalAttempt, type ConditionalJournalEnvironment, type ConditionalObservation } from "@/lib/conditional-journal";
 import { ColumnAlignmentCommit } from "./column-alignment-commit";

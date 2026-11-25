@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/visibility";
+export * from "@zseven-w/slides-sdk/visibility";

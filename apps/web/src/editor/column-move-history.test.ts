@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, idKey } from "@zseven-w/collab";
 import { applyColumnMove, captureColumnMove } from "./column-move";
 import { ColumnMoveHistory } from "./column-move-history";
 

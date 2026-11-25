@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listZip } from "@jiange/ooxml/zip";
+import { listZip } from "@zseven-w/ooxml/zip";
 import { Presentation } from "../src/deck.js";
 import { createSlidesTools } from "../src/ai-tools.js";
 import { exportSlidesToPptxAsync, parsePptxToSlides } from "../src/pptx.js";

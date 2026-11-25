@@ -1,4 +1,4 @@
-import { eqId, idKey, type Doc, type OpId } from "@jiange/collab";
+import { eqId, idKey, type Doc, type OpId } from "@zseven-w/collab";
 import type { ClipBlock } from "./model";
 
 export type PastedResourceKind = "doc" | "sheet" | "base" | "slides" | "survey";

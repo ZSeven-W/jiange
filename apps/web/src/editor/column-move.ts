@@ -1,1 +1,1 @@
-export * from "@jiange/doc-sdk/column-move";
+export * from "@zseven-w/doc-sdk/column-move";

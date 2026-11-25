@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, idKey, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, idKey, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { findMatches, replaceMatches, resolveFindMatch } from "./find-replace";
 import { findDocumentMatches } from "./table-find";
 import { applyFindBatch, FindBatchHistory } from "./find-batch";

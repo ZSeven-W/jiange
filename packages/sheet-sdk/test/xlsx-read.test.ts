@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
-import { createZip, listZip, readZipEntry } from "@jiange/ooxml/zip";
+import { createZip, listZip, readZipEntry } from "@zseven-w/ooxml/zip";
 import { readXlsx, XLSX_MAX_INPUT_BYTES } from "../src/xlsx-read.js";
 import { writeXlsx, XlsxError } from "../src/xlsx.js";
 

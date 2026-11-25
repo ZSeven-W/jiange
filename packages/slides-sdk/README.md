@@ -1,14 +1,14 @@
-# @jiange/slides-sdk
+# @zseven-w/slides-sdk
 
-AI-native headless Presentation & PPTX SDK (`v0.2.0`) over `@jiange/ooxml`: structured `Presentation` Facade, themes, rich text paragraphs, native tables, charts, embedded media, DEFLATE `.pptx` import/export, deterministic pure-TS 16:9 SVG rendering, visual layout auditing (`verify()`), and self-describing AI tools.
+AI-native headless Presentation & PPTX SDK (`v0.2.0`) over `@zseven-w/ooxml`: structured `Presentation` Facade, themes, rich text paragraphs, native tables, charts, embedded media, DEFLATE `.pptx` import/export, deterministic pure-TS 16:9 SVG rendering, visual layout auditing (`verify()`), and self-describing AI tools.
 
 ## Install
 
 ```bash
-npm install @jiange/slides-sdk
+npm install @zseven-w/slides-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/ooxml` (0 third-party dependencies)
+- **Runtime dependencies**: `@zseven-w/ooxml` (0 third-party dependencies)
 - **Bundle size**: ~25.8 KB gzip
 
 ## Features
@@ -23,7 +23,7 @@ npm install @jiange/slides-sdk
 ## Quickstart
 
 ```ts
-import { Presentation, createSlidesTools } from "@jiange/slides-sdk";
+import { Presentation, createSlidesTools } from "@zseven-w/slides-sdk";
 
 const deck = Presentation.create({ title: "Q4 Product Review" });
 const tools = createSlidesTools(deck);
@@ -52,13 +52,13 @@ void [diagnostics, svg, pptxBytes];
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/slides-sdk` | Full barrel export (`Presentation`, `createSlidesTools`, PPTX, SVG, geometry & ordering helpers) |
-| `@jiange/slides-sdk/deck` | `Presentation`, `SlideOp`, `SlideDiagnostic`, `SlideInspectResult`, `SlideApplyResult` |
-| `@jiange/slides-sdk/ai-tools` | `createSlidesTools` |
-| `@jiange/slides-sdk/pptx` | `exportSlidesToPptx`, `exportSlidesToPptxAsync`, `parsePptxToSlides`, `PptxError` |
-| `@jiange/slides-sdk/svg` | `renderSlideToSvg`, `renderDeckToSvg` |
-| `@jiange/slides-sdk/shape-state` / `./shape-order` / `./shape-resize` / `./line-endpoints` | Shape state, z-order (`moveShapeOrder`), resize math, line endpoints (`slideLineEndpoints`) |
-| `@jiange/slides-sdk/order` / `./layout` / `./visibility` / `./zoom` | Slide ordering, layout presets, visibility toggles, zoom utilities |
+| `@zseven-w/slides-sdk` | Full barrel export (`Presentation`, `createSlidesTools`, PPTX, SVG, geometry & ordering helpers) |
+| `@zseven-w/slides-sdk/deck` | `Presentation`, `SlideOp`, `SlideDiagnostic`, `SlideInspectResult`, `SlideApplyResult` |
+| `@zseven-w/slides-sdk/ai-tools` | `createSlidesTools` |
+| `@zseven-w/slides-sdk/pptx` | `exportSlidesToPptx`, `exportSlidesToPptxAsync`, `parsePptxToSlides`, `PptxError` |
+| `@zseven-w/slides-sdk/svg` | `renderSlideToSvg`, `renderDeckToSvg` |
+| `@zseven-w/slides-sdk/shape-state` / `./shape-order` / `./shape-resize` / `./line-endpoints` | Shape state, z-order (`moveShapeOrder`), resize math, line endpoints (`slideLineEndpoints`) |
+| `@zseven-w/slides-sdk/order` / `./layout` / `./visibility` / `./zoom` | Slide ordering, layout presets, visibility toggles, zoom utilities |
 
 ## Documentation
 

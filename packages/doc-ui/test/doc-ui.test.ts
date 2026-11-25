@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Document } from "@jiange/doc-sdk";
+import { Document } from "@zseven-w/doc-sdk";
 import {
   DocViewController,
   createDocViewComponent,
@@ -38,7 +38,7 @@ function makeDomNode(tag: string) {
   };
 }
 
-describe("@jiange/doc-ui (VirtualList1D Document Editor)", () => {
+describe("@zseven-w/doc-ui (VirtualList1D Document Editor)", () => {
   it("virtualizes large documents, tracks dynamic heights, jumps by outline, edits blocks, and mounts cleanly", () => {
     const mdLines = ["# Architecture", "## Overview", "Intro paragraph.", "```ts\nconst x = 1;\n```", "---"];
     for (let i = 0; i < 200; i++) mdLines.push(`Paragraph ${i} with sample text.`);

@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/zoom";
+export * from "@zseven-w/slides-sdk/zoom";

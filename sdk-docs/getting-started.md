@@ -6,14 +6,14 @@
 
 ## 路径一：单包 Headless TypeScript SDK（Node.js / Edge / Browser）
 
-每个业务域均可独立安装、零 UI 依赖运行。下面以 `@jiange/sheet-sdk` 为例完成 **CSV 导入 → AI `dryRun` 预演 → 原子写入与增量公式计算 → 确定性校验 → DEFLATE XLSX 导出**：
+每个业务域均可独立安装、零 UI 依赖运行。下面以 `@zseven-w/sheet-sdk` 为例完成 **CSV 导入 → AI `dryRun` 预演 → 原子写入与增量公式计算 → 确定性校验 → DEFLATE XLSX 导出**：
 
 ```bash
-npm install @jiange/sheet-sdk
+npm install @zseven-w/sheet-sdk
 ```
 
 ```ts
-import { Workbook, createSheetTools } from "@jiange/sheet-sdk";
+import { Workbook, createSheetTools } from "@zseven-w/sheet-sdk";
 
 // 1. 从 CSV 初始化工作簿（亦支持 Workbook.create / Workbook.fromXlsx）
 const wb = Workbook.fromCsv(
@@ -54,24 +54,24 @@ console.log("XLSX size (bytes):", xlsxBytes.byteLength);
 
 > 仓库内置了涵盖全部 5 个 Headless SDK 的端到端脚本 [`examples/ts-headless/demo.mjs`](../examples/ts-headless/demo.mjs)，可在仓库根目录直接运行：
 > ```bash
-> pnpm --filter @jiange/collab exec tsx ../../examples/ts-headless/demo.mjs
+> pnpm --filter @zseven-w/collab exec tsx ../../examples/ts-headless/demo.mjs
 > ```
 
 ---
 
 ## 路径二：WebGPU / WebGL2 + 虚拟列表 UI 嵌入
 
-所有 5 个 UI 包（`@jiange/sheet-ui`、`@jiange/doc-ui`、`@jiange/slides-ui`、`@jiange/whiteboard-ui`、`@jiange/base-ui`）均提供 **3 种框架无关接入方式**，且底层零 Canvas 2D。
+所有 5 个 UI 包（`@zseven-w/sheet-ui`、`@zseven-w/doc-ui`、`@zseven-w/slides-ui`、`@zseven-w/whiteboard-ui`、`@zseven-w/base-ui`）均提供 **3 种框架无关接入方式**，且底层零 Canvas 2D。
 
 ```bash
-npm install @jiange/sheet-ui @jiange/sheet-sdk
+npm install @zseven-w/sheet-ui @zseven-w/sheet-sdk
 ```
 
 ### 方式 A：Vanilla 原生挂载（`mount*View`）
 
 ```ts
-import { Workbook } from "@jiange/sheet-sdk";
-import { mountSheetView } from "@jiange/sheet-ui";
+import { Workbook } from "@zseven-w/sheet-sdk";
+import { mountSheetView } from "@zseven-w/sheet-ui";
 
 const wb = Workbook.fromCsv("Region,Q1,Q2\nNorth,120,150\nSouth,90,130\n", "Sales");
 const container = document.getElementById("app")!;
@@ -97,8 +97,8 @@ React 作为可选 peer dependency，通过工厂函数注入宿主 `React` 实�
 
 ```tsx
 import * as React from "react";
-import { Workbook } from "@jiange/sheet-sdk";
-import { createSheetViewComponent } from "@jiange/sheet-ui/react";
+import { Workbook } from "@zseven-w/sheet-sdk";
+import { createSheetViewComponent } from "@zseven-w/sheet-ui/react";
 
 const SheetView = createSheetViewComponent(React);
 
@@ -112,8 +112,8 @@ export function BudgetSheet({ workbook }: { workbook: Workbook }) {
 适合 Vue、Svelte、Angular、Lit 或原生 HTML 页面：
 
 ```ts
-import { Workbook } from "@jiange/sheet-sdk";
-import { defineSheetElement, type JiangeSheetElement } from "@jiange/sheet-ui";
+import { Workbook } from "@zseven-w/sheet-sdk";
+import { defineSheetElement, type JiangeSheetElement } from "@zseven-w/sheet-ui";
 
 // 在 Node.js / SSR 中安全返回 false，在浏览器中注册 <jiange-sheet>
 defineSheetElement();

@@ -1,32 +1,32 @@
-# @jiange/slides-ui
+# @zseven-w/slides-ui
 
-Standalone WebGPU / WebGL2 SDF Presentation stage + virtualized thumbnail rail (`v0.2.0`) over `@jiange/slides-sdk` and `@jiange/render-gpu`.
+Standalone WebGPU / WebGL2 SDF Presentation stage + virtualized thumbnail rail (`v0.2.0`) over `@zseven-w/slides-sdk` and `@zseven-w/render-gpu`.
 
 **Zero HTML5 Canvas 2D usage.**
 
 ## Install
 
 ```bash
-npm install @jiange/slides-ui @jiange/slides-sdk
+npm install @zseven-w/slides-ui @zseven-w/slides-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/slides-sdk`, `@jiange/render-gpu`
-- **Optional peer dependencies**: `react >= 18` (only needed when using `@jiange/slides-ui/react`)
+- **Runtime dependencies**: `@zseven-w/slides-sdk`, `@zseven-w/render-gpu`
+- **Optional peer dependencies**: `react >= 18` (only needed when using `@zseven-w/slides-ui/react`)
 - **Bundle size**: ~4.2 KB gzip
 
 ## Features
 
-- **GPU SDF 16:9 Stage**: Centered 16:9 stage rendering slide backgrounds, vector shapes, lines, selection bounds, and 4-corner resize handles via `@jiange/render-gpu`.
+- **GPU SDF 16:9 Stage**: Centered 16:9 stage rendering slide backgrounds, vector shapes, lines, selection bounds, and 4-corner resize handles via `@zseven-w/render-gpu`.
 - **Virtualized Thumbnail Rail & Presenter Mode**: Pooled `VirtualList1D` thumbnail rail, slide navigation (`goToSlide`, `nextSlide`, `prevSlide`), and `setPresenterMode(true)`.
-- **Framework-Agnostic Embedding**: Vanilla `mountSlidesView`, React factory (`@jiange/slides-ui/react`), and SSR-safe `<jiange-slides>` Web Component (`defineSlidesElement`).
+- **Framework-Agnostic Embedding**: Vanilla `mountSlidesView`, React factory (`@zseven-w/slides-ui/react`), and SSR-safe `<jiange-slides>` Web Component (`defineSlidesElement`).
 
 ## Quickstart
 
 ### 1. Vanilla JS / TS (`mountSlidesView`)
 
 ```ts
-import { Presentation } from "@jiange/slides-sdk";
-import { mountSlidesView } from "@jiange/slides-ui";
+import { Presentation } from "@zseven-w/slides-sdk";
+import { mountSlidesView } from "@zseven-w/slides-ui";
 
 const deck = Presentation.create({ title: "Q4 Keynote" });
 const view = await mountSlidesView(document.getElementById("slides-root")!, deck, {
@@ -38,12 +38,12 @@ view.controller.setPresenterMode(false);
 // view.dispose();
 ```
 
-### 2. React Adapter (`@jiange/slides-ui/react`)
+### 2. React Adapter (`@zseven-w/slides-ui/react`)
 
 ```tsx
 import * as React from "react";
-import { Presentation } from "@jiange/slides-sdk";
-import { createSlidesViewComponent } from "@jiange/slides-ui/react";
+import { Presentation } from "@zseven-w/slides-sdk";
+import { createSlidesViewComponent } from "@zseven-w/slides-ui/react";
 
 const SlidesView = createSlidesViewComponent(React);
 
@@ -55,8 +55,8 @@ export function App({ deck }: { deck: Presentation }) {
 ### 3. Web Component (`<jiange-slides>`)
 
 ```ts
-import { Presentation } from "@jiange/slides-sdk";
-import { defineSlidesElement, type JiangeSlidesElement } from "@jiange/slides-ui";
+import { Presentation } from "@zseven-w/slides-sdk";
+import { defineSlidesElement, type JiangeSlidesElement } from "@zseven-w/slides-ui";
 
 defineSlidesElement(); // Registers <jiange-slides> (returns false safely in SSR/Node)
 const el = document.createElement("jiange-slides") as JiangeSlidesElement;
@@ -69,9 +69,9 @@ document.body.appendChild(el);
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/slides-ui` | `mountSlidesView`, `SlidesViewController`, `createSlidesViewComponent`, `defineSlidesElement` |
-| `@jiange/slides-ui/slides-view` | `mountSlidesView`, `SlidesViewController`, `SlidesViewOptions`, `SlidesFrameResult`, `MountedSlidesView` |
-| `@jiange/slides-ui/react` | `createSlidesViewComponent`, `SlidesViewProps`, `SlidesReactLike` |
+| `@zseven-w/slides-ui` | `mountSlidesView`, `SlidesViewController`, `createSlidesViewComponent`, `defineSlidesElement` |
+| `@zseven-w/slides-ui/slides-view` | `mountSlidesView`, `SlidesViewController`, `SlidesViewOptions`, `SlidesFrameResult`, `MountedSlidesView` |
+| `@zseven-w/slides-ui/react` | `createSlidesViewComponent`, `SlidesViewProps`, `SlidesReactLike` |
 
 ## Documentation
 

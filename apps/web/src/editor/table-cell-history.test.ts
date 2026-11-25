@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableEdit, parseTableData } from "./model";
 

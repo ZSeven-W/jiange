@@ -1,13 +1,13 @@
-# @jiange/render-gpu
+# @zseven-w/render-gpu
 
-Zero-dependency WebGPU / WebGL2 + Virtual List rendering kernel (`v0.2.0`) powering all `@jiange/*-ui` packages.
+Zero-dependency WebGPU / WebGL2 + Virtual List rendering kernel (`v0.2.0`) powering all `@zseven-w/*-ui` packages.
 
 **Zero HTML5 Canvas 2D (`getContext("2d")`) usage** — statically verified in CI and benchmark audits.
 
 ## Install
 
 ```bash
-npm install @jiange/render-gpu
+npm install @zseven-w/render-gpu
 ```
 
 - **Runtime dependencies**: `0`
@@ -35,8 +35,8 @@ import {
   FenwickVirtualizer,
   SpatialIndex,
   packColorRGBA,
-} from "@jiange/render-gpu";
-import { GlyphAtlas } from "@jiange/render-gpu/glyph-atlas";
+} from "@zseven-w/render-gpu";
+import { GlyphAtlas } from "@zseven-w/render-gpu/glyph-atlas";
 
 // 1. WebGPU -> WebGL2 -> Headless surface (pass an HTMLCanvasElement in browsers, or null in Node/SSR)
 const surface = await GpuSurface.create(null);
@@ -67,14 +67,14 @@ surface.dispose();
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/render-gpu` | Full barrel export of all modules below |
-| `@jiange/render-gpu/gpu-surface` | `GpuSurface`, `WebGPUBackend`, `WebGL2Backend`, `HeadlessNullBackend`, `GpuFrameStats`, `GpuSurfaceOptions` |
-| `@jiange/render-gpu/instance-buffer` | `InstanceBatch`, `Camera2D`, `packColorRGBA`, `RECT_STRIDE`, `LINE_STRIDE`, `ARC_STRIDE`, `GLYPH_STRIDE` |
-| `@jiange/render-gpu/glyph-atlas` | `GlyphAtlas`, `GLYPH_CELL_WIDTH`, `GLYPH_CELL_HEIGHT`, `GLYPH_CELL_ADVANCE`, `GlyphMetrics` |
-| `@jiange/render-gpu/shaders` | WGSL (`WGSL_*_SHADER`) and GLSL 300 es (`GLSL300_*_VS` / `_FS`) shader sources for Rect, Line, Arc, Glyph |
-| `@jiange/render-gpu/fenwick` | `FenwickVirtualizer`, `VisibleRange` |
-| `@jiange/render-gpu/virtual-pool` | `DomNodePool`, `VirtualList1D`, `VirtualGrid2D`, `PoolableElement`, `VirtualGridFrame` |
-| `@jiange/render-gpu/spatial-index` | `SpatialIndex`, `Box2D` |
+| `@zseven-w/render-gpu` | Full barrel export of all modules below |
+| `@zseven-w/render-gpu/gpu-surface` | `GpuSurface`, `WebGPUBackend`, `WebGL2Backend`, `HeadlessNullBackend`, `GpuFrameStats`, `GpuSurfaceOptions` |
+| `@zseven-w/render-gpu/instance-buffer` | `InstanceBatch`, `Camera2D`, `packColorRGBA`, `RECT_STRIDE`, `LINE_STRIDE`, `ARC_STRIDE`, `GLYPH_STRIDE` |
+| `@zseven-w/render-gpu/glyph-atlas` | `GlyphAtlas`, `GLYPH_CELL_WIDTH`, `GLYPH_CELL_HEIGHT`, `GLYPH_CELL_ADVANCE`, `GlyphMetrics` |
+| `@zseven-w/render-gpu/shaders` | WGSL (`WGSL_*_SHADER`) and GLSL 300 es (`GLSL300_*_VS` / `_FS`) shader sources for Rect, Line, Arc, Glyph |
+| `@zseven-w/render-gpu/fenwick` | `FenwickVirtualizer`, `VisibleRange` |
+| `@zseven-w/render-gpu/virtual-pool` | `DomNodePool`, `VirtualList1D`, `VirtualGrid2D`, `PoolableElement`, `VirtualGridFrame` |
+| `@zseven-w/render-gpu/spatial-index` | `SpatialIndex`, `Box2D` |
 
 ## Documentation
 

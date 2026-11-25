@@ -1,6 +1,6 @@
-import { type Doc, type OpId, type Tx, type UndoManager } from "@jiange/collab";
-import { captureColumnArchiveTarget, prepareColumnArchive, prepareColumnArchiveTransition, preparedColumnArchiveIsCurrent, recoverColumnArchive, type PreparedColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
-import { type ColumnMoveSnapshot } from "@jiange/doc-sdk/column-move";
+import { type Doc, type OpId, type Tx, type UndoManager } from "@zseven-w/collab";
+import { captureColumnArchiveTarget, prepareColumnArchive, prepareColumnArchiveTransition, preparedColumnArchiveIsCurrent, recoverColumnArchive, type PreparedColumnArchive } from "@zseven-w/doc-sdk/column-archive-experimental";
+import { type ColumnMoveSnapshot } from "@zseven-w/doc-sdk/column-move";
 
 type Entry = { doc: Doc; undo: UndoManager<unknown>; recovery: string | null; created: ColumnMoveSnapshot | null; undoArchived: boolean };
 type Step = { doc: Doc; undo: UndoManager<unknown>; key: string; redo: boolean; revision: number };

@@ -11,7 +11,7 @@ import type { Comment, DocView } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { isRichPreviewable } from "@/components/rich-file-preview";
 import { AttachmentPreview } from "./attachment-preview";
-import { parseKey, type Doc } from "@jiange/collab";
+import { parseKey, type Doc } from "@zseven-w/collab";
 import { projectCommentAnchors } from "@/editor/comment-anchor";
 import { mathSpansFromChars, parseTableData } from "@/editor/model";
 import { cn } from "@/lib/utils";

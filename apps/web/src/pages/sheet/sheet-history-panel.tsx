@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { SheetSnapshot, SheetWorksheet } from "@/lib/api";
-import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
-import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
+import type { SheetDefinedName } from "@zseven-w/sheet-sdk/types";
+import { sheetAddress, type SheetPoint } from "@zseven-w/sheet-sdk/grid";
 import {
   sheetHistoryApi,
   type SheetCellHistoryEntry,

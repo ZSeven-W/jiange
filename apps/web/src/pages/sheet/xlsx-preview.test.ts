@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { readXlsx } from "@jiange/sheet-sdk/xlsx-read";
-import { writeXlsx } from "@jiange/sheet-sdk/xlsx";
+import { readXlsx } from "@zseven-w/sheet-sdk/xlsx-read";
+import { writeXlsx } from "@zseven-w/sheet-sdk/xlsx";
 import { fromPreview, toPreview } from "./xlsx-preview";
 
 describe("temporary XLSX preview", () => {

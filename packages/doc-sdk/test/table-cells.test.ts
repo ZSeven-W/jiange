@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, type Op } from "@zseven-w/collab";
 import {
   applyTableWrites,
   cellGrid,

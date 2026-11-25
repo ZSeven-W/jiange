@@ -1,4 +1,4 @@
-import { type XlsxCell, type XlsxSheet, type XlsxWorkbook } from "@jiange/sheet-sdk/xlsx";
+import { type XlsxCell, type XlsxSheet, type XlsxWorkbook } from "@zseven-w/sheet-sdk/xlsx";
 import { pointKey, PREVIEW_COLS, PREVIEW_ROWS, type SheetCells } from "./grid-model";
 
 type OriginalCell = { text: string; cell: XlsxCell };

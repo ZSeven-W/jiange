@@ -1,10 +1,10 @@
 /**
- * Optional zero-bundle-cost React adapter factory for `@jiange/slides-ui`.
+ * Optional zero-bundle-cost React adapter factory for `@zseven-w/slides-ui`.
  * Call `createSlidesViewComponent(React)` to obtain a React component without
  * pulling React into vanilla/Vue/Svelte bundles.
  */
 
-import type { Presentation } from "@jiange/slides-sdk";
+import type { Presentation } from "@zseven-w/slides-sdk";
 import { mountSlidesView, type MountedSlidesView, type SlidesViewOptions } from "./slides-view.js";
 
 export interface SlidesReactLike {

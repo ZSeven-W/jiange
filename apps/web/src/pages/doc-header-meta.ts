@@ -1,4 +1,4 @@
-import type { SyncStatus } from "@jiange/collab";
+import type { SyncStatus } from "@zseven-w/collab";
 import { t } from "@/lib/i18n";
 
 /** 飞书风格时间：今天 16:19 / 11月8日 09:05 / 2025年3月2日 09:05。 */

@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SheetWorksheet } from "@/lib/api";
-import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
+import type { SheetDefinedName } from "@zseven-w/sheet-sdk/types";
 import {
   sheetHistoryApi,
   type SheetCellHistoryEntry,

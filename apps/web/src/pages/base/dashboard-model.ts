@@ -3,7 +3,7 @@ import {
   isGroupableField,
   isNumericField,
   type GroupedBucket,
-} from "@jiange/base-sdk/dashboard";
+} from "@zseven-w/base-sdk/dashboard";
 import type { BaseRecord, DashboardMetric, DashboardWidget, DashboardWidgetType, Field, User } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { displayValue, memberName, optionColor, personIDs } from "./registry";

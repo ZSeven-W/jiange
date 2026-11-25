@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 import { applyColumnMove, captureColumnMove, validColumnPosition } from "../src/column-move.js";
 
 function setup() {

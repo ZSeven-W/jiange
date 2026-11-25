@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { buildDocx, readDocxFile } from "@/lib/docx";
-import { parseXlsxBytesForWorkbook, writeXlsx } from "@jiange/sheet-sdk";
-import { exportSlidesToPptx, parsePptxToSlides } from "@jiange/slides-sdk";
+import { parseXlsxBytesForWorkbook, writeXlsx } from "@zseven-w/sheet-sdk";
+import { exportSlidesToPptx, parsePptxToSlides } from "@zseven-w/slides-sdk";
 import {
   CodePreviewContent,
   CsvPreviewContent,

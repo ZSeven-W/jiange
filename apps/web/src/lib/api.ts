@@ -1,5 +1,5 @@
-import type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage as SdkSlidesPage, ImportedSlidePage } from "@jiange/slides-sdk";
-export type { SlideShape, SlideLayout, SlideCreationLayout, ImportedSlidePage } from "@jiange/slides-sdk";
+import type { SlideShape, SlideLayout, SlideCreationLayout, SlidesPage as SdkSlidesPage, ImportedSlidePage } from "@zseven-w/slides-sdk";
+export type { SlideShape, SlideLayout, SlideCreationLayout, ImportedSlidePage } from "@zseven-w/slides-sdk";
 
 export interface SlideFieldTextStyleMeta {
   fontSize?: number;

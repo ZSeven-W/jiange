@@ -1,4 +1,4 @@
-import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
+import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@zseven-w/collab";
 
 export const COLUMN_WIDTHS = "columnWidths";
 const DEFAULT_WEIGHT = 1000;

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { flowIntentWrites, flowWrites, readFlow, THEMES, type FlowEdge, type FlowGraph, type FlowNode } from "./model";
 import { ReadOnlyDoc } from "@/pages/read-only-doc";
 import { mindLayoutPropWrites } from "./mindmap-layouts";

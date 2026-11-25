@@ -1,5 +1,5 @@
-import { createZip, createZipAsync, type ZipEntryInput } from "@jiange/ooxml/zip";
-import { escapeXml } from "@jiange/ooxml/xml";
+import { createZip, createZipAsync, type ZipEntryInput } from "@zseven-w/ooxml/zip";
+import { escapeXml } from "@zseven-w/ooxml/xml";
 import { columnName } from "./grid.js";
 import type { SheetCondFormatOp, SheetConditionalFormat, SheetDataValidation, SheetDefinedName, SheetHyperlink } from "./types.js";
 import { normalizeXlsxStyle, XlsxStyleTable, type XlsxFrozen, type XlsxMerge, type XlsxStyle } from "./xlsx-style.js";

@@ -1,6 +1,6 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { encodeOps, type Op } from "@jiange/collab";
+import { encodeOps, type Op } from "@zseven-w/collab";
 import { queryConditionalOpsStatus, type ConditionalOpsStatus } from "./api";
 import { ConditionalJournal, conditionalOpsDigest, conditionalResolution, type ConditionalAttempt, type ConditionalJournalEnvironment, type ConditionalJournalLease, type ConditionalObservation } from "./conditional-journal";
 

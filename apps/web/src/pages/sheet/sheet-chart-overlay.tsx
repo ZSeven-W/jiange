@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GripHorizontal, Pencil, Trash2 } from "lucide-react";
-import { InstanceBatch, type GpuSurface } from "@jiange/render-gpu";
+import { InstanceBatch, type GpuSurface } from "@zseven-w/render-gpu";
 import type { SheetChart, SheetWorksheet } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { cssColorToRGBA, GpuLayer } from "@/components/gpu-canvas";

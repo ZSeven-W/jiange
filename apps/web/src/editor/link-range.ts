@@ -1,4 +1,4 @@
-import { eqId, type Doc, type OpId } from "@jiange/collab";
+import { eqId, type Doc, type OpId } from "@zseven-w/collab";
 import type { Pos } from "./model";
 
 /** Retain the actual linked character IDs so remote edits cannot retarget an action. */

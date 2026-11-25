@@ -1,4 +1,4 @@
-import { idKey, Tx, type Doc, type Op, type UndoManager } from "@jiange/collab";
+import { idKey, Tx, type Doc, type Op, type UndoManager } from "@zseven-w/collab";
 import type { FindMatch } from "./find-replace";
 import { writeTable } from "./table-cells";
 import { tableHistoryGuard } from "./table-history-undo";

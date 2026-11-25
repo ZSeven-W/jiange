@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { SUPPORTED_FORMULA_FUNCTIONS } from "@jiange/sheet-sdk/formula-functions";
+import { SUPPORTED_FORMULA_FUNCTIONS } from "@zseven-w/sheet-sdk/formula-functions";
 import {
   applyFormulaCompletion,
   FORMULA_CATALOG,

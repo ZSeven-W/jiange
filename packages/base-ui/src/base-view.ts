@@ -1,5 +1,5 @@
 /**
- * WebGPU / WebGL2 + Virtual Grid / Kanban / Gantt / Dashboard UI over `@jiange/base-sdk`.
+ * WebGPU / WebGL2 + Virtual Grid / Kanban / Gantt / Dashboard UI over `@zseven-w/base-sdk`.
  * Zero Canvas 2D usage.
  */
 
@@ -12,7 +12,7 @@ import {
   type BaseRecord,
   type FillRule,
   type QueryRecordsOptions,
-} from "@jiange/base-sdk";
+} from "@zseven-w/base-sdk";
 import {
   GpuSurface,
   InstanceBatch,
@@ -22,7 +22,7 @@ import {
   type GpuSurfaceOptions,
   type PoolableElement,
   type RgbaTuple,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 
 export type BaseRenderMode = "grid" | "kanban" | "gantt" | "dashboard";
 

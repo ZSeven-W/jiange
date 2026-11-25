@@ -1,4 +1,4 @@
-import { Doc, idKey, ROOT, Tx, type DocView, type OpId } from "@jiange/collab";
+import { Doc, idKey, ROOT, Tx, type DocView, type OpId } from "@zseven-w/collab";
 import { buildDocx, buildDocxAsync, docxExportLosses, parseDocx, safeDocxLink, type DocxExportOptions } from "./docx.js";
 import { blocksToHtml, parseHtml } from "./html.js";
 import { markdownTableRows, parseInline, parseMarkdown, toMarkdown, viewToMarkdown, type MarkdownExportOptions, type MdBlock, type MdSpan } from "./markdown.js";
@@ -175,7 +175,7 @@ function cloneJson<T>(v: T): T {
 }
 
 /**
- * Lightweight, zero-DOM, AI-Native Document Facade backed by `@jiange/collab`.
+ * Lightweight, zero-DOM, AI-Native Document Facade backed by `@zseven-w/collab`.
  * Hides CRDT `OpId`/`Tx`/`ROOT` plumbing for standalone & AI workflows while
  * preserving full interoperability with Jiange's collaborative `Doc`.
  */

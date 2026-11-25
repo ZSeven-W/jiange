@@ -14,7 +14,7 @@
     "rootDir": "../..",
     "baseUrl": ".",
     "paths": {
-      "@jiange/ooxml/*": [
+      "@zseven-w/ooxml/*": [
         "../ooxml/src/*.ts"
       ]
     },

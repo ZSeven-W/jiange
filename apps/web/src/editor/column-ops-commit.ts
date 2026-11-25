@@ -1,5 +1,5 @@
-import { Doc, encodeOps, eqId, ROOT, Tx, type Op, type OpId } from "@jiange/collab";
-import { archiveColumn, captureColumnArchiveTarget } from "@jiange/doc-sdk/column-archive-experimental";
+import { Doc, encodeOps, eqId, ROOT, Tx, type Op, type OpId } from "@zseven-w/collab";
+import { archiveColumn, captureColumnArchiveTarget } from "@zseven-w/doc-sdk/column-archive-experimental";
 import { ApiError, commitConditionalOps } from "@/lib/api";
 
 export const COLUMN_CHILD_BLOCK_CHOICES: ReadonlyArray<{ type: string; label: string }> = [

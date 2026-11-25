@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { ColumnAlignmentHistory } from "./column-alignment-history";
 
 function setup() {

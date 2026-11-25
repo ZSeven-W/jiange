@@ -1,5 +1,5 @@
 /**
- * Offline Draft Persistence Adapters (`@jiange/collab/storage`) for `Doc` snapshots
+ * Offline Draft Persistence Adapters (`@zseven-w/collab/storage`) for `Doc` snapshots
  * and unsynced operation logs. Includes in-memory and IndexedDB implementations.
  */
 

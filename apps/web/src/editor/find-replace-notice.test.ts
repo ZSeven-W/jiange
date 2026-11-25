@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, SyncClient, encodeServerMsg } from "@jiange/collab";
+import { Doc, SyncClient, encodeServerMsg } from "@zseven-w/collab";
 import { replacementSyncNotice, type ReplacementNotice } from "./find-replace-notice";
 
 const deliver = (client: SyncClient, message: Parameters<typeof encodeServerMsg>[0]) => client.receive(encodeServerMsg(message));

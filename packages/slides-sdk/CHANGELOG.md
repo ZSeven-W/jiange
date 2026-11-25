@@ -1,4 +1,4 @@
-# Changelog — @jiange/slides-sdk
+# Changelog — @zseven-w/slides-sdk
 
 ## [0.2.0] - 2026-11-21
 

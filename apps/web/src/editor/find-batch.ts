@@ -1,4 +1,4 @@
-import { Doc, Tx, UndoManager, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, type UndoManagerSnapshot } from "@jiange/collab";
+import { Doc, Tx, UndoManager, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, type UndoManagerSnapshot } from "@zseven-w/collab";
 import { FIND_CHANGED_CODEPOINT_LIMIT, FIND_FRAME_LIMIT, FIND_REPLACEMENT_BYTES_LIMIT, FIND_WORK_LIMIT, preflightFindReplace } from "./find-replace-safety";
 import { replaceMatches, searchableLocations, type FindMatch } from "./find-replace";
 import { readTableFindState, resolveTableFindMatch } from "./table-find";

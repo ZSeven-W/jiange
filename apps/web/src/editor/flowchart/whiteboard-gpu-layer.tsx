@@ -5,7 +5,7 @@ import {
   type GpuBackendKind,
   type GpuSurface,
   type RgbaTuple as RGBA,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 import { cssColorToRGBA, GpuLayer } from "@/components/gpu-canvas";
 import { layoutMindTopics, type MindTopic } from "./mindmap";
 import {
@@ -82,7 +82,7 @@ export interface WhiteboardGpuLayerProps {
 
 /**
  * Hardware-accelerated WebGPU / WebGL2 SDF Whiteboard & MindMap Layer
- * powered by `@jiange/render-gpu` (`GpuSurface` + `SpatialIndex` + 2-pass `InstanceBatch`).
+ * powered by `@zseven-w/render-gpu` (`GpuSurface` + `SpatialIndex` + 2-pass `InstanceBatch`).
  */
 export function WhiteboardGpuLayer({
   graph,

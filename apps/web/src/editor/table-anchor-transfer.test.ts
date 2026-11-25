@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
-import { buildDocx, parseDocx } from "@jiange/doc-sdk/docx";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
+import { buildDocx, parseDocx } from "@zseven-w/doc-sdk/docx";
 import { applyTableWrites, cellAlignKey, cellFillKey, cellTableWrites, setTableCellAlignments, setTableCellFills, stableTableDeleteWrites, tableCellAlign, tableCellFill, tableRowsOf, writeTable } from "./table-cells";
 import { planAnchorFormats } from "./table-anchor-transfer";
 import { planTableAxisDelete } from "./table-ops";

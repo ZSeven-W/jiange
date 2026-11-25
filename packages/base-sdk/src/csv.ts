@@ -1,5 +1,5 @@
 /**
- * RFC 4180 CSV & TSV serializer and parser with schema type inference for `@jiange/base-sdk`.
+ * RFC 4180 CSV & TSV serializer and parser with schema type inference for `@zseven-w/base-sdk`.
  */
 
 import { formatCellText } from "./query.js";

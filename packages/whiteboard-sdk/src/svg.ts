@@ -1,9 +1,9 @@
 /**
- * Zero-DOM pure TypeScript SVG renderer for `@jiange/whiteboard-sdk`.
+ * Zero-DOM pure TypeScript SVG renderer for `@zseven-w/whiteboard-sdk`.
  * Renders flowcharts (all shapes + edges + labels), mind maps, and ink strokes.
  */
 
-import { escapeXml } from "@jiange/ooxml/xml";
+import { escapeXml } from "@zseven-w/ooxml/xml";
 import { layoutMindTopics, mindDefaultTextColor } from "./mindmap.js";
 import { edgePath, themeOf, type FlowEdge, type FlowGraph, type FlowNode, type FlowTheme } from "./model.js";
 

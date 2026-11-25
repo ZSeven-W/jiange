@@ -1,15 +1,15 @@
 /**
  * Headless OOXML PresentationML (.pptx) exporter and importer for Jiange Slides.
  *
- * Pure ES2022 over `@jiange/ooxml` (zero DOM dependencies). Exports valid
+ * Pure ES2022 over `@zseven-w/ooxml` (zero DOM dependencies). Exports valid
  * 16:9 widescreen `.pptx` archives preserving slide order, solid backgrounds,
  * hidden flag (`show="0"`), layouts (`title`, `blank`, `blank-title`, default),
  * title/body placeholders, geometric/line/text shapes (0..100% <-> EMU,
  * rotation, colors, font size, bold, alignment), and speaker notes.
  */
 
-import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@jiange/ooxml/zip";
-import { child, children, escapeXml, parseXml, textContent, XmlError, type XmlElement } from "@jiange/ooxml/xml";
+import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@zseven-w/ooxml/zip";
+import { child, children, escapeXml, parseXml, textContent, XmlError, type XmlElement } from "@zseven-w/ooxml/xml";
 import type { SlideLayout, SlideMediaAsset, SlideShape, SlideTableData, SlideTextParagraph, SlideTheme, SlidesPage } from "./model.js";
 
 const SLIDE_CX = 12192000; // 13.333 in (16:9 widescreen) in EMUs

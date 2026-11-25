@@ -1,5 +1,5 @@
-import { decodeOps, encodeOps, type Op } from "@jiange/collab";
-import { preparedColumnArchiveIsCurrent, type PreparedColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
+import { decodeOps, encodeOps, type Op } from "@zseven-w/collab";
+import { preparedColumnArchiveIsCurrent, type PreparedColumnArchive } from "@zseven-w/doc-sdk/column-archive-experimental";
 import { ApiError, cancelConditionalOps, commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalResolution, type ConditionalAttempt, type ConditionalObservation, type ConditionalResolution } from "@/lib/conditional-journal";
 

@@ -1,5 +1,5 @@
 /**
- * Zero-dependency, zero-Canvas-2D shelf-packed R8 bitmap glyph atlas for `@jiange/render-gpu`.
+ * Zero-dependency, zero-Canvas-2D shelf-packed R8 bitmap glyph atlas for `@zseven-w/render-gpu`.
  *
  * Rasterizes a procedural 5x7 bitmap font (ASCII 0x20..0x7E + fallback glyph for non-ASCII/CJK)
  * directly into an R8 `Uint8Array` buffer suitable for WebGPU `r8unorm` and WebGL2 `R8` textures.

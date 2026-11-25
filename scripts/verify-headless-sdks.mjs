@@ -25,13 +25,13 @@ const rootLicense = readFileSync(join(root, 'LICENSE'), 'utf8');
 const temp = mkdtempSync(join(tmpdir(), 'jiange-sdk-check-'));
 const consumer = join(temp, 'consumer');
 try {
-  mkdirSync(join(consumer, 'node_modules', '@jiange'), { recursive: true });
+  mkdirSync(join(consumer, 'node_modules', '@zseven-w'), { recursive: true });
   writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   for (const name of names) {
-    execFileSync('pnpm', ['--filter', `@jiange/${name}`, 'build'], { cwd: root, stdio: 'pipe' });
+    execFileSync('pnpm', ['--filter', `@zseven-w/${name}`, 'build'], { cwd: root, stdio: 'pipe' });
     const archive = join(temp, `${name}.tgz`);
-    execFileSync('pnpm', ['--filter', `@jiange/${name}`, 'pack', '--out', archive], { cwd: root, stdio: 'pipe' });
-    const destination = join(consumer, 'node_modules', '@jiange', name);
+    execFileSync('pnpm', ['--filter', `@zseven-w/${name}`, 'pack', '--out', archive], { cwd: root, stdio: 'pipe' });
+    const destination = join(consumer, 'node_modules', '@zseven-w', name);
     mkdirSync(destination, { recursive: true });
     execFileSync('tar', ['-xzf', archive, '--strip-components=1', '-C', destination]);
     if (!existsSync(join(destination, 'dist', 'index.js')) || !existsSync(join(destination, 'dist', 'index.d.ts')) || existsSync(join(destination, 'src'))) throw new Error(`${name}: invalid package contents`);
@@ -42,23 +42,23 @@ try {
   }
   writeFileSync(join(consumer, 'smoke.mjs'), `
 import assert from 'node:assert/strict';
-import { Doc, ROOT, Tx, SyncClient, UndoManager } from '@jiange/collab';
-import { splitBlock, bodyBlocks, buildDocx, parseDocx, columnWeights, captureColumnMove, applyColumnMove } from '@jiange/doc-sdk';
-import { columnWeights as columnWidthsSubpath } from '@jiange/doc-sdk/column-widths';
-import { validColumnPosition } from '@jiange/doc-sdk/column-move';
-import { captureColumnArchiveTarget, prepareColumnArchive, recoverColumnArchive, toggleArchivedColumn } from '@jiange/doc-sdk/column-archive-experimental';
-import { columnWeights as legacyColumnWidths } from '@jiange/doc-sdk/columnWidths';
-import { moveShapeOrder, slideLineEndpoints } from '@jiange/slides-sdk';
-import { exportSlidesToPptx, parsePptxToSlides } from '@jiange/slides-sdk/pptx';
-import { calculateSheet, translateSheetFormula, writeXlsx, writeXlsxAsync, readXlsx, Workbook, createSheetTools, SUPPORTED_FORMULA_FUNCTIONS } from '@jiange/sheet-sdk';
-import { readXlsx as oldReadXlsx } from '@jiange/sheet-sdk/xlsxRead';
-import { readXlsx as newReadXlsx } from '@jiange/sheet-sdk/xlsx-read';
-import { listZip, createZipAsync } from '@jiange/ooxml/zip';
-import { flowWrites, readFlow } from '@jiange/whiteboard-sdk';
-import { scaleInk as oldScaleInk } from '@jiange/whiteboard-sdk/inkGeometry';
-import { scaleInk as newScaleInk, scaleSelectionProportionally } from '@jiange/whiteboard-sdk/ink-geometry';
-import { exportMindMapToXmind, parseXmindToMindMap } from '@jiange/whiteboard-sdk/xmind';
-import { encodeFlowCommentAnchor, parseFlowCommentAnchor } from '@jiange/whiteboard-sdk/comment-anchor';
+import { Doc, ROOT, Tx, SyncClient, UndoManager } from '@zseven-w/collab';
+import { splitBlock, bodyBlocks, buildDocx, parseDocx, columnWeights, captureColumnMove, applyColumnMove } from '@zseven-w/doc-sdk';
+import { columnWeights as columnWidthsSubpath } from '@zseven-w/doc-sdk/column-widths';
+import { validColumnPosition } from '@zseven-w/doc-sdk/column-move';
+import { captureColumnArchiveTarget, prepareColumnArchive, recoverColumnArchive, toggleArchivedColumn } from '@zseven-w/doc-sdk/column-archive-experimental';
+import { columnWeights as legacyColumnWidths } from '@zseven-w/doc-sdk/columnWidths';
+import { moveShapeOrder, slideLineEndpoints } from '@zseven-w/slides-sdk';
+import { exportSlidesToPptx, parsePptxToSlides } from '@zseven-w/slides-sdk/pptx';
+import { calculateSheet, translateSheetFormula, writeXlsx, writeXlsxAsync, readXlsx, Workbook, createSheetTools, SUPPORTED_FORMULA_FUNCTIONS } from '@zseven-w/sheet-sdk';
+import { readXlsx as oldReadXlsx } from '@zseven-w/sheet-sdk/xlsxRead';
+import { readXlsx as newReadXlsx } from '@zseven-w/sheet-sdk/xlsx-read';
+import { listZip, createZipAsync } from '@zseven-w/ooxml/zip';
+import { flowWrites, readFlow } from '@zseven-w/whiteboard-sdk';
+import { scaleInk as oldScaleInk } from '@zseven-w/whiteboard-sdk/inkGeometry';
+import { scaleInk as newScaleInk, scaleSelectionProportionally } from '@zseven-w/whiteboard-sdk/ink-geometry';
+import { exportMindMapToXmind, parseXmindToMindMap } from '@zseven-w/whiteboard-sdk/xmind';
+import { encodeFlowCommentAnchor, parseFlowCommentAnchor } from '@zseven-w/whiteboard-sdk/comment-anchor';
 assert.equal(typeof globalThis.document, 'undefined');
 const doc = new Doc(1), tx = new Tx(doc), block = tx.create('paragraph', null, ROOT);
 tx.insert(block, 0, 'Hello'); const next = splitBlock(tx, {b:block,o:2});
@@ -113,17 +113,17 @@ const encAnchor = encodeFlowCommentAnchor({kind:'node',targetId:'n',x:140,y:0});
 assert.equal(parseFlowCommentAnchor(encAnchor.startChar, encAnchor.endChar)?.targetId, 'n');
 `);
   writeFileSync(join(consumer, 'types.ts'), `
-import { Doc, Tx, ROOT, SyncClient, UndoManager } from '@jiange/collab';
-import { splitBlock, columnWeights, captureColumnMove, type ColumnWidthSnapshot, type ColumnMoveSnapshot } from '@jiange/doc-sdk';
-import { COLUMN_WIDTHS } from '@jiange/doc-sdk/column-widths';
-import { applyColumnMove } from '@jiange/doc-sdk/column-move';
-import { prepareColumnArchive, type PreparedColumnArchive } from '@jiange/doc-sdk/column-archive-experimental';
-import { moveShapeOrder, type SlideShape } from '@jiange/slides-sdk';
-import { exportSlidesToPptx, parsePptxToSlides, type ImportedSlidePage } from '@jiange/slides-sdk/pptx';
-import { calculateSheet, writeXlsx, readXlsx, type XlsxWorkbook } from '@jiange/sheet-sdk';
-import { readFlow, type FlowGraph } from '@jiange/whiteboard-sdk';
-import { exportMindMapToXmind, parseXmindToMindMap, type XmindImportResult } from '@jiange/whiteboard-sdk/xmind';
-import { encodeFlowCommentAnchor, type FlowCommentAnchor } from '@jiange/whiteboard-sdk/comment-anchor';
+import { Doc, Tx, ROOT, SyncClient, UndoManager } from '@zseven-w/collab';
+import { splitBlock, columnWeights, captureColumnMove, type ColumnWidthSnapshot, type ColumnMoveSnapshot } from '@zseven-w/doc-sdk';
+import { COLUMN_WIDTHS } from '@zseven-w/doc-sdk/column-widths';
+import { applyColumnMove } from '@zseven-w/doc-sdk/column-move';
+import { prepareColumnArchive, type PreparedColumnArchive } from '@zseven-w/doc-sdk/column-archive-experimental';
+import { moveShapeOrder, type SlideShape } from '@zseven-w/slides-sdk';
+import { exportSlidesToPptx, parsePptxToSlides, type ImportedSlidePage } from '@zseven-w/slides-sdk/pptx';
+import { calculateSheet, writeXlsx, readXlsx, type XlsxWorkbook } from '@zseven-w/sheet-sdk';
+import { readFlow, type FlowGraph } from '@zseven-w/whiteboard-sdk';
+import { exportMindMapToXmind, parseXmindToMindMap, type XmindImportResult } from '@zseven-w/whiteboard-sdk/xmind';
+import { encodeFlowCommentAnchor, type FlowCommentAnchor } from '@zseven-w/whiteboard-sdk/comment-anchor';
 const doc = new Doc(1), tx = new Tx(doc), block = tx.create('paragraph', null, ROOT);
 splitBlock(tx, { b: block, o: 0 }); new SyncClient(1);
 const history = new UndoManager(), point: object = history.markInsertionPoint(); history.insertMarkerAt(point, 'async');
@@ -144,14 +144,14 @@ encodeFlowCommentAnchor(fcAnchor); void xmRes;
   execFileSync(process.execPath, [require.resolve('typescript/bin/tsc'), '--noEmit', '--strict', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--lib', 'ES2022', join(consumer, 'types.ts')], { cwd: consumer, stdio: 'inherit' });
 
   // Verify strict single-package isolated installation:
-  // 1) @jiange/sheet-sdk needs ONLY @jiange/ooxml
-  // 2) @jiange/doc-sdk needs ONLY @jiange/collab + @jiange/ooxml (NO @jiange/whiteboard-sdk)
+  // 1) @zseven-w/sheet-sdk needs ONLY @zseven-w/ooxml
+  // 2) @zseven-w/doc-sdk needs ONLY @zseven-w/collab + @zseven-w/ooxml (NO @zseven-w/whiteboard-sdk)
   const verifyIsolated = (label, pkgs, script) => {
     const iso = join(temp, `iso-${label}`);
-    mkdirSync(join(iso, 'node_modules', '@jiange'), { recursive: true });
+    mkdirSync(join(iso, 'node_modules', '@zseven-w'), { recursive: true });
     writeFileSync(join(iso, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
     for (const pkg of pkgs) {
-      const dst = join(iso, 'node_modules', '@jiange', pkg);
+      const dst = join(iso, 'node_modules', '@zseven-w', pkg);
       mkdirSync(dst, { recursive: true });
       execFileSync('tar', ['-xzf', join(temp, `${pkg}.tgz`), '--strip-components=1', '-C', dst]);
     }
@@ -160,7 +160,7 @@ encodeFlowCommentAnchor(fcAnchor); void xmRes;
   };
   verifyIsolated('sheet-only', ['ooxml', 'sheet-sdk'], `
 import assert from 'node:assert/strict';
-import { Workbook, createSheetTools } from '@jiange/sheet-sdk';
+import { Workbook, createSheetTools } from '@zseven-w/sheet-sdk';
 const wb = Workbook.create({ sheets: [{ name: 'S1' }] });
 wb.sheet('S1').setCell('A1', 10).setCell('A2', '=A1*5');
 assert.equal(wb.sheet('S1').getValue('A2'), 50);
@@ -168,13 +168,13 @@ assert.equal(createSheetTools(wb).tools.length, 6);
 `);
   verifyIsolated('doc-without-whiteboard', ['ooxml', 'collab', 'doc-sdk'], `
 import assert from 'node:assert/strict';
-import { toMarkdown } from '@jiange/doc-sdk/markdown';
+import { toMarkdown } from '@zseven-w/doc-sdk/markdown';
 const md = toMarkdown([{ type: 'flowchart', text: '', props: { 'fc.n.a': '{"shape":"rect","text":"Start"}' }, spans: [] }]);
 assert.ok(md.includes('flowchart TD'));
 `);
   verifyIsolated('base-only', ['base-sdk'], `
 import assert from 'node:assert/strict';
-import { Base, createBaseTools } from '@jiange/base-sdk';
+import { Base, createBaseTools } from '@zseven-w/base-sdk';
 const b = Base.create({ name: 'CRM' });
 b.addRecord(undefined, { Name: 'Acme' });
 assert.equal(b.getRecords().length, 1);
@@ -182,7 +182,7 @@ assert.equal(createBaseTools(b).tools.length, 8);
 `);
   verifyIsolated('render-gpu-only', ['render-gpu'], `
 import assert from 'node:assert/strict';
-import { FenwickVirtualizer, GpuSurface } from '@jiange/render-gpu';
+import { FenwickVirtualizer, GpuSurface } from '@zseven-w/render-gpu';
 assert.equal(new FenwickVirtualizer(100000, 28).totalSize, 2800000);
 assert.equal((await GpuSurface.create(null)).backendKind, 'headless');
 `);

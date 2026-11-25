@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { bodyBlocks, copyRange, splitBlock } from "../src/index.js";
 
 describe("headless document model", () => {

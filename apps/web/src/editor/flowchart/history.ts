@@ -1,1 +1,1 @@
-export * from "@jiange/whiteboard-sdk/history";
+export * from "@zseven-w/whiteboard-sdk/history";

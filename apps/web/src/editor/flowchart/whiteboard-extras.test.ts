@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { ReadOnlyDoc } from "@/pages/read-only-doc";
 import { boardContentBounds, FlowchartBlock, FlowSvg } from "./flowchart-block";
 import { MindMapSvg } from "./mind-map-svg";

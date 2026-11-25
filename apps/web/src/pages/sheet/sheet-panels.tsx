@@ -12,11 +12,11 @@ import type {
   SheetSnapshot,
   SheetWorksheet,
 } from "@/lib/api";
-import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
+import type { SheetDefinedName } from "@zseven-w/sheet-sdk/types";
 import type { SheetVersionMeta } from "@/lib/sheet-history-api";
 import { t } from "@/lib/i18n";
 import { FeishuSelect } from "@/components/feishu-select";
-import { sheetAddress, type SheetPoint } from "@jiange/sheet-sdk/grid";
+import { sheetAddress, type SheetPoint } from "@zseven-w/sheet-sdk/grid";
 import { BarChart3, Check, Clock, History, Lock, MessageSquare, RotateCcw, ShieldCheck, Sparkles, TableProperties, Tag, Trash2, X, ListChecks } from "lucide-react";
 import {
   buildColorScaleRule,

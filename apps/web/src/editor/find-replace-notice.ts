@@ -1,4 +1,4 @@
-import type { SyncStatus } from "@jiange/collab";
+import type { SyncStatus } from "@zseven-w/collab";
 
 /** The operation was applied locally. This is not a claim about its final
  * value when concurrent collaborators write to the same content. */

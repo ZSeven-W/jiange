@@ -1,1 +1,1 @@
-export * from "@jiange/doc-sdk/table-cells";
+export * from "@zseven-w/doc-sdk/table-cells";

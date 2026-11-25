@@ -25,23 +25,23 @@ Jiange 将包体积、性能 SLA、单包隔离性、零 Canvas 2D 与 100% 单�
 
 | 包名 | 编译 JS 文件数 | 未压缩 JS 体积 | Gzip 体积 | 第三方运行时依赖 |
 | --- | ---: | ---: | ---: | :---: |
-| `@jiange/ooxml` | 3 | 17.5 KB | **4.9 KB** | 0 |
-| `@jiange/collab` | 19 | 144.9 KB | **35.1 KB** | 0 |
-| `@jiange/sheet-sdk` | 22 | 348.7 KB | **72.6 KB** | 0（仅 `@jiange/ooxml`） |
-| `@jiange/doc-sdk` | 16 | 234.7 KB | **58.1 KB** | 0（仅 `@jiange/collab`, `@jiange/ooxml`） |
-| `@jiange/slides-sdk` | 14 | 111.8 KB | **25.8 KB** | 0（仅 `@jiange/ooxml`） |
-| `@jiange/whiteboard-sdk` | 12 | 160.7 KB | **36.8 KB** | 0（仅 `@jiange/ooxml`） |
-| `@jiange/base-sdk` | 8 | 68.8 KB | **14.7 KB** | 0 |
-| `@jiange/render-gpu` | 8 | 78.5 KB | **17.5 KB** | 0 |
-| `@jiange/sheet-ui` | 6 | 30.6 KB | **7.4 KB** | 0（仅 `sheet-sdk`, `render-gpu`） |
-| `@jiange/doc-ui` | 4 | 9.7 KB | **2.8 KB** | 0（仅 `doc-sdk`, `render-gpu`） |
-| `@jiange/slides-ui` | 4 | 15.6 KB | **4.2 KB** | 0（仅 `slides-sdk`, `render-gpu`） |
-| `@jiange/whiteboard-ui` | 4 | 17.3 KB | **4.5 KB** | 0（仅 `whiteboard-sdk`, `render-gpu`） |
-| `@jiange/base-ui` | 4 | 16.8 KB | **4.3 KB** | 0（仅 `base-sdk`, `render-gpu`） |
+| `@zseven-w/ooxml` | 3 | 17.5 KB | **4.9 KB** | 0 |
+| `@zseven-w/collab` | 19 | 144.9 KB | **35.1 KB** | 0 |
+| `@zseven-w/sheet-sdk` | 22 | 348.7 KB | **72.6 KB** | 0（仅 `@zseven-w/ooxml`） |
+| `@zseven-w/doc-sdk` | 16 | 234.7 KB | **58.1 KB** | 0（仅 `@zseven-w/collab`, `@zseven-w/ooxml`） |
+| `@zseven-w/slides-sdk` | 14 | 111.8 KB | **25.8 KB** | 0（仅 `@zseven-w/ooxml`） |
+| `@zseven-w/whiteboard-sdk` | 12 | 160.7 KB | **36.8 KB** | 0（仅 `@zseven-w/ooxml`） |
+| `@zseven-w/base-sdk` | 8 | 68.8 KB | **14.7 KB** | 0 |
+| `@zseven-w/render-gpu` | 8 | 78.5 KB | **17.5 KB** | 0 |
+| `@zseven-w/sheet-ui` | 6 | 30.6 KB | **7.4 KB** | 0（仅 `sheet-sdk`, `render-gpu`） |
+| `@zseven-w/doc-ui` | 4 | 9.7 KB | **2.8 KB** | 0（仅 `doc-sdk`, `render-gpu`） |
+| `@zseven-w/slides-ui` | 4 | 15.6 KB | **4.2 KB** | 0（仅 `slides-sdk`, `render-gpu`） |
+| `@zseven-w/whiteboard-ui` | 4 | 17.3 KB | **4.5 KB** | 0（仅 `whiteboard-sdk`, `render-gpu`） |
+| `@zseven-w/base-ui` | 4 | 16.8 KB | **4.3 KB** | 0（仅 `base-sdk`, `render-gpu`） |
 
 > **单场景典型增量体积**：
-> - 仅需 Headless 多维表格：`@jiange/base-sdk` = **14.7 KB gzip**；
-> - 仅需 Headless PPTX + SVG：`@jiange/slides-sdk` + `@jiange/ooxml` = **30.7 KB gzip**；
+> - 仅需 Headless 多维表格：`@zseven-w/base-sdk` = **14.7 KB gzip**；
+> - 仅需 Headless PPTX + SVG：`@zseven-w/slides-sdk` + `@zseven-w/ooxml` = **30.7 KB gzip**；
 > - 仅需完整 WebGPU/WebGL2 表格（含 144 公式 + XLSX + UI）：`sheet-ui` + `sheet-sdk` + `render-gpu` + `ooxml` = **102.4 KB gzip**（远轻于传统全量套件数 MB 体积）。
 
 ---
@@ -50,12 +50,12 @@ Jiange 将包体积、性能 SLA、单包隔离性、零 Canvas 2D 与 100% 单�
 
 ### 3.1 单包隔离断言
 
-`scripts/verify-headless-sdks.mjs`（`pnpm test:sdk:pack`）与 `benchmarks/run-benchmarks.mjs`（`pnpm bench`）会在临时目录对全部 13 个包逐一执行真实 `pnpm pack` → 解包到干净 `node_modules/@jiange/*` → 仅安装声明依赖运行冒烟脚本与 TypeScript `--strict --module NodeNext` 类型校验：
+`scripts/verify-headless-sdks.mjs`（`pnpm test:sdk:pack`）与 `benchmarks/run-benchmarks.mjs`（`pnpm bench`）会在临时目录对全部 13 个包逐一执行真实 `pnpm pack` → 解包到干净 `node_modules/@zseven-w/*` → 仅安装声明依赖运行冒烟脚本与 TypeScript `--strict --module NodeNext` 类型校验：
 
-- 验证 `@jiange/sheet-sdk` 仅需 `@jiange/ooxml` 即可完整运行；
-- 验证 `@jiange/doc-sdk` 仅需 `@jiange/collab` + `@jiange/ooxml`，**绝不隐式引入 `@jiange/whiteboard-sdk`**；
-- 验证 `@jiange/base-sdk` 与 `@jiange/render-gpu` **零依赖**独立运行；
-- 验证全部 5 个 `@jiange/*-ui` 包仅需各自 Headless SDK + `@jiange/render-gpu`，零 Canvas 2D，且 `./react` 与 `define*Element()` 在 Node/SSR 中安全导入；
+- 验证 `@zseven-w/sheet-sdk` 仅需 `@zseven-w/ooxml` 即可完整运行；
+- 验证 `@zseven-w/doc-sdk` 仅需 `@zseven-w/collab` + `@zseven-w/ooxml`，**绝不隐式引入 `@zseven-w/whiteboard-sdk`**；
+- 验证 `@zseven-w/base-sdk` 与 `@zseven-w/render-gpu` **零依赖**独立运行；
+- 验证全部 5 个 `@zseven-w/*-ui` 包仅需各自 Headless SDK + `@zseven-w/render-gpu`，零 Canvas 2D，且 `./react` 与 `define*Element()` 在 Node/SSR 中安全导入；
 - 验证每个 tarball 均打包了与仓库根一致的 `LICENSE`、`package.json` 含 `"license": "SEE LICENSE IN LICENSE"`、产物文件名全为 kebab-case、且 `README.md` 不含失效的 `../../LICENSE` 相对路径。
 
 ### 3.2 一键本地验证命令
@@ -92,12 +92,12 @@ cd sdk/go-pgstore && go vet ./... && go test -count=1 -race -cover ./...
 
 | 包名 | 已废弃子路径（Deprecated in `0.2.0`） | 推荐迁移目标（Standard） |
 | --- | --- | --- |
-| `@jiange/sheet-sdk` | `@jiange/sheet-sdk/xlsxRead` | `@jiange/sheet-sdk/xlsx-read` |
-| `@jiange/doc-sdk` | `@jiange/doc-sdk/tableCells` | `@jiange/doc-sdk/table-cells` |
-| `@jiange/doc-sdk` | `@jiange/doc-sdk/blockStyles` | `@jiange/doc-sdk/block-styles` |
-| `@jiange/doc-sdk` | `@jiange/doc-sdk/columnWidths` | `@jiange/doc-sdk/column-widths` |
-| `@jiange/doc-sdk` | `@jiange/doc-sdk/columnMove` | `@jiange/doc-sdk/column-move` |
-| `@jiange/whiteboard-sdk` | `@jiange/whiteboard-sdk/inkGeometry` | `@jiange/whiteboard-sdk/ink-geometry` |
+| `@zseven-w/sheet-sdk` | `@zseven-w/sheet-sdk/xlsxRead` | `@zseven-w/sheet-sdk/xlsx-read` |
+| `@zseven-w/doc-sdk` | `@zseven-w/doc-sdk/tableCells` | `@zseven-w/doc-sdk/table-cells` |
+| `@zseven-w/doc-sdk` | `@zseven-w/doc-sdk/blockStyles` | `@zseven-w/doc-sdk/block-styles` |
+| `@zseven-w/doc-sdk` | `@zseven-w/doc-sdk/columnWidths` | `@zseven-w/doc-sdk/column-widths` |
+| `@zseven-w/doc-sdk` | `@zseven-w/doc-sdk/columnMove` | `@zseven-w/doc-sdk/column-move` |
+| `@zseven-w/whiteboard-sdk` | `@zseven-w/whiteboard-sdk/inkGeometry` | `@zseven-w/whiteboard-sdk/ink-geometry` |
 
 ---
 
@@ -106,7 +106,7 @@ cd sdk/go-pgstore && go vet ./... && go test -count=1 -race -cover ./...
 - **语义化版本**：13 个 TypeScript 包、`sdk/go/`、`sdk/go-pgstore/` 与 `cli/` 同步维护独立 `CHANGELOG.md`，当前统一为 **`0.2.0`**；`0.x` 阶段在 minor 版本中保持向后兼容并提供清晰迁移表，`1.0.0` 起严格遵循 SemVer。
 - **自动化发布工作流（[`.github/workflows/release-sdk.yml`](../.github/workflows/release-sdk.yml)）**：
   - 触发方式：推送 `sdk-v*` 或 `cli-v*` Git Tag，或在 GitHub Actions 手动执行 `workflow_dispatch`（支持 `release_tag`、`publish_npm`、`tag_go_modules` 参数）。
-  - **`build-ts-sdks` 任务**：执行 `pnpm install --frozen-lockfile` → `pnpm -r build` → `pnpm test:sdk:pack` → `pnpm --workspace-concurrency=1 test:sdk:coverage` → `node benchmarks/run-benchmarks.mjs` → 按 L0→L1→L2 拓扑顺序打包全部 13 个 `@jiange/*.tgz`；配置 `NPM_TOKEN` Secret 后自动幂等发布到 npmjs.com（含 `--provenance`）。
+  - **`build-ts-sdks` 任务**：执行 `pnpm install --frozen-lockfile` → `pnpm -r build` → `pnpm test:sdk:pack` → `pnpm --workspace-concurrency=1 test:sdk:coverage` → `node benchmarks/run-benchmarks.mjs` → 按 L0→L1→L2 拓扑顺序打包全部 13 个 `@zseven-w/*.tgz`；配置 `NPM_TOKEN` Secret 后自动幂等发布到 npmjs.com（含 `--provenance`）。
   - **`build-go-cli` 任务**：运行 `go test -count=1 -race -cover ./...`，并以 `CGO_ENABLED=0` 交叉编译 5 个平台静态二进制（`linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64`）。
   - **`verify-go-sdks` 任务**：在 `sdk/go`、`sdk/go-pgstore` 与 `examples/go-backend` 上执行 `gofmt`、`go vet`、`go test -race -cover` 与 `--check`。
   - **`publish-github-release` 任务**：生成 `SHA256SUMS.txt`、幂等创建/更新 GitHub Release（附带全部 13 个 `.tgz` 与 5 平台 CLI 二进制），并自动同步 Go 子模块 Tag（`sdk/go/vX.Y.Z`、`sdk/go-pgstore/vX.Y.Z`、`cli/vX.Y.Z`）与预热 `proxy.golang.org`。

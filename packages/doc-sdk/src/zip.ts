@@ -1,1 +1,1 @@
-export * from "@jiange/ooxml/zip";
+export * from "@zseven-w/ooxml/zip";

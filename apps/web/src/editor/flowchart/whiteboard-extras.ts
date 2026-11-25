@@ -62,7 +62,7 @@ export const BOARD_VOTE_PROP_PREFIX = "fc.vt.";
 export const MIND_BOUNDARY_PROP_PREFIX = "fc.mb.";
 /**
  * Uses `fc.msu.` (Mind Summary) rather than `fc.ms.` because `fc.ms.<id>` is
- * already occupied by `@jiange/whiteboard-sdk`'s `MindStyle` prop key.
+ * already occupied by `@zseven-w/whiteboard-sdk`'s `MindStyle` prop key.
  */
 export const MIND_SUMMARY_PROP_PREFIX = "fc.msu.";
 export const MIND_BADGE_PROP_PREFIX = "fc.mg.";

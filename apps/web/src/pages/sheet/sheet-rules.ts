@@ -11,13 +11,13 @@ import {
   type CondFormatPreset,
   type CondFormatStyle,
   type ValidationEvalResult,
-} from "@jiange/sheet-sdk/rules";
+} from "@zseven-w/sheet-sdk/rules";
 import type {
   EvalValue,
   SheetCell,
   SheetConditionalFormat,
   SheetRect,
-} from "@jiange/sheet-sdk/types";
+} from "@zseven-w/sheet-sdk/types";
 
 export {
   COND_FMT_OPS,

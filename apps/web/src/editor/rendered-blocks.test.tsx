@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx, type OpId } from "@jiange/collab";
+import { Doc, ROOT, Tx, type OpId } from "@zseven-w/collab";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import { Editor } from "./editor";
 

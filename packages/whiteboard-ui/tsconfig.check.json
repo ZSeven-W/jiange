@@ -13,10 +13,10 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@jiange/whiteboard-sdk": ["../whiteboard-sdk/src/index.ts"],
-      "@jiange/whiteboard-sdk/*": ["../whiteboard-sdk/src/*.ts"],
-      "@jiange/render-gpu": ["../render-gpu/src/index.ts"],
-      "@jiange/render-gpu/*": ["../render-gpu/src/*.ts"]
+      "@zseven-w/whiteboard-sdk": ["../whiteboard-sdk/src/index.ts"],
+      "@zseven-w/whiteboard-sdk/*": ["../whiteboard-sdk/src/*.ts"],
+      "@zseven-w/render-gpu": ["../render-gpu/src/index.ts"],
+      "@zseven-w/render-gpu/*": ["../render-gpu/src/*.ts"]
     }
   },
   "include": [

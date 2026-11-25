@@ -1,4 +1,4 @@
-# Changelog — @jiange/base-sdk
+# Changelog — @zseven-w/base-sdk
 
 ## [0.2.0] - 2026-11-21
 

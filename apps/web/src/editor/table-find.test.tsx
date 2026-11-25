@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, idKey } from "@zseven-w/collab";
 import { renderToStaticMarkup } from "react-dom/server";
 import { findDocumentMatches, planTableFindReplace, preflightTableFindReplace, resolveTableFindMatch } from "./table-find";
 import { applyTableFindReplace } from "./table-find-apply";

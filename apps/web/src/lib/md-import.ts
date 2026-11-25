@@ -1,4 +1,4 @@
-import { Doc, ROOT, Tx, type OpId } from "@jiange/collab";
+import { Doc, ROOT, Tx, type OpId } from "@zseven-w/collab";
 import { parseMarkdown, type MdBlock } from "./markdown";
 
 /**

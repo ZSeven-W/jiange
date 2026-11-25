@@ -1,10 +1,10 @@
 /**
- * SSR-safe Web Component registration helper for `@jiange/doc-ui`.
+ * SSR-safe Web Component registration helper for `@zseven-w/doc-ui`.
  * Registers `<jiange-doc>` when `customElements` and `HTMLElement` are available;
  * safely returns `false` in Node.js / SSR environments.
  */
 
-import type { Document } from "@jiange/doc-sdk";
+import type { Document } from "@zseven-w/doc-sdk";
 import { mountDocView, type DocViewOptions, type MountedDocView } from "./doc-view.js";
 
 export interface JiangeDocElement extends HTMLElement {

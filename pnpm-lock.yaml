@@ -20,42 +20,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@jiange/base-sdk':
-        specifier: workspace:*
-        version: link:../../packages/base-sdk
-      '@jiange/base-ui':
-        specifier: workspace:*
-        version: link:../../packages/base-ui
-      '@jiange/collab':
-        specifier: workspace:*
-        version: link:../../packages/collab
-      '@jiange/doc-sdk':
-        specifier: workspace:*
-        version: link:../../packages/doc-sdk
-      '@jiange/doc-ui':
-        specifier: workspace:*
-        version: link:../../packages/doc-ui
-      '@jiange/render-gpu':
-        specifier: workspace:*
-        version: link:../../packages/render-gpu
-      '@jiange/sheet-sdk':
-        specifier: workspace:*
-        version: link:../../packages/sheet-sdk
-      '@jiange/sheet-ui':
-        specifier: workspace:*
-        version: link:../../packages/sheet-ui
-      '@jiange/slides-sdk':
-        specifier: workspace:*
-        version: link:../../packages/slides-sdk
-      '@jiange/slides-ui':
-        specifier: workspace:*
-        version: link:../../packages/slides-ui
-      '@jiange/whiteboard-sdk':
-        specifier: workspace:*
-        version: link:../../packages/whiteboard-sdk
-      '@jiange/whiteboard-ui':
-        specifier: workspace:*
-        version: link:../../packages/whiteboard-ui
       '@radix-ui/react-label':
         specifier: ^2.1.1
         version: 2.1.17(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -65,6 +29,42 @@ importers:
       '@tanstack/react-query':
         specifier: ^5.62.0
         version: 5.105.3(@types/react@19.3.0)(react@19.3.1)
+      '@zseven-w/base-sdk':
+        specifier: workspace:*
+        version: link:../../packages/base-sdk
+      '@zseven-w/base-ui':
+        specifier: workspace:*
+        version: link:../../packages/base-ui
+      '@zseven-w/collab':
+        specifier: workspace:*
+        version: link:../../packages/collab
+      '@zseven-w/doc-sdk':
+        specifier: workspace:*
+        version: link:../../packages/doc-sdk
+      '@zseven-w/doc-ui':
+        specifier: workspace:*
+        version: link:../../packages/doc-ui
+      '@zseven-w/render-gpu':
+        specifier: workspace:*
+        version: link:../../packages/render-gpu
+      '@zseven-w/sheet-sdk':
+        specifier: workspace:*
+        version: link:../../packages/sheet-sdk
+      '@zseven-w/sheet-ui':
+        specifier: workspace:*
+        version: link:../../packages/sheet-ui
+      '@zseven-w/slides-sdk':
+        specifier: workspace:*
+        version: link:../../packages/slides-sdk
+      '@zseven-w/slides-ui':
+        specifier: workspace:*
+        version: link:../../packages/slides-ui
+      '@zseven-w/whiteboard-sdk':
+        specifier: workspace:*
+        version: link:../../packages/whiteboard-sdk
+      '@zseven-w/whiteboard-ui':
+        specifier: workspace:*
+        version: link:../../packages/whiteboard-ui
       class-variance-authority:
         specifier: ^0.7.1
         version: 0.7.1
@@ -132,10 +132,10 @@ importers:
 
   packages/base-ui:
     dependencies:
-      '@jiange/base-sdk':
+      '@zseven-w/base-sdk':
         specifier: workspace:*
         version: link:../base-sdk
-      '@jiange/render-gpu':
+      '@zseven-w/render-gpu':
         specifier: workspace:*
         version: link:../render-gpu
       react:
@@ -163,10 +163,10 @@ importers:
 
   packages/doc-sdk:
     dependencies:
-      '@jiange/collab':
+      '@zseven-w/collab':
         specifier: workspace:*
         version: link:../collab
-      '@jiange/ooxml':
+      '@zseven-w/ooxml':
         specifier: workspace:*
         version: link:../ooxml
     devDependencies:
@@ -179,10 +179,10 @@ importers:
 
   packages/doc-ui:
     dependencies:
-      '@jiange/doc-sdk':
+      '@zseven-w/doc-sdk':
         specifier: workspace:*
         version: link:../doc-sdk
-      '@jiange/render-gpu':
+      '@zseven-w/render-gpu':
         specifier: workspace:*
         version: link:../render-gpu
       react:
@@ -216,7 +216,7 @@ importers:
 
   packages/sheet-sdk:
     dependencies:
-      '@jiange/ooxml':
+      '@zseven-w/ooxml':
         specifier: workspace:*
         version: link:../ooxml
     devDependencies:
@@ -229,10 +229,10 @@ importers:
 
   packages/sheet-ui:
     dependencies:
-      '@jiange/render-gpu':
+      '@zseven-w/render-gpu':
         specifier: workspace:*
         version: link:../render-gpu
-      '@jiange/sheet-sdk':
+      '@zseven-w/sheet-sdk':
         specifier: workspace:*
         version: link:../sheet-sdk
       react:
@@ -248,7 +248,7 @@ importers:
 
   packages/slides-sdk:
     dependencies:
-      '@jiange/ooxml':
+      '@zseven-w/ooxml':
         specifier: workspace:*
         version: link:../ooxml
     devDependencies:
@@ -261,10 +261,10 @@ importers:
 
   packages/slides-ui:
     dependencies:
-      '@jiange/render-gpu':
+      '@zseven-w/render-gpu':
         specifier: workspace:*
         version: link:../render-gpu
-      '@jiange/slides-sdk':
+      '@zseven-w/slides-sdk':
         specifier: workspace:*
         version: link:../slides-sdk
       react:
@@ -280,7 +280,7 @@ importers:
 
   packages/whiteboard-sdk:
     dependencies:
-      '@jiange/ooxml':
+      '@zseven-w/ooxml':
         specifier: workspace:*
         version: link:../ooxml
     devDependencies:
@@ -293,10 +293,10 @@ importers:
 
   packages/whiteboard-ui:
     dependencies:
-      '@jiange/render-gpu':
+      '@zseven-w/render-gpu':
         specifier: workspace:*
         version: link:../render-gpu
-      '@jiange/whiteboard-sdk':
+      '@zseven-w/whiteboard-sdk':
         specifier: workspace:*
         version: link:../whiteboard-sdk
       react:

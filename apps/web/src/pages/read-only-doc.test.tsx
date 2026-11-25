@@ -4,7 +4,7 @@ import { preloadReadOnlyRenderers, ReadOnlyDoc } from "./read-only-doc";
 import { VersionView } from "./version-panel";
 import type { DocView } from "@/lib/api";
 import type { Comment } from "@/lib/api";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 
 // Mermaid is asynchronous and requires a browser; exercise its integration here.
 vi.mock("@/editor/diagram-view", () => ({ DiagramView: () => <span data-diagram-preview>流程图预览</span> }));

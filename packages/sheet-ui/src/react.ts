@@ -1,10 +1,10 @@
 /**
- * Optional zero-bundle-cost React adapter factory for `@jiange/sheet-ui`.
+ * Optional zero-bundle-cost React adapter factory for `@zseven-w/sheet-ui`.
  * Call `createSheetViewComponent(React)` to obtain a React component without
  * pulling React into vanilla/Vue/Svelte bundles.
  */
 
-import type { Workbook } from "@jiange/sheet-sdk";
+import type { Workbook } from "@zseven-w/sheet-sdk";
 import { mountSheetView, type MountedSheetView, type MountSheetViewOptions } from "./mount.js";
 
 export interface ReactLike {

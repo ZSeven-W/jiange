@@ -1,4 +1,4 @@
-import type { SyncClient } from "@jiange/collab";
+import type { SyncClient } from "@zseven-w/collab";
 
 /** Capture only an acknowledged v2 document head for a named version. */
 export function namedVersionPoint(client: Pick<SyncClient, "doc" | "caughtUp" | "status" | "unacked" | "epoch" | "lastSeq" | "blocked" | "droppedOnResync">, canEdit: boolean, verified: boolean): { seq: number; epoch: number } | null {

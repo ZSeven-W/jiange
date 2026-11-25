@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, idKey } from "@zseven-w/collab";
 import { applyColumnWidths, captureColumnWidths, columnWeights, COLUMN_WIDTHS, validColumnWidths } from "../src/column-widths.js";
 
 function setup() {

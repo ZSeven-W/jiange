@@ -13,10 +13,10 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@jiange/slides-sdk": ["../slides-sdk/src/index.ts"],
-      "@jiange/slides-sdk/*": ["../slides-sdk/src/*.ts"],
-      "@jiange/render-gpu": ["../render-gpu/src/index.ts"],
-      "@jiange/render-gpu/*": ["../render-gpu/src/*.ts"]
+      "@zseven-w/slides-sdk": ["../slides-sdk/src/index.ts"],
+      "@zseven-w/slides-sdk/*": ["../slides-sdk/src/*.ts"],
+      "@zseven-w/render-gpu": ["../render-gpu/src/index.ts"],
+      "@zseven-w/render-gpu/*": ["../render-gpu/src/*.ts"]
     }
   },
   "include": [

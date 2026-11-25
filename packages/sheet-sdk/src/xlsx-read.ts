@@ -1,4 +1,4 @@
-import { listZip, readZipEntry, type ZipEntry } from "@jiange/ooxml/zip";
+import { listZip, readZipEntry, type ZipEntry } from "@zseven-w/ooxml/zip";
 import { translateWorkbookFormula } from "./formula-ast.js";
 import type { SheetCondFormatOp, SheetConditionalFormat, SheetDataValidation, SheetDefinedName, SheetHyperlink } from "./types.js";
 import { xattr, xchildren, xlsxXml, xtext, type XlsxXmlNode } from "./xlsx-xml.js";

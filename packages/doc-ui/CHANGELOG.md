@@ -1,4 +1,4 @@
-# Changelog — @jiange/doc-ui
+# Changelog — @zseven-w/doc-ui
 
 ## [0.2.0] - 2026-11-21
 

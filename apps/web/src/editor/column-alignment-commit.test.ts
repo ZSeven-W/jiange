@@ -1,6 +1,6 @@
 import { webcrypto } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decodeOps, Doc, encodeOps, ROOT, Tx, UndoManager, type Op } from "@jiange/collab";
+import { decodeOps, Doc, encodeOps, ROOT, Tx, UndoManager, type Op } from "@zseven-w/collab";
 import { queryConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, type ConditionalAttempt, type ConditionalJournalEnvironment, type ConditionalObservation } from "@/lib/conditional-journal";
 import { ColumnAlignmentCommit } from "./column-alignment-commit";

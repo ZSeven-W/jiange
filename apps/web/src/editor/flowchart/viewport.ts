@@ -1,1 +1,1 @@
-export * from "@jiange/whiteboard-sdk/viewport";
+export * from "@zseven-w/whiteboard-sdk/viewport";

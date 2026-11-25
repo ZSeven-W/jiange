@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readXlsx } from "@jiange/sheet-sdk/xlsx-read";
+import { readXlsx } from "@zseven-w/sheet-sdk/xlsx-read";
 import type { BaseRecord, Field, User } from "@/lib/api";
 import { exportBaseToXlsx, parseXlsxToBaseRows, xlsxToImportCsv } from "./xlsx-io";
 

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Board } from "@jiange/whiteboard-sdk";
+import { Board } from "@zseven-w/whiteboard-sdk";
 import {
   createWhiteboardViewComponent,
   defineWhiteboardElement,
@@ -40,7 +40,7 @@ function makeDomNode(tag: string) {
   };
 }
 
-describe("@jiange/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)", () => {
+describe("@zseven-w/whiteboard-ui (WebGPU/WebGL2 + SpatialIndex Infinite Canvas)", () => {
   it("culls large graphs, renders nodes/edges/mindmaps/strokes, handles pan/zoom/drag/delete/undo", async () => {
     const board = Board.create({ theme: "feishu" });
     board.apply([

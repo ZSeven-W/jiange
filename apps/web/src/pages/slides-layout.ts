@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/layout";
+export * from "@zseven-w/slides-sdk/layout";

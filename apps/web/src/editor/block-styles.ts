@@ -1,1 +1,1 @@
-export * from "@jiange/doc-sdk/block-styles";
+export * from "@zseven-w/doc-sdk/block-styles";

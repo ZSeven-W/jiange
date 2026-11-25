@@ -1,4 +1,4 @@
-import { idKey, type OpId } from "@jiange/collab";
+import { idKey, type OpId } from "@zseven-w/collab";
 import type { Presence } from "./presence";
 import type { RemotePeer } from "./use-sync-doc";
 

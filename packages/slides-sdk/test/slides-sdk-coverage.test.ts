@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createZip } from "@jiange/ooxml/zip";
+import { createZip } from "@zseven-w/ooxml/zip";
 import {
   Presentation,
   createSlidesTools,
@@ -40,7 +40,7 @@ function makePage(overrides: Partial<SlidesPage> = {}): SlidesPage {
   };
 }
 
-describe("@jiange/slides-sdk helpers full branch coverage", () => {
+describe("@zseven-w/slides-sdk helpers full branch coverage", () => {
   it("covers line-endpoints, order, shape-resize, shape-state, zoom, and ai-tools edge branches", () => {
     // line-endpoints: default width/height, invalid canvas/delta, start & end move, width < 5, width > 100, out-of-bounds
     const defaultLine: SlideShape = { id: "ln", kind: "line", x: 40, y: 40, color: "#000" };
@@ -403,7 +403,7 @@ describe("@jiange/slides-sdk helpers full branch coverage", () => {
   });
 });
 
-describe("@jiange/slides-sdk PPTX exporter & importer full branch coverage", () => {
+describe("@zseven-w/slides-sdk PPTX exporter & importer full branch coverage", () => {
   it("covers all exporter shape kinds, layouts, rich paragraphs, tables, charts, and fallback options", async () => {
     // Empty pages -> default blank slide; whitespace title -> "Presentation"
     const emptyBytes = exportSlidesToPptx([], { title: "   " });

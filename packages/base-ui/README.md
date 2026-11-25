@@ -1,17 +1,17 @@
-# @jiange/base-ui
+# @zseven-w/base-ui
 
-Standalone WebGPU / WebGL2 + pooled virtual **Grid / Kanban / Gantt / Dashboard** UI (`v0.2.0`) over `@jiange/base-sdk` and `@jiange/render-gpu`.
+Standalone WebGPU / WebGL2 + pooled virtual **Grid / Kanban / Gantt / Dashboard** UI (`v0.2.0`) over `@zseven-w/base-sdk` and `@zseven-w/render-gpu`.
 
 **Zero HTML5 Canvas 2D usage.** Scrolls `100,000+` multidimensional Base records at `< 0.1 ms/frame` JS cost.
 
 ## Install
 
 ```bash
-npm install @jiange/base-ui @jiange/base-sdk
+npm install @zseven-w/base-ui @zseven-w/base-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/base-sdk`, `@jiange/render-gpu`
-- **Optional peer dependencies**: `react >= 18` (only needed when using `@jiange/base-ui/react`)
+- **Runtime dependencies**: `@zseven-w/base-sdk`, `@zseven-w/render-gpu`
+- **Optional peer dependencies**: `react >= 18` (only needed when using `@zseven-w/base-ui/react`)
 - **Bundle size**: ~4.3 KB gzip
 
 ## Features
@@ -21,15 +21,15 @@ npm install @jiange/base-ui @jiange/base-sdk
   - `kanban`: Grouped column cards rendered via GPU SDF batches.
   - `gantt`: Timeline bars driven by GPU instanced rectangles.
   - `dashboard`: Metric cards, bar/line/pie charts using GPU Rect/Line/Arc pipelines.
-- **Framework-Agnostic Embedding**: Vanilla `mountBaseView`, React factory (`@jiange/base-ui/react`), and SSR-safe `<jiange-base>` Web Component (`defineBaseElement`).
+- **Framework-Agnostic Embedding**: Vanilla `mountBaseView`, React factory (`@zseven-w/base-ui/react`), and SSR-safe `<jiange-base>` Web Component (`defineBaseElement`).
 
 ## Quickstart
 
 ### 1. Vanilla JS / TS (`mountBaseView`)
 
 ```ts
-import { Base } from "@jiange/base-sdk";
-import { mountBaseView } from "@jiange/base-ui";
+import { Base } from "@zseven-w/base-sdk";
+import { mountBaseView } from "@zseven-w/base-ui";
 
 const base = Base.create({ name: "CRM" });
 base.addRecord(undefined, { Name: "Acme Corp" });
@@ -42,12 +42,12 @@ view.controller.setMode("kanban");
 // view.dispose();
 ```
 
-### 2. React Adapter (`@jiange/base-ui/react`)
+### 2. React Adapter (`@zseven-w/base-ui/react`)
 
 ```tsx
 import * as React from "react";
-import { Base } from "@jiange/base-sdk";
-import { createBaseViewComponent } from "@jiange/base-ui/react";
+import { Base } from "@zseven-w/base-sdk";
+import { createBaseViewComponent } from "@zseven-w/base-ui/react";
 
 const BaseView = createBaseViewComponent(React);
 
@@ -59,8 +59,8 @@ export function App({ base }: { base: Base }) {
 ### 3. Web Component (`<jiange-base>`)
 
 ```ts
-import { Base } from "@jiange/base-sdk";
-import { defineBaseElement, type JiangeBaseElement } from "@jiange/base-ui";
+import { Base } from "@zseven-w/base-sdk";
+import { defineBaseElement, type JiangeBaseElement } from "@zseven-w/base-ui";
 
 defineBaseElement(); // Registers <jiange-base> (returns false safely in SSR/Node)
 const el = document.createElement("jiange-base") as JiangeBaseElement;
@@ -74,9 +74,9 @@ document.body.appendChild(el);
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/base-ui` | `mountBaseView`, `BaseViewController`, `createBaseViewComponent`, `defineBaseElement` |
-| `@jiange/base-ui/base-view` | `mountBaseView`, `BaseViewController`, `BaseRenderMode`, `BaseViewOptions`, `BaseFrameResult`, `MountedBaseView` |
-| `@jiange/base-ui/react` | `createBaseViewComponent`, `BaseViewProps`, `BaseReactLike` |
+| `@zseven-w/base-ui` | `mountBaseView`, `BaseViewController`, `createBaseViewComponent`, `defineBaseElement` |
+| `@zseven-w/base-ui/base-view` | `mountBaseView`, `BaseViewController`, `BaseRenderMode`, `BaseViewOptions`, `BaseFrameResult`, `MountedBaseView` |
+| `@zseven-w/base-ui/react` | `createBaseViewComponent`, `BaseViewProps`, `BaseReactLike` |
 
 ## Documentation
 

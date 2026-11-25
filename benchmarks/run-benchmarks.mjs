@@ -68,7 +68,7 @@ for (const pkg of ALL_PACKAGES) {
     assert.ok(!/[A-Z_]/.test(base), `${pkg}: non-kebab dist file ${base}`);
   }
   const gzBytes = gzipSync(combined, { level: 9 }).length;
-  sizeRows.push({ pkg: `@jiange/${pkg}`, files: files.length, rawKB: (rawBytes / 1024).toFixed(1), gzipKB: (gzBytes / 1024).toFixed(1) });
+  sizeRows.push({ pkg: `@zseven-w/${pkg}`, files: files.length, rawKB: (rawBytes / 1024).toFixed(1), gzipKB: (gzBytes / 1024).toFixed(1) });
 }
 console.table(sizeRows);
 
@@ -216,7 +216,7 @@ try {
     const rawPkg = JSON.parse(readFileSync(join(srcPkgDir, "package.json"), "utf8"));
     const pubPkg = { ...rawPkg, ...(rawPkg.publishConfig ?? {}) };
     delete pubPkg.publishConfig;
-    const dst = join(dir, "node_modules", "@jiange", pkgName);
+    const dst = join(dir, "node_modules", "@zseven-w", pkgName);
     mkdirSync(dst, { recursive: true });
     writeFileSync(join(dst, "package.json"), JSON.stringify(pubPkg, null, 2));
     cpSync(join(srcPkgDir, "dist"), join(dst, "dist"), { recursive: true });
@@ -234,16 +234,16 @@ try {
 
   runIsolated("ooxml-only", ["ooxml"], `
     import assert from 'node:assert/strict';
-    import { createZipAsync, listZip } from '@jiange/ooxml/zip';
+    import { createZipAsync, listZip } from '@zseven-w/ooxml/zip';
     const z = await createZipAsync([{ name: 'a.txt', data: new TextEncoder().encode('hello'.repeat(30)) }]);
     assert.equal(listZip(z)[0].name, 'a.txt');
   `);
 
   runIsolated("collab-only", ["collab"], `
     import assert from 'node:assert/strict';
-    import { Doc } from '@jiange/collab';
-    import { CollabTable, encodeTableOps, decodeTableOps } from '@jiange/collab/table';
-    import { AiCollabSession } from '@jiange/collab/ai-agent';
+    import { Doc } from '@zseven-w/collab';
+    import { CollabTable, encodeTableOps, decodeTableOps } from '@zseven-w/collab/table';
+    import { AiCollabSession } from '@zseven-w/collab/ai-agent';
     const ai = new AiCollabSession({ agentId: 'a', clientId: 9 });
     ai.appendParagraph('hi');
     assert.equal(decodeTableOps(encodeTableOps([])).length, 0);
@@ -252,7 +252,7 @@ try {
 
   runIsolated("sheet-sdk-only", ["ooxml", "sheet-sdk"], `
     import assert from 'node:assert/strict';
-    import { Workbook, createSheetTools } from '@jiange/sheet-sdk';
+    import { Workbook, createSheetTools } from '@zseven-w/sheet-sdk';
     const wb = Workbook.create();
     wb.sheet(0).setCell('A1', 10).setCell('A2', '=A1*4');
     assert.equal(wb.sheet(0).getValue('A2'), 40);
@@ -261,7 +261,7 @@ try {
 
   runIsolated("doc-sdk-only", ["ooxml", "collab", "doc-sdk"], `
     import assert from 'node:assert/strict';
-    import { Document, createDocTools } from '@jiange/doc-sdk';
+    import { Document, createDocTools } from '@zseven-w/doc-sdk';
     const doc = Document.fromMarkdown('# Hello\\n\\nWorld', 'Doc');
     assert.equal(doc.outline().length, 1);
     assert.equal(createDocTools(doc).tools.length, 7);
@@ -269,7 +269,7 @@ try {
 
   runIsolated("slides-sdk-only", ["ooxml", "slides-sdk"], `
     import assert from 'node:assert/strict';
-    import { Presentation, createSlidesTools } from '@jiange/slides-sdk';
+    import { Presentation, createSlidesTools } from '@zseven-w/slides-sdk';
     const deck = Presentation.create({ title: 'Pitch' });
     assert.ok(deck.renderSvg(0).includes('Pitch'));
     assert.equal(createSlidesTools(deck).tools.length, 7);
@@ -277,7 +277,7 @@ try {
 
   runIsolated("whiteboard-sdk-only", ["ooxml", "whiteboard-sdk"], `
     import assert from 'node:assert/strict';
-    import { Board, createWhiteboardTools } from '@jiange/whiteboard-sdk';
+    import { Board, createWhiteboardTools } from '@zseven-w/whiteboard-sdk';
     const board = Board.fromMermaid('flowchart TD\\n  A[Start] --> B[Done]');
     assert.ok(board.toSvg().includes('Start'));
     assert.equal(createWhiteboardTools(board).tools.length, 8);
@@ -285,7 +285,7 @@ try {
 
   runIsolated("base-sdk-only", ["base-sdk"], `
     import assert from 'node:assert/strict';
-    import { Base, createBaseTools } from '@jiange/base-sdk';
+    import { Base, createBaseTools } from '@zseven-w/base-sdk';
     const base = Base.create({ name: 'CRM' });
     base.addRecord(undefined, { Name: 'Acme' });
     assert.equal(base.getRecords().length, 1);
@@ -294,8 +294,8 @@ try {
 
   runIsolated("render-gpu-only", ["render-gpu"], `
     import assert from 'node:assert/strict';
-    import { FenwickVirtualizer, GpuSurface, InstanceBatch } from '@jiange/render-gpu';
-    import { GlyphAtlas } from '@jiange/render-gpu/glyph-atlas';
+    import { FenwickVirtualizer, GpuSurface, InstanceBatch } from '@zseven-w/render-gpu';
+    import { GlyphAtlas } from '@zseven-w/render-gpu/glyph-atlas';
     const v = new FenwickVirtualizer(100000, 28);
     assert.equal(v.totalSize, 2800000);
     const s = await GpuSurface.create(null);
@@ -308,10 +308,10 @@ try {
 
   runIsolated("sheet-ui-only", ["ooxml", "sheet-sdk", "render-gpu", "sheet-ui"], `
     import assert from 'node:assert/strict';
-    import { Workbook } from '@jiange/sheet-sdk';
-    import { GpuSurface } from '@jiange/render-gpu';
-    import { SheetGpuRenderer, SheetViewController, defineSheetElement } from '@jiange/sheet-ui';
-    import { createSheetViewComponent } from '@jiange/sheet-ui/react';
+    import { Workbook } from '@zseven-w/sheet-sdk';
+    import { GpuSurface } from '@zseven-w/render-gpu';
+    import { SheetGpuRenderer, SheetViewController, defineSheetElement } from '@zseven-w/sheet-ui';
+    import { createSheetViewComponent } from '@zseven-w/sheet-ui/react';
     assert.equal(typeof createSheetViewComponent, 'function');
     assert.equal(defineSheetElement(), false);
     const wb = Workbook.create();
@@ -322,9 +322,9 @@ try {
   runIsolated("doc-ui-only", ["ooxml", "collab", "doc-sdk", "render-gpu", "doc-ui"], `
     import assert from 'node:assert/strict';
     import { performance } from 'node:perf_hooks';
-    import { Document } from '@jiange/doc-sdk';
-    import { DocViewController, defineDocElement } from '@jiange/doc-ui';
-    import { createDocViewComponent } from '@jiange/doc-ui/react';
+    import { Document } from '@zseven-w/doc-sdk';
+    import { DocViewController, defineDocElement } from '@zseven-w/doc-ui';
+    import { createDocViewComponent } from '@zseven-w/doc-ui/react';
     assert.equal(typeof createDocViewComponent, 'function');
     assert.equal(defineDocElement(), false);
     const lines = [];
@@ -350,10 +350,10 @@ try {
 
   runIsolated("slides-ui-only", ["ooxml", "slides-sdk", "render-gpu", "slides-ui"], `
     import assert from 'node:assert/strict';
-    import { Presentation } from '@jiange/slides-sdk';
-    import { GpuSurface } from '@jiange/render-gpu';
-    import { SlidesViewController, defineSlidesElement } from '@jiange/slides-ui';
-    import { createSlidesViewComponent } from '@jiange/slides-ui/react';
+    import { Presentation } from '@zseven-w/slides-sdk';
+    import { GpuSurface } from '@zseven-w/render-gpu';
+    import { SlidesViewController, defineSlidesElement } from '@zseven-w/slides-ui';
+    import { createSlidesViewComponent } from '@zseven-w/slides-ui/react';
     assert.equal(typeof createSlidesViewComponent, 'function');
     assert.equal(defineSlidesElement(), false);
     const ctrl = new SlidesViewController(Presentation.create({ title: 'Hi' }), await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
@@ -362,10 +362,10 @@ try {
 
   runIsolated("whiteboard-ui-only", ["ooxml", "whiteboard-sdk", "render-gpu", "whiteboard-ui"], `
     import assert from 'node:assert/strict';
-    import { Board } from '@jiange/whiteboard-sdk';
-    import { GpuSurface } from '@jiange/render-gpu';
-    import { WhiteboardViewController, defineWhiteboardElement } from '@jiange/whiteboard-ui';
-    import { createWhiteboardViewComponent } from '@jiange/whiteboard-ui/react';
+    import { Board } from '@zseven-w/whiteboard-sdk';
+    import { GpuSurface } from '@zseven-w/render-gpu';
+    import { WhiteboardViewController, defineWhiteboardElement } from '@zseven-w/whiteboard-ui';
+    import { createWhiteboardViewComponent } from '@zseven-w/whiteboard-ui/react';
     assert.equal(typeof createWhiteboardViewComponent, 'function');
     assert.equal(defineWhiteboardElement(), false);
     const ctrl = new WhiteboardViewController(Board.fromMermaid('flowchart TD\\n A --> B'), await GpuSurface.create(null), () => ({ style: { transform: '', width: '', height: '', display: '' }, textContent: '' }));
@@ -375,10 +375,10 @@ try {
   runIsolated("base-ui-only", ["base-sdk", "render-gpu", "base-ui"], `
     import assert from 'node:assert/strict';
     import { performance } from 'node:perf_hooks';
-    import { Base } from '@jiange/base-sdk';
-    import { GpuSurface } from '@jiange/render-gpu';
-    import { BaseViewController, defineBaseElement } from '@jiange/base-ui';
-    import { createBaseViewComponent } from '@jiange/base-ui/react';
+    import { Base } from '@zseven-w/base-sdk';
+    import { GpuSurface } from '@zseven-w/render-gpu';
+    import { BaseViewController, defineBaseElement } from '@zseven-w/base-ui';
+    import { createBaseViewComponent } from '@zseven-w/base-ui/react';
     assert.equal(typeof createBaseViewComponent, 'function');
     assert.equal(defineBaseElement(), false);
     const records = new Array(100_000);

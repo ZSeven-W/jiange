@@ -1,4 +1,4 @@
-# Changelog — @jiange/whiteboard-ui
+# Changelog — @zseven-w/whiteboard-ui
 
 ## [0.2.0] - 2026-11-21
 

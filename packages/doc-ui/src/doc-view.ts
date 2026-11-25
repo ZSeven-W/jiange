@@ -1,10 +1,10 @@
 /**
- * Virtualized Block Document Editor UI over `@jiange/doc-sdk` + `@jiange/render-gpu` `VirtualList1D`.
+ * Virtualized Block Document Editor UI over `@zseven-w/doc-sdk` + `@zseven-w/render-gpu` `VirtualList1D`.
  * Supports 10,000+ blocks with O(log N) dynamic height tracking, outline jumps, and AI suggestion actions.
  */
 
-import type { DocBlockSnapshot, Document } from "@jiange/doc-sdk";
-import { VirtualList1D, type PoolableElement } from "@jiange/render-gpu";
+import type { DocBlockSnapshot, Document } from "@zseven-w/doc-sdk";
+import { VirtualList1D, type PoolableElement } from "@zseven-w/render-gpu";
 
 export interface DocViewOptions {
   defaultBlockHeight?: number;

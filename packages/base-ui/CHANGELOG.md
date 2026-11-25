@@ -1,4 +1,4 @@
-# Changelog — @jiange/base-ui
+# Changelog — @zseven-w/base-ui
 
 ## [0.2.0] - 2026-11-21
 

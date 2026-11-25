@@ -1,5 +1,5 @@
 /**
- * Formal domain types and AI-Native contract types for `@jiange/sheet-sdk`.
+ * Formal domain types and AI-Native contract types for `@zseven-w/sheet-sdk`.
  * Structurally compatible with Jiange's server & web workbook APIs while
  * remaining 100% transport-, UI-, and framework-agnostic.
  */

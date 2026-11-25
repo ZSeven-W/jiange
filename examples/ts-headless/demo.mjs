@@ -2,7 +2,7 @@
  * Jiange AI-Native Headless SDK End-to-End Demo (Node.js ESM, zero browser, zero Canvas 2D).
  *
  * Run inside the monorepo:
- *   pnpm --filter @jiange/collab exec tsx ../../examples/ts-headless/demo.mjs
+ *   pnpm --filter @zseven-w/collab exec tsx ../../examples/ts-headless/demo.mjs
  */
 
 import assert from "node:assert/strict";

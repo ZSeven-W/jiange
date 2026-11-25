@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { ChevronLeft, Maximize2, MessageSquare, Minimize2 } from "lucide-react";
 import type { Comment, DocView } from "@/lib/api";
-import type { Doc } from "@jiange/collab";
+import type { Doc } from "@zseven-w/collab";
 import { DocumentCover } from "@/components/document-cover";
 import { displayDocumentIcon } from "@/components/document-glyph";
 import { useI18n } from "@/lib/i18n";

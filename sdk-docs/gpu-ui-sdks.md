@@ -1,14 +1,14 @@
 # WebGPU / WebGL2 与虚拟列表 UI SDK 指南（L2 全 6 包）
 
-Jiange L2 渲染层彻底摒弃传统 HTML5 Canvas 2D，基于 **`@jiange/render-gpu`** 统一提供硬件加速 2D SDF 渲染与稀疏虚拟列表池化机制，并在此之上构建了 5 个独立可安装的极轻 UI 包。
+Jiange L2 渲染层彻底摒弃传统 HTML5 Canvas 2D，基于 **`@zseven-w/render-gpu`** 统一提供硬件加速 2D SDF 渲染与稀疏虚拟列表池化机制，并在此之上构建了 5 个独立可安装的极轻 UI 包。
 
-> **Zero Canvas 2D 铁律**：`benchmarks/run-benchmarks.mjs` 在每次 CI 中扫描 `@jiange/render-gpu` 与全部 5 个 `@jiange/*-ui` 的编译产物，强制断言代码中**零** `getContext("2d")` 调用。
+> **Zero Canvas 2D 铁律**：`benchmarks/run-benchmarks.mjs` 在每次 CI 中扫描 `@zseven-w/render-gpu` 与全部 5 个 `@zseven-w/*-ui` 的编译产物，强制断言代码中**零** `getContext("2d")` 调用。
 
 ---
 
-## 1. `@jiange/render-gpu` 核心架构
+## 1. `@zseven-w/render-gpu` 核心架构
 
-- **安装**：`npm install @jiange/render-gpu`（0 依赖，17.5 KB gzip）
+- **安装**：`npm install @zseven-w/render-gpu`（0 依赖，17.5 KB gzip）
 - **子路径**：`.`、`./gpu-surface`、`./instance-buffer`、`./glyph-atlas`、`./shaders`、`./fenwick`、`./virtual-pool`、`./spatial-index`
 
 ### 1.1 自动后端降级链（`GpuSurface`）
@@ -49,30 +49,30 @@ flowchart LR
 
 ---
 
-## 2. 五大独立 `@jiange/*-ui` 包总览
+## 2. 五大独立 `@zseven-w/*-ui` 包总览
 
 所有 UI 包采用完全一致的三重接入模式，且**彼此零交叉依赖**：
 
 | UI 包 | Gzip 体积 | 底层模型 | 挂载 API | React 适配器 (`./react`) | Web Component 标签 & 注册函数 |
 | --- | ---: | --- | --- | --- | --- |
-| `@jiange/sheet-ui` | 7.4 KB | `Workbook` | `await mountSheetView(el, wb, opts)` | `createSheetViewComponent(React)` (`workbook`) | `<jiange-sheet>` / `defineSheetElement()` (`el.workbook`) |
-| `@jiange/doc-ui` | 2.8 KB | `Document` | `mountDocView(el, doc, opts)` *(同步)* | `createDocViewComponent(React)` (`document`) | `<jiange-doc>` / `defineDocElement()` (`el.document`) |
-| `@jiange/slides-ui` | 4.2 KB | `Presentation` | `await mountSlidesView(el, deck, opts)` | `createSlidesViewComponent(React)` (`presentation`) | `<jiange-slides>` / `defineSlidesElement()` (`el.presentation`) |
-| `@jiange/whiteboard-ui` | 4.5 KB | `Board` | `await mountWhiteboardView(el, board, opts)` | `createWhiteboardViewComponent(React)` (`board`) | `<jiange-whiteboard>` / `defineWhiteboardElement()` (`el.board`) |
-| `@jiange/base-ui` | 4.3 KB | `Base` | `await mountBaseView(el, base, opts)` | `createBaseViewComponent(React)` (`base`) | `<jiange-base>` / `defineBaseElement()` (`el.base`) |
+| `@zseven-w/sheet-ui` | 7.4 KB | `Workbook` | `await mountSheetView(el, wb, opts)` | `createSheetViewComponent(React)` (`workbook`) | `<jiange-sheet>` / `defineSheetElement()` (`el.workbook`) |
+| `@zseven-w/doc-ui` | 2.8 KB | `Document` | `mountDocView(el, doc, opts)` *(同步)* | `createDocViewComponent(React)` (`document`) | `<jiange-doc>` / `defineDocElement()` (`el.document`) |
+| `@zseven-w/slides-ui` | 4.2 KB | `Presentation` | `await mountSlidesView(el, deck, opts)` | `createSlidesViewComponent(React)` (`presentation`) | `<jiange-slides>` / `defineSlidesElement()` (`el.presentation`) |
+| `@zseven-w/whiteboard-ui` | 4.5 KB | `Board` | `await mountWhiteboardView(el, board, opts)` | `createWhiteboardViewComponent(React)` (`board`) | `<jiange-whiteboard>` / `defineWhiteboardElement()` (`el.board`) |
+| `@zseven-w/base-ui` | 4.3 KB | `Base` | `await mountBaseView(el, base, opts)` | `createBaseViewComponent(React)` (`base`) | `<jiange-base>` / `defineBaseElement()` (`el.base`) |
 
 ---
 
 ## 3. 各 UI 包特性与嵌入式范例
 
-### 3.1 `@jiange/sheet-ui`（4 象限冻结窗格 + 单例 IME 编辑器）
+### 3.1 `@zseven-w/sheet-ui`（4 象限冻结窗格 + 单例 IME 编辑器）
 
 - **架构**：WebGPU/WebGL2 Scissor 分 4 象限渲染网格/填色/边框/选区/协作者光标与内嵌图表 + 池化 2D 虚拟 DOM 文本层（确保 CJK、IME 输入法与无障碍完美兼容）+ 单例浮动 `<input>` 编辑器。
 - **核心控制器 (`SheetViewController`)**：`setActiveSheet`、`selectCell`、`moveSelection`、`beginEdit`/`updateEditValue`/`commitEdit`/`cancelEdit`、`resizeRow`/`resizeCol`、`scrollBy`、`setCollaborators`、`handlePointerDown`/`handleKeyDown`。
 
 ```ts
-import { Workbook } from "@jiange/sheet-sdk";
-import { mountSheetView } from "@jiange/sheet-ui";
+import { Workbook } from "@zseven-w/sheet-sdk";
+import { mountSheetView } from "@zseven-w/sheet-ui";
 
 const wb = Workbook.fromCsv("Item,Qty,Price\nPen,10,2\nBook,5,18\n", "Order");
 const view = await mountSheetView(document.getElementById("sheet")!, wb, {
@@ -84,27 +84,27 @@ view.controller.setCollaborators([
 ]);
 ```
 
-### 3.2 `@jiange/doc-ui`（动态块高虚拟文档视图）
+### 3.2 `@zseven-w/doc-ui`（动态块高虚拟文档视图）
 
 - **架构**：`VirtualList1D` + `reportBlockHeight(blockId, heightPx)`（将 `ResizeObserver` 真实高度回写 `FenwickVirtualizer`）+ `jumpToHeading(headingIdOrText)` 大纲跳转 + 快捷键撤销重做。
 - **注意**：`mountDocView` 为**同步**函数（无需初始化 WebGPU 上下文），首屏 5,000 块文档实测仅 `0.40 ms`、DOM 节点池恒定 `22` 个。
 
 ```ts
-import { Document } from "@jiange/doc-sdk";
-import { mountDocView } from "@jiange/doc-ui";
+import { Document } from "@zseven-w/doc-sdk";
+import { mountDocView } from "@zseven-w/doc-ui";
 
 const doc = Document.fromMarkdown("# Spec\n\n## API\n\nFast virtual list.\n");
 const view = mountDocView(document.getElementById("doc")!, doc);
 view.controller.jumpToHeading("API");
 ```
 
-### 3.3 `@jiange/slides-ui`（GPU SDF 16:9 舞台 + 虚拟缩略图栏）
+### 3.3 `@zseven-w/slides-ui`（GPU SDF 16:9 舞台 + 虚拟缩略图栏）
 
 - **架构**：居中 16:9 WebGPU/WebGL2 舞台渲染背景、矢量图形、箭头连线、选中外框与 4 角缩放控制柄 + 左侧 `VirtualList1D` 缩略图栏 + 一键放映模式 `setPresenterMode(true)`。
 
 ```ts
-import { Presentation } from "@jiange/slides-sdk";
-import { mountSlidesView } from "@jiange/slides-ui";
+import { Presentation } from "@zseven-w/slides-sdk";
+import { mountSlidesView } from "@zseven-w/slides-ui";
 
 const deck = Presentation.create({ title: "Keynote" });
 const view = await mountSlidesView(document.getElementById("slides")!, deck, {
@@ -114,26 +114,26 @@ const view = await mountSlidesView(document.getElementById("slides")!, deck, {
 view.controller.setPresenterMode(true);
 ```
 
-### 3.4 `@jiange/whiteboard-ui`（无限画布 + `SpatialIndex` 剔除）
+### 3.4 `@zseven-w/whiteboard-ui`（无限画布 + `SpatialIndex` 剔除）
 
 - **架构**：`Camera2D` 平移缩放 + `SpatialIndex` 视锥剔除（10,000 节点仅 `0.0326 ms/frame`）+ GPU SDF 绘制流程图节点、连线、脑图分支与自由笔迹 + 池化标签层。
 
 ```ts
-import { Board } from "@jiange/whiteboard-sdk";
-import { mountWhiteboardView } from "@jiange/whiteboard-ui";
+import { Board } from "@zseven-w/whiteboard-sdk";
+import { mountWhiteboardView } from "@zseven-w/whiteboard-ui";
 
 const board = Board.fromMermaid("flowchart LR\n  A[Input] --> B[Model] --> C[Output]\n");
 board.autoLayout({ direction: "LR" });
 const view = await mountWhiteboardView(document.getElementById("board")!, board);
 ```
 
-### 3.5 `@jiange/base-ui`（网格 / 看板 / 甘特图 / 仪表盘四合一 GPU 视图）
+### 3.5 `@zseven-w/base-ui`（网格 / 看板 / 甘特图 / 仪表盘四合一 GPU 视图）
 
 - **架构**：同一 `BaseViewController` 支持动态切换 4 种视图模式 `setMode("grid" | "kanban" | "gantt" | "dashboard")`，支持条件填色 `setFills`、视图筛选 `setQuery` 与内联单元格修改 `updateCell`；100,000 条记录虚拟网格滚动实测仅 `0.062 ms/frame`。
 
 ```ts
-import { Base } from "@jiange/base-sdk";
-import { mountBaseView } from "@jiange/base-ui";
+import { Base } from "@zseven-w/base-sdk";
+import { mountBaseView } from "@zseven-w/base-ui";
 
 const base = Base.create({ name: "Tasks" });
 base.addRecord(undefined, { Name: "Ship v0.2.0" });
@@ -149,11 +149,11 @@ view.controller.setMode("dashboard");
 
 ```tsx
 import * as React from "react";
-import { createSheetViewComponent } from "@jiange/sheet-ui/react";
-import { createDocViewComponent } from "@jiange/doc-ui/react";
-import { createSlidesViewComponent } from "@jiange/slides-ui/react";
-import { createWhiteboardViewComponent } from "@jiange/whiteboard-ui/react";
-import { createBaseViewComponent } from "@jiange/base-ui/react";
+import { createSheetViewComponent } from "@zseven-w/sheet-ui/react";
+import { createDocViewComponent } from "@zseven-w/doc-ui/react";
+import { createSlidesViewComponent } from "@zseven-w/slides-ui/react";
+import { createWhiteboardViewComponent } from "@zseven-w/whiteboard-ui/react";
+import { createBaseViewComponent } from "@zseven-w/base-ui/react";
 
 export const SheetView = createSheetViewComponent(React);
 export const DocView = createDocViewComponent(React);

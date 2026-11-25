@@ -1,4 +1,4 @@
-# Changelog — @jiange/slides-ui
+# Changelog — @zseven-w/slides-ui
 
 ## [0.2.0] - 2026-11-21
 

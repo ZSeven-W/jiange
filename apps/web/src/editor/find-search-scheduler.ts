@@ -1,4 +1,4 @@
-import type { Doc } from "@jiange/collab";
+import type { Doc } from "@zseven-w/collab";
 import type { FindMatch, FindOptions } from "./find-replace";
 import { findDocumentMatches } from "./table-find";
 

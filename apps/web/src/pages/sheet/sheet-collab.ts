@@ -1,1 +1,1 @@
-export * from "@jiange/sheet-sdk/collab";
+export * from "@zseven-w/sheet-sdk/collab";

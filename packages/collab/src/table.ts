@@ -1,5 +1,5 @@
 /**
- * Stable Table CRDT subpath (`@jiange/collab/table`) with Lamport ID allocator
+ * Stable Table CRDT subpath (`@zseven-w/collab/table`) with Lamport ID allocator
  * and `ttable` binary payload codec.
  */
 

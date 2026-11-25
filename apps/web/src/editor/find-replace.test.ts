@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, type OpId } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, type OpId } from "@zseven-w/collab";
 import { findMatches, planFindReplacement, replaceMatches, resolveFindMatch } from "./find-replace";
 import { TITLE } from "./model";
 

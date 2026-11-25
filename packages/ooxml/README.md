@@ -1,13 +1,13 @@
-# @jiange/ooxml
+# @zseven-w/ooxml
 
-Zero-dependency headless ZIP and XML foundation (`v0.2.0`) shared by Jiange's OOXML-capable SDKs (`@jiange/sheet-sdk`, `@jiange/doc-sdk`, `@jiange/slides-sdk`, `@jiange/whiteboard-sdk`).
+Zero-dependency headless ZIP and XML foundation (`v0.2.0`) shared by Jiange's OOXML-capable SDKs (`@zseven-w/sheet-sdk`, `@zseven-w/doc-sdk`, `@zseven-w/slides-sdk`, `@zseven-w/whiteboard-sdk`).
 
 Runs identically in Node.js 18+, Edge runtimes, Web Workers, and modern browsers.
 
 ## Install
 
 ```bash
-npm install @jiange/ooxml
+npm install @zseven-w/ooxml
 ```
 
 - **Runtime dependencies**: `0`
@@ -34,7 +34,7 @@ import {
   child,
   textContent,
   escapeXml,
-} from "@jiange/ooxml";
+} from "@zseven-w/ooxml";
 
 const xml = `<book><title>${escapeXml("Jiange & Co.")}</title></book>`;
 const archive = await createZipAsync([
@@ -51,9 +51,9 @@ console.log(textContent(child(root, "title")!)); // "Jiange & Co."
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/ooxml` | Re-exports `./zip` and `./xml` |
-| `@jiange/ooxml/zip` | `createZip`, `createZipAsync`, `deflateRaw`, `inflateRaw`, `listZip`, `readZipEntry`, `crc32`, `ZipError`, `ZIP_DEFAULT_MAX_ENTRIES` |
-| `@jiange/ooxml/xml` | `parseXml`, `child`, `children`, `textContent`, `escapeXml`, `XmlError`, `XmlElement`, `XmlNode` |
+| `@zseven-w/ooxml` | Re-exports `./zip` and `./xml` |
+| `@zseven-w/ooxml/zip` | `createZip`, `createZipAsync`, `deflateRaw`, `inflateRaw`, `listZip`, `readZipEntry`, `crc32`, `ZipError`, `ZIP_DEFAULT_MAX_ENTRIES` |
+| `@zseven-w/ooxml/xml` | `parseXml`, `child`, `children`, `textContent`, `escapeXml`, `XmlError`, `XmlElement`, `XmlNode` |
 
 ## Documentation
 

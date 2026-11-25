@@ -15,10 +15,10 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@jiange/collab": [
+      "@zseven-w/collab": [
         "../collab/dist/index.d.ts"
       ],
-      "@jiange/ooxml/*": [
+      "@zseven-w/ooxml/*": [
         "../ooxml/dist/*.d.ts"
       ]
     }

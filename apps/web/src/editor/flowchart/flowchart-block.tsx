@@ -26,8 +26,8 @@ import { applyMindTextStyle, captureMindTextStyle, getMindTextStyleSession, getM
 import { insertMindParent, mindDropAt, moveMindTopic, type MindDrop } from "./mindmap-move";
 import { copyMindBranch, MIND_CLIP_MIME, mindClipFromHtml, mindClipHtml, mindClipText, parseMindClip, pasteMindBranch, type MindClip } from "./mindmap-clipboard";
 import { inkHitByEraser, inkPointBounds, scaleInk, scaleSelectionProportionally, selectionBounds, type SelectionBox } from "./ink-geometry";
-import { exportMindMapToXmind, parseXmindToMindMap, XmindError } from "@jiange/whiteboard-sdk/xmind";
-import type { FlowCommentAnchor } from "@jiange/whiteboard-sdk/comment-anchor";
+import { exportMindMapToXmind, parseXmindToMindMap, XmindError } from "@zseven-w/whiteboard-sdk/xmind";
+import type { FlowCommentAnchor } from "@zseven-w/whiteboard-sdk/comment-anchor";
 import { BoardCommentComposer, BoardCommentPinsSvg, BoardCommentThreadPopover, resolveBoardCommentPins, type BoardCommentActions, type ResolvedBoardPin } from "./board-comments";
 import type { Comment, Me } from "@/lib/api";
 import { copyClipboardAssetsWithRetry, planClipboardAssets } from "../clipboard-assets";

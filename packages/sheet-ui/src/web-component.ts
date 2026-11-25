@@ -1,10 +1,10 @@
 /**
- * SSR-safe Web Component registration helper for `@jiange/sheet-ui`.
+ * SSR-safe Web Component registration helper for `@zseven-w/sheet-ui`.
  * Registers `<jiange-sheet>` when `customElements` and `HTMLElement` are available;
  * safely returns `false` in Node.js / SSR environments.
  */
 
-import type { Workbook } from "@jiange/sheet-sdk";
+import type { Workbook } from "@zseven-w/sheet-sdk";
 import { mountSheetView, type MountedSheetView, type MountSheetViewOptions } from "./mount.js";
 
 export interface JiangeSheetElement extends HTMLElement {

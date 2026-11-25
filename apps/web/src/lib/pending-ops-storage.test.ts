@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, encodeOps, encodeServerMsg, SyncClient } from "@jiange/collab";
+import { Doc, encodeOps, encodeServerMsg, SyncClient } from "@zseven-w/collab";
 import { archivePendingDraft, PendingSessionQueue, pendingOpsKey, prepareBrowserPendingSession, preparePendingSession, readAccountDraftBackups, readRecoveryDraft, recoveryDraftKeys, removeRecoveryDraft, writePendingOps } from "./pending-ops-storage";
 
 function memoryStorage() {

@@ -19,7 +19,7 @@ import {
   type PoolableElement,
   type RgbaTuple,
   type VirtualGridFrame,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 import {
   buildWorksheetGridMap,
   evaluateSheetConditionalFormat,
@@ -29,7 +29,7 @@ import {
   type EvalValue,
   type SheetWorksheet,
   type Workbook,
-} from "@jiange/sheet-sdk";
+} from "@zseven-w/sheet-sdk";
 
 export interface SheetSelectionRange {
   anchorRow: number;

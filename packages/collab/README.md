@@ -1,4 +1,4 @@
-# @jiange/collab
+# @zseven-w/collab
 
 Zero-dependency TypeScript CRDT & real-time collaboration kernel (`v0.2.0`) powering Jiange's collaborative editors and AI agents.
 
@@ -7,7 +7,7 @@ Byte-for-byte wire-compatible with Jiange's Go collaboration kernel (`spec/vecto
 ## Install
 
 ```bash
-npm install @jiange/collab
+npm install @zseven-w/collab
 ```
 
 - **Runtime dependencies**: `0`
@@ -15,20 +15,20 @@ npm install @jiange/collab
 
 ## Features
 
-- **Document CRDT (`@jiange/collab`)**: OpId/Lamport clock, Fugue text sequence, block tree LWW + cycle-safe move, Peritext rich-text marks, fractional indexing (`keyBetween`), compact binary op & protocol codecs (`encodeOps`, `decodeOps`, `encodeClientMsg`, `decodeServerMsg`), transport-independent `SyncClient`, and marker-aware `UndoManager`.
-- **Table CRDT (`@jiange/collab/table`)**: `CollabTable` (with Lamport `TableIdAllocator`) and binary `ttable` wire codec (`encodeTableOps`, `decodeTableOps`).
-- **WebSocket Sync Adapter (`@jiange/collab/ws`)**: `WebSocketSyncAdapter` with exponential backoff reconnect, heartbeat ping, and offline outgoing frame queue.
-- **Offline Draft Storage (`@jiange/collab/storage`)**: `DraftStorageAdapter` contract with built-in `MemoryDraftStorage` (Node/Edge/tests) and zero-dependency `IndexedDbDraftStorage` (browsers).
-- **AI Collaborator Session (`@jiange/collab/ai-agent`)**: `AiCollabSession` enabling AI agents to join CRDT rooms as first-class peers with dedicated `clientId`, awareness presence (`idle` | `thinking` | `editing`), and atomic wire-encoded op batches.
+- **Document CRDT (`@zseven-w/collab`)**: OpId/Lamport clock, Fugue text sequence, block tree LWW + cycle-safe move, Peritext rich-text marks, fractional indexing (`keyBetween`), compact binary op & protocol codecs (`encodeOps`, `decodeOps`, `encodeClientMsg`, `decodeServerMsg`), transport-independent `SyncClient`, and marker-aware `UndoManager`.
+- **Table CRDT (`@zseven-w/collab/table`)**: `CollabTable` (with Lamport `TableIdAllocator`) and binary `ttable` wire codec (`encodeTableOps`, `decodeTableOps`).
+- **WebSocket Sync Adapter (`@zseven-w/collab/ws`)**: `WebSocketSyncAdapter` with exponential backoff reconnect, heartbeat ping, and offline outgoing frame queue.
+- **Offline Draft Storage (`@zseven-w/collab/storage`)**: `DraftStorageAdapter` contract with built-in `MemoryDraftStorage` (Node/Edge/tests) and zero-dependency `IndexedDbDraftStorage` (browsers).
+- **AI Collaborator Session (`@zseven-w/collab/ai-agent`)**: `AiCollabSession` enabling AI agents to join CRDT rooms as first-class peers with dedicated `clientId`, awareness presence (`idle` | `thinking` | `editing`), and atomic wire-encoded op batches.
 
 ## Quickstart
 
 ```ts
-import { Doc, Tx, ROOT, SyncClient, UndoManager } from "@jiange/collab";
-import { CollabTable, TableIdAllocator, encodeTableOps, decodeTableOps } from "@jiange/collab/table";
-import { WebSocketSyncAdapter } from "@jiange/collab/ws";
-import { MemoryDraftStorage } from "@jiange/collab/storage";
-import { AiCollabSession } from "@jiange/collab/ai-agent";
+import { Doc, Tx, ROOT, SyncClient, UndoManager } from "@zseven-w/collab";
+import { CollabTable, TableIdAllocator, encodeTableOps, decodeTableOps } from "@zseven-w/collab/table";
+import { WebSocketSyncAdapter } from "@zseven-w/collab/ws";
+import { MemoryDraftStorage } from "@zseven-w/collab/storage";
+import { AiCollabSession } from "@zseven-w/collab/ai-agent";
 
 // 1. Core CRDT document + transaction + undo
 const doc = new Doc(1);
@@ -68,11 +68,11 @@ void ws;
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/collab` | `Doc`, `Tx`, `ROOT`, `OpId`, `Op`, `SyncClient`, `UndoManager`, `encodeOps`, `decodeOps`, `encodeClientMsg`, `decodeServerMsg`, `keyBetween`, `randomSession`, `buildScenarios` |
-| `@jiange/collab/table` | `CollabTable` (`ExperimentalTable`), `TableIdAllocator`, `encodeTableOps`, `decodeTableOps`, `DEFAULT_TABLE_LIMITS`, `validTableMarkValue` |
-| `@jiange/collab/ws` | `WebSocketSyncAdapter`, `WebSocketSyncOptions`, `WebSocketLike`, `WsConnectionState` |
-| `@jiange/collab/storage` | `DraftStorageAdapter`, `StoredDraft`, `MemoryDraftStorage`, `IndexedDbDraftStorage` |
-| `@jiange/collab/ai-agent` | `AiCollabSession`, `AiAwarenessState`, `AiPresenceStatus`, `AiCollabBatchResult` |
+| `@zseven-w/collab` | `Doc`, `Tx`, `ROOT`, `OpId`, `Op`, `SyncClient`, `UndoManager`, `encodeOps`, `decodeOps`, `encodeClientMsg`, `decodeServerMsg`, `keyBetween`, `randomSession`, `buildScenarios` |
+| `@zseven-w/collab/table` | `CollabTable` (`ExperimentalTable`), `TableIdAllocator`, `encodeTableOps`, `decodeTableOps`, `DEFAULT_TABLE_LIMITS`, `validTableMarkValue` |
+| `@zseven-w/collab/ws` | `WebSocketSyncAdapter`, `WebSocketSyncOptions`, `WebSocketLike`, `WsConnectionState` |
+| `@zseven-w/collab/storage` | `DraftStorageAdapter`, `StoredDraft`, `MemoryDraftStorage`, `IndexedDbDraftStorage` |
+| `@zseven-w/collab/ai-agent` | `AiCollabSession`, `AiAwarenessState`, `AiPresenceStatus`, `AiCollabBatchResult` |
 
 ## Documentation
 

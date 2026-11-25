@@ -1,1 +1,1 @@
-export * from "@jiange/doc-sdk/model";
+export * from "@zseven-w/doc-sdk/model";

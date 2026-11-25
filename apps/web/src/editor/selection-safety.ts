@@ -1,4 +1,4 @@
-import { eqId, ROOT, type Doc, type OpId } from "@jiange/collab";
+import { eqId, ROOT, type Doc, type OpId } from "@zseven-w/collab";
 import type { Sel } from "./model";
 
 /** Only root text blocks and direct children of visible column containers are rendered. */

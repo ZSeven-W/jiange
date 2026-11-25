@@ -1,4 +1,4 @@
-import { Doc, Tx, encodeClientMsg, encodeOps, idKey } from "@jiange/collab";
+import { Doc, Tx, encodeClientMsg, encodeOps, idKey } from "@zseven-w/collab";
 import { replaceMatches, type FindMatch } from "./find-replace";
 
 // A single client frame is limited to 8 MiB by syncsrv. More conservative

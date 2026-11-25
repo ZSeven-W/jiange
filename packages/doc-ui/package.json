@@ -1,5 +1,5 @@
 {
-  "name": "@jiange/doc-ui",
+  "name": "@zseven-w/doc-ui",
   "version": "0.2.0",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -41,8 +41,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@jiange/doc-sdk": "workspace:*",
-    "@jiange/render-gpu": "workspace:*"
+    "@zseven-w/doc-sdk": "workspace:*",
+    "@zseven-w/render-gpu": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18"

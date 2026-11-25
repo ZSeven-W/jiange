@@ -1,5 +1,5 @@
 /**
- * Dual WGSL (WebGPU) & GLSL 300 es (WebGL2) instanced SDF shaders for `@jiange/render-gpu`.
+ * Dual WGSL (WebGPU) & GLSL 300 es (WebGL2) instanced SDF shaders for `@zseven-w/render-gpu`.
  * Renders anti-aliased rounded rectangles with crisp borders, thick/dashed lines,
  * ellipses/pie arcs, and shelf-packed R8 bitmap glyph quads in a single instanced draw call per primitive type.
  */

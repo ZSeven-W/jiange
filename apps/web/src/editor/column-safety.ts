@@ -1,4 +1,4 @@
-import { eqId, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
+import { eqId, ROOT, type Doc, type OpId, type Tx } from "@zseven-w/collab";
 import { safeSlashUndo } from "./slash-insert";
 
 /** Keep newly created containers alive if remote edits arrive after undo. */

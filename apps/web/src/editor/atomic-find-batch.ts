@@ -1,4 +1,4 @@
-import { Doc, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, Tx, UndoManager } from "@jiange/collab";
+import { Doc, encodeClientMsg, encodeOps, eqId, idKey, type Op, type OpId, Tx, UndoManager } from "@zseven-w/collab";
 import { TITLE } from "./model";
 import { planFindBatch, writeFindBatchTables } from "./find-batch";
 import { replaceMatches, resolveFindMatch, type FindMatch } from "./find-replace";

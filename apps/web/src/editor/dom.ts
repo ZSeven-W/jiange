@@ -1,4 +1,4 @@
-import { idKey, type OpId } from "@jiange/collab";
+import { idKey, type OpId } from "@zseven-w/collab";
 import type { Pos } from "./model";
 
 const cpLen = (s: string) => [...s].length;

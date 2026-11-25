@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT } from "@jiange/collab";
+import { Doc, ROOT } from "@zseven-w/collab";
 import { findMatches } from "@/editor/find-replace";
 import { TITLE } from "@/editor/model";
 import { titleFindFlags, titleMirrorRange } from "./title-find";

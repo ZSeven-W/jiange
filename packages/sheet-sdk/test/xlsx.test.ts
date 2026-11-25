@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { listZip, readZipEntry } from "@jiange/ooxml/zip";
+import { listZip, readZipEntry } from "@zseven-w/ooxml/zip";
 import { writeXlsx, XlsxError, XLSX_MAX_CELLS, type XlsxWorkbook } from "../src/xlsx.js";
 
 async function part(bytes: Uint8Array, name: string) {

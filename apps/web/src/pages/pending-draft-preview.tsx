@@ -1,4 +1,4 @@
-import { idKey, type Op } from "@jiange/collab";
+import { idKey, type Op } from "@zseven-w/collab";
 import { useI18n } from "@/lib/i18n";
 
 /** Only locally generated insertion text is shown; structural edits stay in the full backup. */

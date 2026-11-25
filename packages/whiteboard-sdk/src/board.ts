@@ -1,5 +1,5 @@
 /**
- * AI-Native Board Facade for `@jiange/whiteboard-sdk`.
+ * AI-Native Board Facade for `@zseven-w/whiteboard-sdk`.
  *
  * Unifies flowcharts, mind maps, and freehand strokes with atomic `apply()` (dry-run & rollback),
  * undo/redo, token-budgeted `inspect()`, `query()`, layered auto-layout, align/distribute helpers,

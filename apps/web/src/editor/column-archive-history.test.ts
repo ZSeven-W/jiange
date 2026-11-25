@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
-import { prepareColumnArchive } from "@jiange/doc-sdk/column-archive-experimental";
+import { Doc, ROOT, Tx, UndoManager, idKey } from "@zseven-w/collab";
+import { prepareColumnArchive } from "@zseven-w/doc-sdk/column-archive-experimental";
 import { ColumnArchiveHistory } from "./column-archive-history";
 
 function setup() {

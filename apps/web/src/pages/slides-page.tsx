@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, docsApi, slidesApi, type DocMeta, type Me, type SlideMasterMeta, type SlidePageMeta, type SlidesPage as Page, type SlideShape, type SlideShapeAnimation } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import { DocumentWatermark } from "@/components/document-watermark";
-import { exportSlidesToPptx, parsePptxToSlides, type PptxImportResult } from "@jiange/slides-sdk/pptx";
+import { exportSlidesToPptx, parsePptxToSlides, type PptxImportResult } from "@zseven-w/slides-sdk/pptx";
 import { ShareDialog } from "@/components/share-dialog";
 import { ask } from "@/components/ui/ask";
 import { cn } from "@/lib/utils";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import type { SyncDoc } from "@/lib/use-sync-doc";
 import { Editor, setSelectionAlignment } from "./editor";
 import { deleteRange, joinBackward, joinForward, normalize, splitBlock, toggleMark } from "./model";

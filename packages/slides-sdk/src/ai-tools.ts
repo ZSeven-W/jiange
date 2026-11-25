@@ -1,5 +1,5 @@
 /**
- * AI Tool Definitions (JSON Schema) and executor for `@jiange/slides-sdk`.
+ * AI Tool Definitions (JSON Schema) and executor for `@zseven-w/slides-sdk`.
  * Compatible with OpenAI, Anthropic, Gemini, Vercel AI SDK, and MCP.
  */
 

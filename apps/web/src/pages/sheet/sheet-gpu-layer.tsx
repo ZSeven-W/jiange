@@ -4,14 +4,14 @@ import {
   InstanceBatch,
   type GpuBackendKind,
   type RgbaTuple as RGBA,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 import {
   pointKey,
   selected,
   selectionBounds,
   type SheetPoint,
   type SheetSelection,
-} from "@jiange/sheet-sdk/grid";
+} from "@zseven-w/sheet-sdk/grid";
 import type { SheetWorksheet } from "@/lib/api";
 import { colorFor } from "@/lib/presence";
 import { cssColorToRGBA } from "@/components/gpu-canvas";

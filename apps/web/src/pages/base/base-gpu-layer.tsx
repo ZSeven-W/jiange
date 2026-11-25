@@ -5,7 +5,7 @@ import {
   type GpuBackendKind,
   type GpuSurface,
   type RgbaTuple as RGBA,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 import type { BaseRecord, Field, FillRule, User } from "@/lib/api";
 import { cssColorToRGBA, GpuLayer, type GpuLayerHandle } from "@/components/gpu-canvas";
 import { rowFill } from "./fill";
@@ -46,7 +46,7 @@ export interface BaseGridGpuLayerProps {
 
 /**
  * Hardware-accelerated WebGPU / WebGL2 SDF Base Grid Layer
- * powered by `@jiange/render-gpu` (`GpuSurface` + `InstanceBatch` + `FenwickVirtualizer`).
+ * powered by `@zseven-w/render-gpu` (`GpuSurface` + `InstanceBatch` + `FenwickVirtualizer`).
  */
 export function BaseGridGpuLayer({
   scrollContainerRef,
@@ -248,7 +248,7 @@ const DAY_MS = 86_400_000;
 
 /**
  * Hardware-accelerated WebGPU / WebGL2 SDF Base Gantt Timeline Layer
- * powered by `@jiange/render-gpu`.
+ * powered by `@zseven-w/render-gpu`.
  */
 export function BaseGanttGpuLayer({
   scrollContainerRef,

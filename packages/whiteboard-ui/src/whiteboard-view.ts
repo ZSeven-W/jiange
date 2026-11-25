@@ -1,5 +1,5 @@
 /**
- * WebGPU / WebGL2 Infinite Canvas Whiteboard UI over `@jiange/whiteboard-sdk` + `@jiange/render-gpu`.
+ * WebGPU / WebGL2 Infinite Canvas Whiteboard UI over `@zseven-w/whiteboard-sdk` + `@zseven-w/render-gpu`.
  * Uses `SpatialIndex` for O(1) frustum culling, `Camera2D` for pan/zoom, SDF GPU primitives for
  * shapes/edges/mindmaps/strokes, and `DomNodePool` for recycled text overlays. Zero Canvas 2D!
  */
@@ -14,13 +14,13 @@ import {
   type GpuFrameStats,
   type GpuSurfaceOptions,
   type PoolableElement,
-} from "@jiange/render-gpu";
+} from "@zseven-w/render-gpu";
 import {
   layoutMindTopics,
   themeOf,
   type Board,
   type FlowNode,
-} from "@jiange/whiteboard-sdk";
+} from "@zseven-w/whiteboard-sdk";
 
 export interface WhiteboardViewOptions {
   gpu?: GpuSurfaceOptions;

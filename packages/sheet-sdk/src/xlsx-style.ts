@@ -1,4 +1,4 @@
-import { escapeXml } from "@jiange/ooxml/xml";
+import { escapeXml } from "@zseven-w/ooxml/xml";
 import { XlsxError } from "./xlsx.js";
 import { xattr, xchildren, type XlsxXmlNode } from "./xlsx-xml.js";
 

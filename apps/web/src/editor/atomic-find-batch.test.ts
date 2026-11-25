@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, encodeOps, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, encodeOps, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { TITLE } from "./model";
 import { findDocumentMatches } from "./table-find";
 import { tableRowsOf } from "./table-cells";

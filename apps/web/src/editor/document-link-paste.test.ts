@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { capturePastedLink, documentLinkClip, pastedDocumentURL, resolvePastedLink } from "./document-link-paste";
 import { pasteBlocks } from "./model";
 

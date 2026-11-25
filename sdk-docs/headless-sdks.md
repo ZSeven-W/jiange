@@ -4,9 +4,9 @@
 
 ---
 
-## 1. `@jiange/ooxml` — 零依赖 ZIP 与有界 XML 基础库
+## 1. `@zseven-w/ooxml` — 零依赖 ZIP 与有界 XML 基础库
 
-- **安装**：`npm install @jiange/ooxml`（0 依赖，4.9 KB gzip）
+- **安装**：`npm install @zseven-w/ooxml`（0 依赖，4.9 KB gzip）
 - **子路径**：`.`、`./zip`、`./xml`
 
 ### 核心 API
@@ -21,7 +21,7 @@
 | `./xml` | `child(el, name)` / `children(el, name?)` / `textContent(el)` / `escapeXml(text)` | 轻量 XML 节点遍历与安全转义 |
 
 ```ts
-import { createZipAsync, listZip, readZipEntry, parseXml, child, textContent } from "@jiange/ooxml";
+import { createZipAsync, listZip, readZipEntry, parseXml, child, textContent } from "@zseven-w/ooxml";
 
 const zip = await createZipAsync([
   { name: "doc.xml", data: new TextEncoder().encode("<root><item>OK</item></root>") },
@@ -34,24 +34,24 @@ console.log(textContent(child(xml, "item")!)); // "OK"
 
 ---
 
-## 2. `@jiange/collab` — CRDT 协同内核与可选适配器
+## 2. `@zseven-w/collab` — CRDT 协同内核与可选适配器
 
-- **安装**：`npm install @jiange/collab`（0 依赖，35.1 KB gzip）
+- **安装**：`npm install @zseven-w/collab`（0 依赖，35.1 KB gzip）
 - **子路径**：`.`、`./table`、`./ws`、`./storage`、`./ai-agent`
 
-### 2.1 主入口 `@jiange/collab`
+### 2.1 主入口 `@zseven-w/collab`
 
 - **文档 CRDT**：`Doc`（RGA/Fugue 文本序列 + 块树 LWW/move + Peritext 富文本 marks）、`Tx`（批量事务）、`ROOT`、`OpId`、`idKey` / `parseKey` / `cmpId` / `eqId`、`keyBetween`（Fractional Indexing）。
 - **二进制线协议**：`encodeOps` / `decodeOps`、`encodeClientMsg` / `decodeClientMsg`、`encodeServerMsg` / `decodeServerMsg`（与 Go 端 `server/collab` 通过 `spec/vectors` 逐字节一致）。
 - **状态同步与历史**：`SyncClient`（传输无关状态机）、`UndoManager`（支持异步插入点 `markInsertionPoint` / `insertMarkerAt`）。
 
-### 2.2 表格 CRDT 子路径 `@jiange/collab/table`
+### 2.2 表格 CRDT 子路径 `@zseven-w/collab/table`
 
 提供 `CollabTable`（`ExperimentalTable` 稳定别名）、Lamport ID 分配器 `TableIdAllocator` 以及紧凑二进制 `ttable` 帧编解码 `encodeTableOps` / `decodeTableOps`：
 
 ```ts
-import { Doc } from "@jiange/collab";
-import { CollabTable, TableIdAllocator, encodeTableOps, decodeTableOps } from "@jiange/collab/table";
+import { Doc } from "@zseven-w/collab";
+import { CollabTable, TableIdAllocator, encodeTableOps, decodeTableOps } from "@zseven-w/collab/table";
 
 const doc = new Doc(1);
 const alloc = new TableIdAllocator(1, doc);
@@ -62,12 +62,12 @@ const decoded = decodeTableOps(payload);
 void [table, id, decoded];
 ```
 
-### 2.3 WebSocket 同步适配器 `@jiange/collab/ws`
+### 2.3 WebSocket 同步适配器 `@zseven-w/collab/ws`
 
 `WebSocketSyncAdapter` 内置指数退避重连（`reconnectBaseMs` / `reconnectMaxMs` / `maxRetries`）、定时心跳（`heartbeatIntervalMs` / `heartbeatPayload`）与断网自动排队重发（`queuedCount`）：
 
 ```ts
-import { WebSocketSyncAdapter } from "@jiange/collab/ws";
+import { WebSocketSyncAdapter } from "@zseven-w/collab/ws";
 
 const adapter = new WebSocketSyncAdapter({
   url: "wss://sync.example.com/rooms/doc-42",
@@ -80,13 +80,13 @@ const adapter = new WebSocketSyncAdapter({
 adapter.connect();
 ```
 
-### 2.4 离线草稿存储 `@jiange/collab/storage`
+### 2.4 离线草稿存储 `@zseven-w/collab/storage`
 
 统一 `DraftStorageAdapter` 接口，内置 `MemoryDraftStorage`（Node/Edge/单测）与零依赖浏览器 `IndexedDbDraftStorage`：
 
 ```ts
-import { Doc } from "@jiange/collab";
-import { MemoryDraftStorage, IndexedDbDraftStorage } from "@jiange/collab/storage";
+import { Doc } from "@zseven-w/collab";
+import { MemoryDraftStorage, IndexedDbDraftStorage } from "@zseven-w/collab/storage";
 
 const storage = typeof indexedDB !== "undefined"
   ? new IndexedDbDraftStorage({ dbName: "my-app-drafts" })
@@ -101,12 +101,12 @@ await storage.save({
 });
 ```
 
-### 2.5 AI 协作者会话 `@jiange/collab/ai-agent`
+### 2.5 AI 协作者会话 `@zseven-w/collab/ai-agent`
 
 `AiCollabSession` 让 AI Agent 以独立 `clientId` 与实时在场状态（`idle` | `thinking` | `editing`）加入协同文档，每次编辑产出标准 `Op[]` 与二进制 `encoded` 帧：
 
 ```ts
-import { AiCollabSession } from "@jiange/collab/ai-agent";
+import { AiCollabSession } from "@zseven-w/collab/ai-agent";
 
 const ai = new AiCollabSession({
   agentId: "assistant-1",
@@ -123,9 +123,9 @@ void blockId;
 
 ---
 
-## 3. `@jiange/sheet-sdk` — 电子表格与 148 函数增量公式引擎
+## 3. `@zseven-w/sheet-sdk` — 电子表格与 148 函数增量公式引擎
 
-- **安装**：`npm install @jiange/sheet-sdk`（仅依赖 `@jiange/ooxml`，72.6 KB gzip）
+- **安装**：`npm install @zseven-w/sheet-sdk`（仅依赖 `@zseven-w/ooxml`，72.6 KB gzip）
 - **常用子路径**：`.`、`./workbook`、`./ai-tools`、`./formula-engine`、`./formula-functions`、`./formula-ast`、`./worker`、`./xlsx`、`./xlsx-read`、`./workbook-xlsx`、`./csv`、`./tsv`、`./numfmt`、`./rules`、`./analytics`、`./collab`
 
 ### 3.1 `Workbook` & `WorksheetProxy`
@@ -141,7 +141,7 @@ void blockId;
 `SUPPORTED_FORMULA_FUNCTIONS` 共内置 **144** 个高频函数，支持整列/整行引用（`A:A`、`1:1`）、命名区域（`wb.defineName`）、自定义函数（`wb.registerFunction`）、双向溯源（`wb.getPrecedents` / `wb.getDependents`）、动态数组（`FILTER`、`SORT`、`SORTBY`、`UNIQUE`、`SEQUENCE`）与 `#SPILL!` / `#CYCLE!` 诊断：
 
 ```ts
-import { Workbook, SUPPORTED_FORMULA_FUNCTIONS } from "@jiange/sheet-sdk";
+import { Workbook, SUPPORTED_FORMULA_FUNCTIONS } from "@zseven-w/sheet-sdk";
 
 const wb = Workbook.create({ sheets: [{ name: "Calc" }] });
 wb.defineName("TAX_RATE", "0.08");
@@ -155,12 +155,12 @@ console.log(sh.getValue("B1"), sh.getValue("C1"), SUPPORTED_FORMULA_FUNCTIONS.le
 // 108, 201, 144
 ```
 
-### 3.3 零依赖 Web Worker 异步公式协议 (`@jiange/sheet-sdk/worker`)
+### 3.3 零依赖 Web Worker 异步公式协议 (`@zseven-w/sheet-sdk/worker`)
 
 `createFormulaWorkerHost()` 与 `FormulaWorkerClient` 基于最小 `MessagePortLike` 接口，适用于浏览器 Web Worker、Node.js `worker_threads` 或 `MessageChannel`：
 
 ```ts
-import { createFormulaWorkerHost, FormulaWorkerClient, type FormulaWorkerRequest } from "@jiange/sheet-sdk/worker";
+import { createFormulaWorkerHost, FormulaWorkerClient, type FormulaWorkerRequest } from "@zseven-w/sheet-sdk/worker";
 
 // Worker 侧
 const handle = createFormulaWorkerHost();
@@ -182,9 +182,9 @@ void patch;
 
 ---
 
-## 4. `@jiange/doc-sdk` — 块文档、Markdown/HTML/DOCX 与修订批注
+## 4. `@zseven-w/doc-sdk` — 块文档、Markdown/HTML/DOCX 与修订批注
 
-- **安装**：`npm install @jiange/doc-sdk`（依赖 `@jiange/collab`、`@jiange/ooxml`；已彻底解耦 `@jiange/whiteboard-sdk`；58.1 KB gzip）
+- **安装**：`npm install @zseven-w/doc-sdk`（依赖 `@zseven-w/collab`、`@zseven-w/ooxml`；已彻底解耦 `@zseven-w/whiteboard-sdk`；58.1 KB gzip）
 - **常用子路径**：`.`、`./document`、`./ai-tools`、`./markdown`、`./html`、`./docx`、`./model`、`./table-cells`、`./block-styles`、`./column-widths`、`./column-move`、`./column-archive-experimental`
 
 ### 核心能力与示例
@@ -195,7 +195,7 @@ void patch;
 - **DOCX 保真诊断**：`docxExportLosses(view)`、`parseDocx` / `buildDocx` / `buildDocxAsync`（支持 H1–H9、合并单元格表格、嵌入图片、批注、脚注与页眉页脚）。
 
 ```ts
-import { Document, createDocTools } from "@jiange/doc-sdk";
+import { Document, createDocTools } from "@zseven-w/doc-sdk";
 
 const doc = Document.fromMarkdown(
   "# RFC\n\n## Goals\n\nShip lightweight SDKs.\n\n## Non-Goals\n\nAvoid heavy runtimes.\n",
@@ -225,9 +225,9 @@ console.log(doc.verify(), docx.byteLength, tools.tools.length); // [], >0, 7
 
 ---
 
-## 5. `@jiange/slides-sdk` — 演示文稿、PPTX、SVG 与视觉诊断
+## 5. `@zseven-w/slides-sdk` — 演示文稿、PPTX、SVG 与视觉诊断
 
-- **安装**：`npm install @jiange/slides-sdk`（仅依赖 `@jiange/ooxml`，25.8 KB gzip）
+- **安装**：`npm install @zseven-w/slides-sdk`（仅依赖 `@zseven-w/ooxml`，25.8 KB gzip）
 - **常用子路径**：`.`、`./deck`、`./ai-tools`、`./pptx`、`./svg`、`./shape-state`、`./shape-order`、`./shape-resize`、`./line-endpoints`、`./order`、`./layout`、`./visibility`、`./zoom`
 
 ### 核心能力与示例
@@ -237,7 +237,7 @@ console.log(doc.verify(), docx.byteLength, tools.tools.length); // [], >0, 7
 - **8 类视觉与结构诊断（`verify()`）**：`EMPTY_DECK`、`EMPTY_SLIDE`、`TEXT_OVERFLOW`、`SHAPE_OVERLAP`、`OUT_OF_BOUNDS`、`LOW_CONTRAST`（WCAG 对比度检查）、`MISSING_MEDIA`、`DUPLICATE_SHAPE_ID`。
 
 ```ts
-import { Presentation, createSlidesTools } from "@jiange/slides-sdk";
+import { Presentation, createSlidesTools } from "@zseven-w/slides-sdk";
 
 const deck = Presentation.create({ title: "Q4 Review" });
 deck.setTheme({ primary: "#3370ff", accent: "#00b42a" });
@@ -266,9 +266,9 @@ void [issues, svg, pptx, tools];
 
 ---
 
-## 6. `@jiange/whiteboard-sdk` — 流程图、思维导图、Mermaid 与 XMind
+## 6. `@zseven-w/whiteboard-sdk` — 流程图、思维导图、Mermaid 与 XMind
 
-- **安装**：`npm install @jiange/whiteboard-sdk`（仅依赖 `@jiange/ooxml`，36.8 KB gzip）
+- **安装**：`npm install @zseven-w/whiteboard-sdk`（仅依赖 `@zseven-w/ooxml`，36.8 KB gzip）
 - **常用子路径**：`.`、`./board`、`./ai-tools`、`./mermaid`、`./svg`、`./xmind`、`./model`、`./mindmap`、`./ink-geometry`、`./comment-anchor`、`./history`、`./viewport`
 
 ### 核心能力与示例
@@ -278,7 +278,7 @@ void [issues, svg, pptx, tools];
 - **多格式互转与拓扑诊断**：`toMermaid()`、`toSvg()`、`toXmind()` / `toXmindAsync()`、`verify()`（检测悬空边、孤立节点、节点碰撞重叠、环路与孤儿脑图节点）。
 
 ```ts
-import { Board, createWhiteboardTools } from "@jiange/whiteboard-sdk";
+import { Board, createWhiteboardTools } from "@zseven-w/whiteboard-sdk";
 
 const board = Board.fromMermaid(`
 flowchart TD
@@ -296,9 +296,9 @@ console.log(board.verify(), svg.includes("<svg"), xmind.byteLength, tools.tools.
 
 ---
 
-## 7. `@jiange/base-sdk` — 零依赖多维表格引擎
+## 7. `@zseven-w/base-sdk` — 零依赖多维表格引擎
 
-- **安装**：`npm install @jiange/base-sdk`（**0 运行时依赖**，14.7 KB gzip）
+- **安装**：`npm install @zseven-w/base-sdk`（**0 运行时依赖**，14.7 KB gzip）
 - **常用子路径**：`.`、`./base`、`./ai-tools`、`./types`、`./formula`、`./query`、`./dashboard`、`./csv`
 
 ### 7.1 18 种内置字段类型（`FieldType`）
@@ -313,7 +313,7 @@ console.log(board.verify(), svg.includes("<svg"), xmind.byteLength, tools.tools.
 - **CSV 推类型导入导出**：`Base.fromCsv(csvText)` 自动推断字段类型，`base.toCsv()` 导出包含公式/Lookup 计算结果的 RFC 4180 CSV。
 
 ```ts
-import { Base, createBaseTools, defaultDashboardWidgets } from "@jiange/base-sdk";
+import { Base, createBaseTools, defaultDashboardWidgets } from "@zseven-w/base-sdk";
 
 const base = Base.fromCsv("Deal,Owner,Amount,Stage\nAcme,Alice,50000,Won\nGlobex,Bob,30000,Open\n", {
   name: "Sales CRM",

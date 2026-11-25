@@ -1,5 +1,5 @@
 /**
- * Lightweight WebSocket Sync Adapter (`@jiange/collab/ws`) with exponential reconnect,
+ * Lightweight WebSocket Sync Adapter (`@zseven-w/collab/ws`) with exponential reconnect,
  * heartbeat, and offline outgoing frame queue. Zero third-party dependencies.
  */
 

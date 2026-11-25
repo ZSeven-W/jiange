@@ -1,4 +1,4 @@
-import { Doc, Tx, decodeOps, encodeOps, eqId, idKey, ROOT, type Op, type OpId } from "@jiange/collab";
+import { Doc, Tx, decodeOps, encodeOps, eqId, idKey, ROOT, type Op, type OpId } from "@zseven-w/collab";
 import { captureColumnMove, validColumnPosition, type ColumnMoveSnapshot } from "./column-move.js";
 
 /**

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { idKey, parseKey, Tx, type Op, type OpId, type SyncStatus } from "@jiange/collab";
+import { idKey, parseKey, Tx, type Op, type OpId, type SyncStatus } from "@zseven-w/collab";
 import { bodyBlocks } from "@/editor/model";
 import { formatEditDay, formatEditTime, headerMetaText, nextSavedFlag } from "./doc-header-meta";
 import { ApiError, docsApi, driveApi, templatesApi, type DocMeta, type Me } from "@/lib/api";

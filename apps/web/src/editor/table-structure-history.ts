@@ -1,4 +1,4 @@
-import { idKey, Tx, type Doc, type Op, type OpId, type UndoManager } from "@jiange/collab";
+import { idKey, Tx, type Doc, type Op, type OpId, type UndoManager } from "@zseven-w/collab";
 import { tableDataOf } from "./table-cells";
 
 type Change = { key: string; before: string; after: string };

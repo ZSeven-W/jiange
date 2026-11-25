@@ -1,1 +1,1 @@
-export * from "@jiange/doc-sdk/markdown";
+export * from "@zseven-w/doc-sdk/markdown";

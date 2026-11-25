@@ -1,4 +1,4 @@
-import { eqId, type Doc, type OpId, type Tx } from "@jiange/collab";
+import { eqId, type Doc, type OpId, type Tx } from "@zseven-w/collab";
 import { isDocumentReferenceMarks, isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
 import { captureCompositionAnchor, captureCompositionSelection, resolveCompositionAnchor, resolveCompositionSelection, type CompositionAnchor } from "./composition-anchor";
 import type { Pos, Sel } from "./model";

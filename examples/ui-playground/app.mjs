@@ -1,21 +1,21 @@
-import { GpuSurface, InstanceBatch, packColorRGBA } from "@jiange/render-gpu";
-import { GlyphAtlas } from "@jiange/render-gpu/glyph-atlas";
+import { GpuSurface, InstanceBatch, packColorRGBA } from "@zseven-w/render-gpu";
+import { GlyphAtlas } from "@zseven-w/render-gpu/glyph-atlas";
 import {
   Workbook,
   computePivotTable,
   createSheetTools,
   getVisibleRowIndices,
   sheetAddress,
-} from "@jiange/sheet-sdk";
-import { mountSheetView } from "@jiange/sheet-ui";
-import { Document, createDocTools } from "@jiange/doc-sdk";
-import { mountDocView } from "@jiange/doc-ui";
-import { Presentation, createSlidesTools } from "@jiange/slides-sdk";
-import { mountSlidesView } from "@jiange/slides-ui";
-import { Board, createWhiteboardTools } from "@jiange/whiteboard-sdk";
-import { mountWhiteboardView } from "@jiange/whiteboard-ui";
-import { Base, createBaseTools } from "@jiange/base-sdk";
-import { mountBaseView } from "@jiange/base-ui";
+} from "@zseven-w/sheet-sdk";
+import { mountSheetView } from "@zseven-w/sheet-ui";
+import { Document, createDocTools } from "@zseven-w/doc-sdk";
+import { mountDocView } from "@zseven-w/doc-ui";
+import { Presentation, createSlidesTools } from "@zseven-w/slides-sdk";
+import { mountSlidesView } from "@zseven-w/slides-ui";
+import { Board, createWhiteboardTools } from "@zseven-w/whiteboard-sdk";
+import { mountWhiteboardView } from "@zseven-w/whiteboard-ui";
+import { Base, createBaseTools } from "@zseven-w/base-sdk";
+import { mountBaseView } from "@zseven-w/base-ui";
 
 // ---------------------------------------------------------------------------
 // DOM Refs & Global Playground State
@@ -414,7 +414,7 @@ async function mountSheetTab(token) {
 
   createDrawerShell(
     "Spreadsheet Engine",
-    "@jiange/sheet-ui",
+    "@zseven-w/sheet-ui",
     "WebGPU/WebGL2 4-quadrant frozen panes, live Excel formula DAG, row filtering, sorting, pivot tables & OOXML export.",
   );
 
@@ -917,7 +917,7 @@ Long technical documents with 5,000+ blocks maintain constant 60fps scrolling by
 
 ## 2. WebGPU Primary & WebGL2 Automatic Fallback
 
-All geometric surfaces share @jiange/render-gpu: instanced SDF rounded rectangles, dashed lines, pie/donut arcs, and shelf-packed R8 bitmap glyphs.
+All geometric surfaces share @zseven-w/render-gpu: instanced SDF rounded rectangles, dashed lines, pie/donut arcs, and shelf-packed R8 bitmap glyphs.
 
 \`\`\`ts
 const surface = await GpuSurface.create(canvas, { prefer: "webgpu" });
@@ -1041,7 +1041,7 @@ async function mountDocTab(token) {
 
   createDrawerShell(
     "Block Document View",
-    "@jiange/doc-ui",
+    "@zseven-w/doc-ui",
     "O(log N) Fenwick VirtualList1D over CRDT Document with search/filter, track-changes suggestions & DOCX/MD/HTML export.",
   );
 
@@ -1558,7 +1558,7 @@ async function mountSlidesTab(token) {
 
   createDrawerShell(
     "Slides GPU Stage",
-    "@jiange/slides-ui",
+    "@zseven-w/slides-ui",
     "WebGPU/WebGL2 SDF stage + virtual thumbnail rail + deterministic SVG export & AI slide authoring.",
   );
 
@@ -1932,7 +1932,7 @@ async function mountWhiteboardTab(token) {
 
   createDrawerShell(
     "Infinite Whiteboard",
-    "@jiange/whiteboard-ui",
+    "@zseven-w/whiteboard-ui",
     "SpatialIndex frustum culling + Camera2D pan/zoom + WebGPU/WebGL2 SDF nodes, dashed edges & mind maps.",
   );
 
@@ -2388,7 +2388,7 @@ async function mountBaseTab(token) {
 
   createDrawerShell(
     "Multidimensional Base",
-    "@jiange/base-ui",
+    "@zseven-w/base-ui",
     "Unified GPU Grid, Kanban, Gantt & Dashboard with live [Field] formulas, multi-rule filters, sorting & 10k virtualization.",
   );
 
@@ -2745,7 +2745,7 @@ async function mountGlyphLabTab(token) {
 
   createDrawerShell(
     "GPU GlyphAtlas Lab",
-    "@jiange/render-gpu",
+    "@zseven-w/render-gpu",
     "Direct single-frame testbench for all 4 instanced pipelines: SDF Rect, Dashed Line, Pie/Donut Arc, and R8 GlyphAtlas.",
   );
 

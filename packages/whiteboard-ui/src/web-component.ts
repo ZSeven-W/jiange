@@ -1,10 +1,10 @@
 /**
- * SSR-safe Web Component registration helper for `@jiange/whiteboard-ui`.
+ * SSR-safe Web Component registration helper for `@zseven-w/whiteboard-ui`.
  * Registers `<jiange-whiteboard>` when `customElements` and `HTMLElement` are available;
  * safely returns `false` in Node.js / SSR environments.
  */
 
-import type { Board } from "@jiange/whiteboard-sdk";
+import type { Board } from "@zseven-w/whiteboard-sdk";
 import { mountWhiteboardView, type MountedWhiteboardView, type WhiteboardViewOptions } from "./whiteboard-view.js";
 
 export interface JiangeWhiteboardElement extends HTMLElement {

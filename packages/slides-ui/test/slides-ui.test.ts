@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { GpuSurface } from "@jiange/render-gpu";
-import { Presentation } from "@jiange/slides-sdk";
+import { GpuSurface } from "@zseven-w/render-gpu";
+import { Presentation } from "@zseven-w/slides-sdk";
 import {
   SlidesViewController,
   createSlidesViewComponent,
@@ -44,7 +44,7 @@ function makeDomNode(tag: string) {
   };
 }
 
-describe("@jiange/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
+describe("@zseven-w/slides-ui (WebGPU/WebGL2 Stage + Virtual Rail)", () => {
   it("renders shapes, tables, charts, selection handles, presenter mode, navigation & React adapter", async () => {
     const deck = Presentation.create({ title: "Keynote" });
     deck.addSlide({

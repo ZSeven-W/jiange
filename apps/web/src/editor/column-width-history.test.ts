@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, idKey } from "@zseven-w/collab";
 import { applyColumnWidths, captureColumnWidths, COLUMN_WIDTHS } from "./column-widths";
 import { ColumnWidthHistory } from "./column-width-history";
 import { ColumnAlignmentHistory } from "./column-alignment-history";

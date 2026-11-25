@@ -3,8 +3,8 @@
  * keyboard navigation, resize, and the singleton IME cell editor.
  */
 
-import { sheetAddress, type Workbook } from "@jiange/sheet-sdk";
-import type { PoolableElement } from "@jiange/render-gpu";
+import { sheetAddress, type Workbook } from "@zseven-w/sheet-sdk";
+import type { PoolableElement } from "@zseven-w/render-gpu";
 import {
   SheetGpuRenderer,
   type SheetCollaboratorCursor,

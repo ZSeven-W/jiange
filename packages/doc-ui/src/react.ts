@@ -1,10 +1,10 @@
 /**
- * Optional zero-bundle-cost React adapter factory for `@jiange/doc-ui`.
+ * Optional zero-bundle-cost React adapter factory for `@zseven-w/doc-ui`.
  * Call `createDocViewComponent(React)` to obtain a React component without
  * pulling React into vanilla/Vue/Svelte bundles.
  */
 
-import type { Document } from "@jiange/doc-sdk";
+import type { Document } from "@zseven-w/doc-sdk";
 import { mountDocView, type DocViewOptions, type MountedDocView } from "./doc-view.js";
 
 export interface DocReactLike {

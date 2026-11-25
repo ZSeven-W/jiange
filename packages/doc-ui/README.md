@@ -1,32 +1,32 @@
-# @jiange/doc-ui
+# @zseven-w/doc-ui
 
-Lightweight virtual-list block Document UI (`v0.2.0`) built on `@jiange/render-gpu` (`VirtualList1D` + `FenwickVirtualizer`) over `@jiange/doc-sdk`.
+Lightweight virtual-list block Document UI (`v0.2.0`) built on `@zseven-w/render-gpu` (`VirtualList1D` + `FenwickVirtualizer`) over `@zseven-w/doc-sdk`.
 
 **Zero HTML5 Canvas 2D usage.** Renders 5,000+ block documents with a constant DOM pool (`< 120` nodes) and `O(log N)` dynamic block-height tracking.
 
 ## Install
 
 ```bash
-npm install @jiange/doc-ui @jiange/doc-sdk
+npm install @zseven-w/doc-ui @zseven-w/doc-sdk
 ```
 
-- **Runtime dependencies**: `@jiange/doc-sdk`, `@jiange/render-gpu`
-- **Optional peer dependencies**: `react >= 18` (only needed when using `@jiange/doc-ui/react`)
+- **Runtime dependencies**: `@zseven-w/doc-sdk`, `@zseven-w/render-gpu`
+- **Optional peer dependencies**: `react >= 18` (only needed when using `@zseven-w/doc-ui/react`)
 - **Bundle size**: ~2.8 KB gzip
 
 ## Features
 
 - **`VirtualList1D` + Dynamic Height Feedback**: `reportBlockHeight(blockId, heightPx)` feeds `ResizeObserver` measurements into the sparse Fenwick tree in `O(log N)`.
 - **Outline Navigation & Keyboard Editing**: `jumpToHeading(headingIdOrText)`, block focus/insert/delete, and `Ctrl/Cmd+Z` / `Shift+Z` undo/redo wired directly to `Document`.
-- **Framework-Agnostic Embedding**: Synchronous Vanilla `mountDocView`, React factory (`@jiange/doc-ui/react`), and SSR-safe `<jiange-doc>` Web Component (`defineDocElement`).
+- **Framework-Agnostic Embedding**: Synchronous Vanilla `mountDocView`, React factory (`@zseven-w/doc-ui/react`), and SSR-safe `<jiange-doc>` Web Component (`defineDocElement`).
 
 ## Quickstart
 
 ### 1. Vanilla JS / TS (`mountDocView`)
 
 ```ts
-import { Document } from "@jiange/doc-sdk";
-import { mountDocView } from "@jiange/doc-ui";
+import { Document } from "@zseven-w/doc-sdk";
+import { mountDocView } from "@zseven-w/doc-ui";
 
 const doc = Document.fromMarkdown("# Welcome\n\n## Architecture\n\nVirtualized block rendering.\n");
 const view = mountDocView(document.getElementById("doc-root")!, doc, {
@@ -37,12 +37,12 @@ view.controller.jumpToHeading("Architecture");
 // view.dispose();
 ```
 
-### 2. React Adapter (`@jiange/doc-ui/react`)
+### 2. React Adapter (`@zseven-w/doc-ui/react`)
 
 ```tsx
 import * as React from "react";
-import { Document } from "@jiange/doc-sdk";
-import { createDocViewComponent } from "@jiange/doc-ui/react";
+import { Document } from "@zseven-w/doc-sdk";
+import { createDocViewComponent } from "@zseven-w/doc-ui/react";
 
 const DocView = createDocViewComponent(React);
 
@@ -54,8 +54,8 @@ export function App({ doc }: { doc: Document }) {
 ### 3. Web Component (`<jiange-doc>`)
 
 ```ts
-import { Document } from "@jiange/doc-sdk";
-import { defineDocElement, type JiangeDocElement } from "@jiange/doc-ui";
+import { Document } from "@zseven-w/doc-sdk";
+import { defineDocElement, type JiangeDocElement } from "@zseven-w/doc-ui";
 
 defineDocElement(); // Registers <jiange-doc> (returns false safely in SSR/Node)
 const el = document.createElement("jiange-doc") as JiangeDocElement;
@@ -68,9 +68,9 @@ document.body.appendChild(el);
 
 | Subpath | Contents |
 | --- | --- |
-| `@jiange/doc-ui` | `mountDocView`, `DocViewController`, `createDocViewComponent`, `defineDocElement` |
-| `@jiange/doc-ui/doc-view` | `mountDocView`, `DocViewController`, `DocViewOptions`, `DocFrameResult`, `MountedDocView` |
-| `@jiange/doc-ui/react` | `createDocViewComponent`, `DocViewProps`, `DocReactLike` |
+| `@zseven-w/doc-ui` | `mountDocView`, `DocViewController`, `createDocViewComponent`, `defineDocElement` |
+| `@zseven-w/doc-ui/doc-view` | `mountDocView`, `DocViewController`, `DocViewOptions`, `DocFrameResult`, `MountedDocView` |
+| `@zseven-w/doc-ui/react` | `createDocViewComponent`, `DocViewProps`, `DocReactLike` |
 
 ## Documentation
 

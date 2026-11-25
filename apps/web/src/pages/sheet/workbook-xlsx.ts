@@ -6,8 +6,8 @@ import {
   sheetStyleToXlsx,
   xlsxStyleToSheet,
   type WorkbookImportPreview,
-} from "@jiange/sheet-sdk/workbook-xlsx";
-import { XLSX_MAX_INPUT_BYTES } from "@jiange/sheet-sdk/xlsx-read";
+} from "@zseven-w/sheet-sdk/workbook-xlsx";
+import { XLSX_MAX_INPUT_BYTES } from "@zseven-w/sheet-sdk/xlsx-read";
 
 export {
   exportWorkbookToXlsx,

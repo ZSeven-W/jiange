@@ -1,4 +1,4 @@
-import type { OpId, Tx } from "@jiange/collab";
+import type { OpId, Tx } from "@zseven-w/collab";
 import { parseTableData } from "./model.js";
 
 /**

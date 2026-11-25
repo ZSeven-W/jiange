@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { bodyBlocks } from "@/editor/model";
 import { appendBlocksOps } from "./md-import";
 import { insertStarterBlocks } from "@/pages/starter-template-ops";

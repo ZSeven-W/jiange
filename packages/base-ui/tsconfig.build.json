@@ -15,10 +15,10 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@jiange/base-sdk": ["../base-sdk/dist/index.d.ts"],
-      "@jiange/base-sdk/*": ["../base-sdk/dist/*.d.ts"],
-      "@jiange/render-gpu": ["../render-gpu/dist/index.d.ts"],
-      "@jiange/render-gpu/*": ["../render-gpu/dist/*.d.ts"]
+      "@zseven-w/base-sdk": ["../base-sdk/dist/index.d.ts"],
+      "@zseven-w/base-sdk/*": ["../base-sdk/dist/*.d.ts"],
+      "@zseven-w/render-gpu": ["../render-gpu/dist/index.d.ts"],
+      "@zseven-w/render-gpu/*": ["../render-gpu/dist/*.d.ts"]
     }
   },
   "include": [

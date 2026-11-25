@@ -1,1 +1,1 @@
-export * from "@jiange/doc-sdk/column-widths";
+export * from "@zseven-w/doc-sdk/column-widths";

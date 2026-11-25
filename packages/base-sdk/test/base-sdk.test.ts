@@ -12,7 +12,7 @@ import {
   computeGroupedSeries,
 } from "../src/index.js";
 
-describe("@jiange/base-sdk", () => {
+describe("@zseven-w/base-sdk", () => {
   it("evaluates Base [Field] formulas with all operators, functions, short-circuit IF/IFS, and cycle detection", () => {
     expect(formulaValid("ROUND([Price] * [Qty] * (1 - [Discount]), 2)")).toBe(true);
     expect(formulaValid("1 + (")).toBe(false);

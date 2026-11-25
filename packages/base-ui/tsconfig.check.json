@@ -13,10 +13,10 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
-      "@jiange/base-sdk": ["../base-sdk/src/index.ts"],
-      "@jiange/base-sdk/*": ["../base-sdk/src/*.ts"],
-      "@jiange/render-gpu": ["../render-gpu/src/index.ts"],
-      "@jiange/render-gpu/*": ["../render-gpu/src/*.ts"]
+      "@zseven-w/base-sdk": ["../base-sdk/src/index.ts"],
+      "@zseven-w/base-sdk/*": ["../base-sdk/src/*.ts"],
+      "@zseven-w/render-gpu": ["../render-gpu/src/index.ts"],
+      "@zseven-w/render-gpu/*": ["../render-gpu/src/*.ts"]
     }
   },
   "include": [

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 import { blockCommentAnchor, projectCommentAnchors, scrollToCommentAnchor } from "./comment-anchor";
 import { blockAbilities, readOnlyBlockAbilities } from "./editor";
 import type { Comment } from "@/lib/api";

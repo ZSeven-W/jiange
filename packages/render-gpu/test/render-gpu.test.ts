@@ -103,7 +103,7 @@ function makeMockWebGL2() {
   };
 }
 
-describe("@jiange/render-gpu", () => {
+describe("@zseven-w/render-gpu", () => {
   it("FenwickVirtualizer handles 1,000,000 rows with O(log N) exact offset/index mapping", () => {
     const v = new FenwickVirtualizer(1_000_000, 28);
     expect(v.itemCount).toBe(1_000_000);

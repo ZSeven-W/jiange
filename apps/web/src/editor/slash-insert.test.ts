@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { bodyBlocks } from "./model";
 import { canOpenSlashMenu, captureSlashInsertion, captureSlashQuery, consumeSlashQuery, insertBlockAtSlashOffset, resolveSlashQuery, updateSlashQuery, validSlashQueryText, insertSlashBlock, safeSlashUndo, sourceUnchanged } from "./slash-insert";
 

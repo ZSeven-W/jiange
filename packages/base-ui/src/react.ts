@@ -1,10 +1,10 @@
 /**
- * Optional zero-bundle-cost React adapter factory for `@jiange/base-ui`.
+ * Optional zero-bundle-cost React adapter factory for `@zseven-w/base-ui`.
  * Call `createBaseViewComponent(React)` to obtain a React component without
  * pulling React into vanilla/Vue/Svelte bundles.
  */
 
-import type { Base } from "@jiange/base-sdk";
+import type { Base } from "@zseven-w/base-sdk";
 import { mountBaseView, type BaseViewOptions, type MountedBaseView } from "./base-view.js";
 
 export interface BaseReactLike {

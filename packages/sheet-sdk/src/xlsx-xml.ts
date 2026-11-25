@@ -1,4 +1,4 @@
-import { parseXml, type XmlElement } from "@jiange/ooxml/xml";
+import { parseXml, type XmlElement } from "@zseven-w/ooxml/xml";
 import { XlsxError } from "./xlsx.js";
 
 export interface XlsxXmlNode { name: string; ns: string; attrs: Record<string, string>; children: (XlsxXmlNode | string)[] }

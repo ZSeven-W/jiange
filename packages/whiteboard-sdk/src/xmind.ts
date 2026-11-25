@@ -1,7 +1,7 @@
 /**
  * Headless `.xmind` exporter and importer for Jiange Mind Maps.
  *
- * Pure ES2022 over `@jiange/ooxml` (zero DOM dependencies).
+ * Pure ES2022 over `@zseven-w/ooxml` (zero DOM dependencies).
  * - Exports valid XMind ZEN (2020+) `.xmind` archives (`content.json`,
  *   `metadata.json`, `manifest.json`, `META-INF/manifest.xml`) preserving
  *   multi-root sheets, hierarchy & sibling order, topic descriptions/notes,
@@ -9,8 +9,8 @@
  * - Imports BOTH modern XMind (`content.json`) and legacy XMind 8 (`content.xml`).
  */
 
-import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@jiange/ooxml/zip";
-import { child, children, parseXml, textContent, XmlError, type XmlElement } from "@jiange/ooxml/xml";
+import { createZip, createZipAsync, listZip, readZipEntry, ZipError, type ZipEntry, type ZipEntryInput } from "@zseven-w/ooxml/zip";
+import { child, children, parseXml, textContent, XmlError, type XmlElement } from "@zseven-w/ooxml/xml";
 import {
   mindDescriptionAt,
   mindDescriptionLines,

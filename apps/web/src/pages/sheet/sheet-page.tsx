@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { SheetDefinedName } from "@jiange/sheet-sdk/types";
+import type { SheetDefinedName } from "@zseven-w/sheet-sdk/types";
 import {
   ApiError,
   docsApi,
@@ -42,10 +42,10 @@ import { ResourceTypeNotice } from "@/pages/resource-type-notice";
 import { ResourceReferencesButton } from "@/pages/resource-references-button";
 import { canCopyContent, canDownloadDocument } from "@/pages/document-copy";
 import { ChevronRight, Clock, Columns3, Eraser, Filter, History, Home, Lock, MessageSquare, MoreHorizontal, Pin, Printer, Rows3, Search, Share2, Tag, X } from "lucide-react";
-import { FenwickVirtualizer } from "@jiange/render-gpu";
-import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@jiange/sheet-sdk/grid";
-import { isSafeSheetImageUrl } from "@jiange/sheet-sdk/formula-functions";
-import { formatTSV, parseTSV } from "@jiange/sheet-sdk/tsv";
+import { FenwickVirtualizer } from "@zseven-w/render-gpu";
+import { columnName, pointKey, selected, selectionBounds, selectionOutline, sheetAddress, type SheetPoint, type SheetSelection } from "@zseven-w/sheet-sdk/grid";
+import { isSafeSheetImageUrl } from "@zseven-w/sheet-sdk/formula-functions";
+import { formatTSV, parseTSV } from "@zseven-w/sheet-sdk/tsv";
 import {
   buildMergeLookup,
   buildWorksheetGridMap,

@@ -3,8 +3,8 @@ import { displayValue, REGISTRY } from "./registry";
 import { t as translate } from "@/lib/i18n";
 import type { User } from "@/lib/api";
 
-import { parseTSV, formatTSV } from "@jiange/sheet-sdk/tsv";
-export { parseTSV, formatTSV } from "@jiange/sheet-sdk/tsv";
+import { parseTSV, formatTSV } from "@zseven-w/sheet-sdk/tsv";
+export { parseTSV, formatTSV } from "@zseven-w/sheet-sdk/tsv";
 
 /** Cell value → plain text (for copy), through the type registry. */
 export function toText(field: Field, v: Cell | undefined, members?: User[]): string {

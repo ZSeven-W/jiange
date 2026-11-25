@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
 import { embedHref, embedKindLabel, EmbedResourceBlock, parseEmbedUrl } from "./embed-block";
 import { formatLocalIsoDate, ReminderBlockView, reminderStatus } from "./reminder-block";
 import { blockCommentAnchor, commentSelection, isCrossBlockComment, parseCrossBlockEndChar, projectCommentAnchors } from "./comment-anchor";

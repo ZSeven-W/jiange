@@ -27,7 +27,7 @@ if (input.workbook.sheets[0].name !== '计划' || !input.warnings.includes('styl
 writeFileSync(process.argv[3], writeXlsx(input.workbook));
 writeFileSync(process.argv[4], writeXlsx({sheets:[{name:'Data',cells:[{row:0,col:0,value:'=literal'}, {row:0,col:1,value:8}, {row:1,col:1,formula:'=B1*2',value:16}, {row:0,col:2,value:true}, {row:1,col:2,value:'line1\\rline2'}]}]}));
 `);
-  execFileSync('pnpm', ['--filter', '@jiange/collab', 'exec', 'tsx', join(temp, 'check.mts'), source, roundtrip, exported], { cwd: root, stdio: 'inherit' });
+  execFileSync('pnpm', ['--filter', '@zseven-w/collab', 'exec', 'tsx', join(temp, 'check.mts'), source, roundtrip, exported], { cwd: root, stdio: 'inherit' });
   execFileSync(python, ['-c', `
 from openpyxl import load_workbook
 import sys

@@ -16,8 +16,8 @@ import {
 } from "lucide-react";
 import { DOCX_MAX_BYTES, DOCX_MIME, readDocxFile, type DocxImportResult } from "@/lib/docx";
 import { markdownTableRows, parseMarkdown, type MdBlock, type MdSpan } from "@/lib/markdown";
-import { parseCsv, parseTSV, parseXlsxBytesForWorkbook, type ImportedSheetCell, type WorkbookImportPreview } from "@jiange/sheet-sdk";
-import { parsePptxToSlides, type ImportedSlidePage, type PptxImportResult, type SlideShape } from "@jiange/slides-sdk";
+import { parseCsv, parseTSV, parseXlsxBytesForWorkbook, type ImportedSheetCell, type WorkbookImportPreview } from "@zseven-w/sheet-sdk";
+import { parsePptxToSlides, type ImportedSlidePage, type PptxImportResult, type SlideShape } from "@zseven-w/slides-sdk";
 import { safeURL } from "@/lib/safe-url";
 import { cn } from "@/lib/utils";
 import { useI18n } from "@/lib/i18n";

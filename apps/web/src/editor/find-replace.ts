@@ -1,4 +1,4 @@
-import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@jiange/collab";
+import { eqId, idKey, ROOT, type Doc, type OpId, type Tx } from "@zseven-w/collab";
 import { TITLE } from "./model";
 import { isDocumentReferenceMarks } from "@/lib/safe-url";
 

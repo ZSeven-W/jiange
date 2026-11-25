@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Anchor } from "@jiange/collab";
+import type { Anchor } from "@zseven-w/collab";
 import type { DocMeta, Me } from "@/lib/api";
 import type { RemotePeer } from "@/lib/use-sync-doc";
 import {

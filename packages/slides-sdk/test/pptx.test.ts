@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createZip, listZip } from "@jiange/ooxml/zip";
+import { createZip, listZip } from "@zseven-w/ooxml/zip";
 import { exportSlidesToPptx, parsePptxToSlides, PptxError, type PptxSlideInput } from "../src/pptx.js";
 
 describe("slides-sdk OOXML .pptx export and import", () => {

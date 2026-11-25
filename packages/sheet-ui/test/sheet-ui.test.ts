@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { GpuSurface, type PoolableElement } from "@jiange/render-gpu";
-import { Workbook } from "@jiange/sheet-sdk";
+import { GpuSurface, type PoolableElement } from "@zseven-w/render-gpu";
+import { Workbook } from "@zseven-w/sheet-sdk";
 import {
   SheetGpuRenderer,
   SheetViewController,
@@ -15,7 +15,7 @@ function makeFakeCell(): PoolableElement {
   return { style: { transform: "", width: "", height: "", display: "" }, textContent: "" };
 }
 
-describe("@jiange/sheet-ui (WebGPU/WebGL2 + Pooled Virtual Grid)", () => {
+describe("@zseven-w/sheet-ui (WebGPU/WebGL2 + Pooled Virtual Grid)", () => {
   it("renders frozen panes, formulas, conditional formats, collaborator cursors, and GPU charts with zero Canvas 2D", async () => {
     const wb = Workbook.create({ sheets: [{ name: "Budget", rows: 500, cols: 30 }] });
     const sh = wb.sheet(0);

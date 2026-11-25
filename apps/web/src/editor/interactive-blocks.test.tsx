@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx, idKey } from "@jiange/collab";
-import { CLIPPABLE_BLOCKS, TEXTLESS } from "@jiange/doc-sdk/model";
+import { Doc, ROOT, Tx, idKey } from "@zseven-w/collab";
+import { CLIPPABLE_BLOCKS, TEXTLESS } from "@zseven-w/doc-sdk/model";
 import {
   AudioBlockView,
   CountdownBlockView,

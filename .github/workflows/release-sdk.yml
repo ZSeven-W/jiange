@@ -13,7 +13,7 @@ on:
         type: string
         default: ""
       publish_npm:
-        description: "Publish all 13 @jiange/* packages to npmjs.com (requires NPM_TOKEN secret)"
+        description: "Publish all 13 @zseven-w/* packages to npmjs.com (requires NPM_TOKEN secret)"
         required: false
         type: boolean
         default: true
@@ -51,7 +51,7 @@ jobs:
         run: |
           mkdir -p "$PWD/release-tarballs"
           for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
-            pnpm --filter "@jiange/${pkg}" pack --pack-destination "$PWD/release-tarballs"
+            pnpm --filter "@zseven-w/${pkg}" pack --pack-destination "$PWD/release-tarballs"
           done
           ls -lh "$PWD/release-tarballs"
       - name: Publish npm packages (when NPM_TOKEN secret is configured)
@@ -70,20 +70,20 @@ jobs:
             echo "::notice::NPM_TOKEN secret is not configured; skipped npmjs.com publish. All 13 tarballs are packed and uploaded to Artifacts / GitHub Release."
             for pkg in "${PKGS[@]}"; do
               ver=$(node -p "require('./packages/${pkg}/package.json').version")
-              echo "| \`@jiange/${pkg}\` | \`${ver}\` | packed only (set \`NPM_TOKEN\` secret to publish to npmjs) |" >> "$GITHUB_STEP_SUMMARY"
+              echo "| \`@zseven-w/${pkg}\` | \`${ver}\` | packed only (set \`NPM_TOKEN\` secret to publish to npmjs) |" >> "$GITHUB_STEP_SUMMARY"
             done
             exit 0
           fi
 
           for pkg in "${PKGS[@]}"; do
             ver=$(node -p "require('./packages/${pkg}/package.json').version")
-            if npm view "@jiange/${pkg}@${ver}" version >/dev/null 2>&1; then
-              echo "Skipping @jiange/${pkg}@${ver} (already published on npmjs)"
-              echo "| \`@jiange/${pkg}\` | \`${ver}\` | skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
+            if npm view "@zseven-w/${pkg}@${ver}" version >/dev/null 2>&1; then
+              echo "Skipping @zseven-w/${pkg}@${ver} (already published on npmjs)"
+              echo "| \`@zseven-w/${pkg}\` | \`${ver}\` | skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
             else
-              echo "Publishing @jiange/${pkg}@${ver}..."
-              pnpm --filter "@jiange/${pkg}" publish --access public --no-git-checks --provenance
-              echo "| \`@jiange/${pkg}\` | \`${ver}\` | published to npmjs.com |" >> "$GITHUB_STEP_SUMMARY"
+              echo "Publishing @zseven-w/${pkg}@${ver}..."
+              pnpm --filter "@zseven-w/${pkg}" publish --access public --no-git-checks --provenance
+              echo "| \`@zseven-w/${pkg}\` | \`${ver}\` | published to npmjs.com |" >> "$GITHUB_STEP_SUMMARY"
             fi
           done
       - uses: actions/upload-artifact@v7
@@ -199,11 +199,11 @@ jobs:
           ## Jiange SDKs & Go CLI (\`${TAG}\`)
 
           ### TypeScript SDK Tarballs (13 packages, zero runtime dependencies)
-          All 13 \`@jiange/*\` packages (\`v${VER}\`) are attached as \`.tgz\` assets and can be installed directly or via npm (once \`NPM_TOKEN\` is configured):
+          All 13 \`@zseven-w/*\` packages (\`v${VER}\`) are attached as \`.tgz\` assets and can be installed directly or via npm (once \`NPM_TOKEN\` is configured):
 
           \`\`\`bash
           # Direct install from GitHub Release (example: headless Base SDK)
-          pnpm add https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/jiange-base-sdk-${VER}.tgz
+          pnpm add https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/zseven-w-base-sdk-${VER}.tgz
           \`\`\`
 
           ### Go Backend SDKs & CLI

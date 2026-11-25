@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, encodeClientMsg, encodeOps } from "@jiange/collab";
+import { Doc, ROOT, Tx, encodeClientMsg, encodeOps } from "@zseven-w/collab";
 import { findMatches, replaceMatches } from "./find-replace";
 import { preflightFindReplace } from "./find-replace-safety";
 

@@ -1,4 +1,4 @@
-# Changelog — @jiange/render-gpu
+# Changelog — @zseven-w/render-gpu
 
 ## [0.2.0] - 2026-11-21
 

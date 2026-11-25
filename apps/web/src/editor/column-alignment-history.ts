@@ -1,4 +1,4 @@
-import { idKey, type Doc, type Op, type OpId, type UndoManager } from "@jiange/collab";
+import { idKey, type Doc, type Op, type OpId, type UndoManager } from "@zseven-w/collab";
 import { isColumnText } from "./model";
 import { validEditorSelection } from "./selection-safety";
 import { TableCellHistory } from "./table-cell-history";

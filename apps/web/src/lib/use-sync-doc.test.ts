@@ -7,7 +7,7 @@ import {
   decodeClientMsg,
   decodeOps,
   encodeServerMsg,
-} from "@jiange/collab";
+} from "@zseven-w/collab";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetOfflineDbForTesting } from "./offline-db";
 import { loadDocCollabReplica, saveDocCollabReplica } from "./offline-collab";

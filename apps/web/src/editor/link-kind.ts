@@ -1,4 +1,4 @@
-import { eqId, type Tx } from "@jiange/collab";
+import { eqId, type Tx } from "@zseven-w/collab";
 import { isDocumentReferenceMarks, isDocumentReferenceURL, safeURL } from "@/lib/safe-url";
 import { isSourceBlock, len, normalize, type Sel } from "./model";
 

@@ -1,4 +1,4 @@
-import { Doc } from "@jiange/collab";
+import { Doc } from "@zseven-w/collab";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetOfflineDbForTesting } from "./offline-db";
 import {

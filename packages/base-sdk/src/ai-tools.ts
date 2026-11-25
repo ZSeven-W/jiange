@@ -1,5 +1,5 @@
 /**
- * AI Tool Definitions (JSON Schema) and executor for `@jiange/base-sdk`.
+ * AI Tool Definitions (JSON Schema) and executor for `@zseven-w/base-sdk`.
  */
 
 import { Base, type BaseOp } from "./base.js";

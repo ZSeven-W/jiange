@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Op } from "@jiange/collab";
+import type { Op } from "@zseven-w/collab";
 import {
   createStorageLeaseLockProvider,
   inspectCrossSessionDrafts,

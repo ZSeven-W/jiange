@@ -1,4 +1,4 @@
-# Changelog — @jiange/sheet-sdk
+# Changelog — @zseven-w/sheet-sdk
 
 ## [0.2.0] - 2026-11-21
 

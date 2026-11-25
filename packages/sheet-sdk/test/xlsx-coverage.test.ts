@@ -1,4 +1,4 @@
-import { createZip } from "@jiange/ooxml/zip";
+import { createZip } from "@zseven-w/ooxml/zip";
 import { describe, expect, it } from "vitest";
 import type { SheetWorksheet } from "../src/types.js";
 import {

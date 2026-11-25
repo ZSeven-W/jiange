@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { autoLayout, edgePath, flowIntentWrites, flowWrites, normalizeEdge, normalizeNode, readFlow, toMermaid, type FlowGraph } from "./model";
 import { labelText, parseDrawio, toDrawio, DrawioError } from "./drawio";
 import { flowchartPrompt, parseFlowchartAnswer } from "./ai";

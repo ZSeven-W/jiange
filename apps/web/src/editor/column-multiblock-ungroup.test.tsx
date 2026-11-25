@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, eqId, ROOT, Tx } from "@jiange/collab";
-import { buildDocx } from "@jiange/doc-sdk/docx";
+import { Doc, eqId, ROOT, Tx } from "@zseven-w/collab";
+import { buildDocx } from "@zseven-w/doc-sdk/docx";
 import { listZip, readZipEntry } from "@/lib/zip";
 import { buildColumnUngroupOps } from "./column-ops-commit";
 import { ColumnNestedBlocks } from "./column-nested-blocks";

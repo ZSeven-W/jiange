@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager } from "@zseven-w/collab";
 import { activeMarks, applyTableEdit, bodyBlocks, clipText, cmpPos, collapsed, copyRange, createBlankTable, deleteRange, isColumnText, isSourceBlock, joinBackward, joinForward, markdownShortcut, mathSpans, normalize, orderMap, parseTableData, parseText, pasteBlocks, selectionContainsColumns, setBlockType, snapMathPos, splitBlock, toggleMark, type Sel } from "../src/model.js";
 
 function setup(...lines: string[]) {

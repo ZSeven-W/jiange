@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, SyncClient, Tx, UndoManager, encodeServerMsg, idKey } from "@jiange/collab";
+import { Doc, ROOT, SyncClient, Tx, UndoManager, encodeServerMsg, idKey } from "@zseven-w/collab";
 import { applyTableEdit, parseTableData } from "./model";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";

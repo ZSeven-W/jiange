@@ -1,5 +1,5 @@
 /**
- * WebGPU / WebGL2 SDF Presentation Stage + Virtual Thumbnail Rail over `@jiange/slides-sdk`.
+ * WebGPU / WebGL2 SDF Presentation Stage + Virtual Thumbnail Rail over `@zseven-w/slides-sdk`.
  * Zero Canvas 2D usage.
  */
 
@@ -12,8 +12,8 @@ import {
   type GpuFrameStats,
   type GpuSurfaceOptions,
   type PoolableElement,
-} from "@jiange/render-gpu";
-import type { Presentation, SlideShape } from "@jiange/slides-sdk";
+} from "@zseven-w/render-gpu";
+import type { Presentation, SlideShape } from "@zseven-w/slides-sdk";
 
 export type SlideResizeHandle = "nw" | "ne" | "sw" | "se";
 

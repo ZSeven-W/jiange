@@ -1,5 +1,5 @@
 {
-  "name": "@jiange/sheet-ui",
+  "name": "@zseven-w/sheet-ui",
   "version": "0.2.0",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
@@ -51,8 +51,8 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@jiange/render-gpu": "workspace:*",
-    "@jiange/sheet-sdk": "workspace:*"
+    "@zseven-w/render-gpu": "workspace:*",
+    "@zseven-w/sheet-sdk": "workspace:*"
   },
   "peerDependencies": {
     "react": ">=18"

@@ -1,7 +1,7 @@
 import { createElement } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { layoutMindTopics, type MindTopic } from "./mindmap";
 import {
   layoutMindTopicsWithStructure,

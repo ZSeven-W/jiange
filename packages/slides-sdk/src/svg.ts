@@ -3,7 +3,7 @@
  * Works identically in Node.js, Edge runtimes, Workers, and browsers.
  */
 
-import { escapeXml } from "@jiange/ooxml/xml";
+import { escapeXml } from "@zseven-w/ooxml/xml";
 import type {
   SlideChartData,
   SlideMediaAsset,

@@ -1,5 +1,5 @@
 /**
- * AI Agent Collaborative Session (`@jiange/collab/ai-agent`).
+ * AI Agent Collaborative Session (`@zseven-w/collab/ai-agent`).
  *
  * Allows an AI agent to join a real-time CRDT `Doc` as a first-class collaborator with
  * dedicated clientId, awareness presence (`thinking` | `editing` | `idle`), atomic batch

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { Doc, ROOT } from "@jiange/collab";
+import { Doc, ROOT } from "@zseven-w/collab";
 import { createDocTools } from "../src/ai-tools.js";
 import { Document } from "../src/document.js";
 import { blocksToHtml, parseHtml } from "../src/html.js";

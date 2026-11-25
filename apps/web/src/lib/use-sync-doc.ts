@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { SyncClient, type Peer, type SyncMode, type SyncStatus } from "@jiange/collab";
+import { SyncClient, type Peer, type SyncMode, type SyncStatus } from "@zseven-w/collab";
 import type { Presence } from "./presence";
 import { pendingSessionQueue, prepareBrowserPendingSession, writePendingOps, type PendingSession } from "./pending-ops-storage";
 import { loadDocCollabReplica, saveDocCollabReplica } from "./offline-collab";

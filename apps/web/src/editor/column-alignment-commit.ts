@@ -1,4 +1,4 @@
-import { decodeOps, encodeOps, type Op } from "@jiange/collab";
+import { decodeOps, encodeOps, type Op } from "@zseven-w/collab";
 import { commitConditionalOps, isVerifiedConditionalStatus, queryConditionalOpsStatus, type ConditionalOpsStatus } from "@/lib/api";
 import { ConditionalJournal, conditionalResolution, type ConditionalAttempt, type ConditionalObservation, type ConditionalResolution } from "@/lib/conditional-journal";
 import { COLUMN_WIDTHS, validColumnWidths } from "./column-widths";

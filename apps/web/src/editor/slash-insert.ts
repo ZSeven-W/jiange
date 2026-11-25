@@ -1,4 +1,4 @@
-import { eqId, idKey, ROOT, Tx, type Doc, type OpId } from "@jiange/collab";
+import { eqId, idKey, ROOT, Tx, type Doc, type OpId } from "@zseven-w/collab";
 import { collapsed, mathSpansFromChars, TEXTLESS, type Pos, type Sel } from "./model";
 import { isMultiwordSlashPrefix } from "./pinyin";
 

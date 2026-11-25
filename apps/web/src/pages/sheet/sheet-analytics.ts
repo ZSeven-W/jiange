@@ -1,1 +1,1 @@
-export * from "@jiange/sheet-sdk/analytics";
+export * from "@zseven-w/sheet-sdk/analytics";

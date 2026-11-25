@@ -1,1 +1,1 @@
-export * from "@jiange/slides-sdk/shape-state";
+export * from "@zseven-w/slides-sdk/shape-state";

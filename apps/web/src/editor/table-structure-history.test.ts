@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, ROOT, Tx, UndoManager, idKey } from "@jiange/collab";
+import { Doc, ROOT, Tx, UndoManager, idKey } from "@zseven-w/collab";
 import { applyTableWrites, cellTableWrites, isCellTable, tableDataOf, tableRowsOf, writeTable } from "./table-cells";
 import { TableCellHistory } from "./table-cell-history";
 import { applyTableHistory, tableHistoryGuard } from "./table-history-undo";

@@ -1,4 +1,4 @@
-import type { Doc, UndoManager, UndoManagerSnapshot } from "@jiange/collab";
+import type { Doc, UndoManager, UndoManagerSnapshot } from "@zseven-w/collab";
 import type { FindBatchHistory } from "./find-batch";
 import type { TableCellHistory } from "./table-cell-history";
 import type { SerializedTableStructureHistory, TableStructureHistory } from "./table-structure-history";

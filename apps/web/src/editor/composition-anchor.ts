@@ -1,4 +1,4 @@
-import { eqId, idKey, ROOT, type Doc, type OpId } from "@jiange/collab";
+import { eqId, idKey, ROOT, type Doc, type OpId } from "@zseven-w/collab";
 import type { Pos, Sel } from "./model";
 
 export interface CompositionAnchor {

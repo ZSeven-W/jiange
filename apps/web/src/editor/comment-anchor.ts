@@ -1,5 +1,5 @@
-import { eqId, idKey, ROOT, type Doc, type OpId } from "@jiange/collab";
-import { isFlowCommentAnchor } from "@jiange/whiteboard-sdk/comment-anchor";
+import { eqId, idKey, ROOT, type Doc, type OpId } from "@zseven-w/collab";
+import { isFlowCommentAnchor } from "@zseven-w/whiteboard-sdk/comment-anchor";
 import type { Comment } from "@/lib/api";
 import { bodyBlocks, cmpPos, orderMap, TEXTLESS, type Sel } from "./model";
 

@@ -1,4 +1,4 @@
-import { Doc, Tx, encodeClientMsg, encodeOps, eqId, idKey, ROOT, type OpId } from "@jiange/collab";
+import { Doc, Tx, encodeClientMsg, encodeOps, eqId, idKey, ROOT, type OpId } from "@zseven-w/collab";
 import { findMatches, type FindMatch, type FindOptions } from "./find-replace";
 import { cellKey, isCellTable, tableRowsOf, writeTable, TBL_ROWS, TBL_COLS, TBL_BASE, TBL_MIRROR, TBL_VERSION } from "./table-cells";
 import { coverMap, parseMerges } from "./table-ops";

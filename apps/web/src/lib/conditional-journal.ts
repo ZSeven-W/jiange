@@ -1,4 +1,4 @@
-import { decodeOps, encodeOps, type Op } from "@jiange/collab";
+import { decodeOps, encodeOps, type Op } from "@zseven-w/collab";
 import { conditionalBatchBase64, isVerifiedConditionalStatus, type ConditionalOpsStatus } from "./api";
 
 type LockProvider = Pick<LockManager, "request">;

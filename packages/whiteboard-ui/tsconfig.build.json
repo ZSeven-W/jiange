@@ -15,10 +15,10 @@
     "outDir": "dist",
     "baseUrl": ".",
     "paths": {
-      "@jiange/whiteboard-sdk": ["../whiteboard-sdk/dist/index.d.ts"],
-      "@jiange/whiteboard-sdk/*": ["../whiteboard-sdk/dist/*.d.ts"],
-      "@jiange/render-gpu": ["../render-gpu/dist/index.d.ts"],
-      "@jiange/render-gpu/*": ["../render-gpu/dist/*.d.ts"]
+      "@zseven-w/whiteboard-sdk": ["../whiteboard-sdk/dist/index.d.ts"],
+      "@zseven-w/whiteboard-sdk/*": ["../whiteboard-sdk/dist/*.d.ts"],
+      "@zseven-w/render-gpu": ["../render-gpu/dist/index.d.ts"],
+      "@zseven-w/render-gpu/*": ["../render-gpu/dist/*.d.ts"]
     }
   },
   "include": [

@@ -1,10 +1,10 @@
 /**
- * Zero-framework DOM mount helper for `@jiange/sheet-ui`.
+ * Zero-framework DOM mount helper for `@zseven-w/sheet-ui`.
  * Mounts a WebGPU/WebGL2 `<canvas>` + recycled text overlay pool + singleton `<input>` IME editor.
  */
 
-import { GpuSurface, type GpuSurfaceOptions } from "@jiange/render-gpu";
-import type { Workbook } from "@jiange/sheet-sdk";
+import { GpuSurface, type GpuSurfaceOptions } from "@zseven-w/render-gpu";
+import type { Workbook } from "@zseven-w/sheet-sdk";
 import { SheetViewController, type SheetViewControllerOptions } from "./controller.js";
 import { SheetGpuRenderer, type SheetRenderTheme } from "./sheet-renderer.js";
 

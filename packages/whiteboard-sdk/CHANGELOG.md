@@ -1,4 +1,4 @@
-# Changelog — @jiange/whiteboard-sdk
+# Changelog — @zseven-w/whiteboard-sdk
 
 ## [0.2.0] - 2026-11-21
 

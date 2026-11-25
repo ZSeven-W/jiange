@@ -5,7 +5,7 @@ import { WebSocketSyncAdapter, type WebSocketLike } from "../src/ws.js";
 import { IndexedDbDraftStorage, MemoryDraftStorage, type StoredDraft } from "../src/storage.js";
 import { AiCollabSession } from "../src/ai-agent.js";
 
-describe("@jiange/collab 0.2.0 subpaths (table, ws, storage, ai-agent)", () => {
+describe("@zseven-w/collab 0.2.0 subpaths (table, ws, storage, ai-agent)", () => {
   it("table subpath: allocates unique IDs, applies ops, and round-trips binary ttable payloads", () => {
     const doc = new Doc(7);
     const allocFromDoc = new TableIdAllocator(7, doc);

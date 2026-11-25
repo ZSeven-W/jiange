@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Doc, idKey, ROOT, Tx } from "@jiange/collab";
+import { Doc, idKey, ROOT, Tx } from "@zseven-w/collab";
 import { projectCommentAnchors } from "../comment-anchor";
 import { resolveBoardCommentPins } from "./board-comments";
 import type { Comment } from "@/lib/api";

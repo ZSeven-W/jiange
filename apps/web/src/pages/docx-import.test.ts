@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Doc, ROOT, Tx } from "@jiange/collab";
+import { Doc, ROOT, Tx } from "@zseven-w/collab";
 import { bodyBlocks } from "@/editor/model";
 import type { MdBlock } from "@/lib/markdown";
 import type { DocxImportResult } from "@/lib/docx";
