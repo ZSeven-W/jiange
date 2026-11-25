@@ -10,7 +10,13 @@ This directory contains production Kubernetes manifests (Helm chart and Kustomiz
 
 ---
 
-## 1. Docker Compose (Local / Single-Host)
+## 1. Docker Image (GHCR) & Docker Compose
+
+Multi-arch (`linux/amd64`, `linux/arm64`) container images are built and published automatically to `ghcr.io/zseven-w/jiange` by [`.github/workflows/release-docker.yml`](../.github/workflows/release-docker.yml) on `v*` tags or manual `workflow_dispatch`:
+
+```bash
+docker pull ghcr.io/zseven-w/jiange:latest
+```
 
 The repository root includes [`docker-compose.yml`](../docker-compose.yml) with PostgreSQL 16, MinIO, and the all-in-one Jiange binary:
 

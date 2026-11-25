@@ -1,6 +1,6 @@
 # Multi-stage build: compile workspace SDKs + web frontend, embed into the Go server,
 # and ship a static binary. Nothing is read from the repo at runtime.
-FROM node:22-alpine AS web
+FROM --platform=$BUILDPLATFORM node:22-alpine AS web
 WORKDIR /src
 RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
@@ -24,13 +24,15 @@ COPY apps/web apps/web
 COPY packages packages
 RUN pnpm --filter @jiange/web... build
 
-FROM golang:1.27-alpine AS server
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS server
+ARG TARGETOS
+ARG TARGETARCH
 WORKDIR /src/server
 COPY server/go.mod server/go.sum ./
 RUN go mod download
 COPY server/ .
 COPY --from=web /src/apps/web/dist ./webui/dist
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/jiange ./cmd/jiange
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -trimpath -ldflags "-s -w" -o /out/jiange ./cmd/jiange
 
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates tzdata \
