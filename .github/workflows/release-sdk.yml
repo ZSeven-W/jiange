@@ -6,6 +6,26 @@ on:
       - "sdk-v*"
       - "cli-v*"
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional GitHub Release tag to create/update (e.g. sdk-v0.2.0)"
+        required: false
+        type: string
+        default: ""
+      publish_npm:
+        description: "Publish all 13 @jiange/* packages to npmjs.com (requires NPM_TOKEN secret)"
+        required: false
+        type: boolean
+        default: true
+      tag_go_modules:
+        description: "Ensure Go submodule tags (sdk/go/vX.Y.Z, sdk/go-pgstore/vX.Y.Z, cli/vX.Y.Z) & warm proxy.golang.org"
+        required: false
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-sdk-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -27,20 +47,44 @@ jobs:
       - run: pnpm test:sdk:pack
       - run: pnpm --workspace-concurrency=1 test:sdk:coverage
       - run: node benchmarks/run-benchmarks.mjs
-      - name: Pack all 13 SDK tarballs
+      - name: Pack all 13 SDK tarballs (L0 -> L1 -> L2)
         run: |
           mkdir -p "$PWD/release-tarballs"
           for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
             pnpm --filter "@jiange/${pkg}" pack --pack-destination "$PWD/release-tarballs"
           done
-          ls -la "$PWD/release-tarballs"
-      - name: Publish npm packages on sdk-v* tags (when NPM_TOKEN is configured)
-        if: startsWith(github.ref, 'refs/tags/sdk-v') && env.NODE_AUTH_TOKEN != ''
+          ls -lh "$PWD/release-tarballs"
+      - name: Publish npm packages (when NPM_TOKEN secret is configured)
+        if: startsWith(github.ref, 'refs/tags/sdk-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_npm != false)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for pkg in ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui; do
-            pnpm --filter "@jiange/${pkg}" publish --access public --no-git-checks --provenance
+          echo "### TypeScript SDK Release Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Package | Version | npm Status |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|---|" >> "$GITHUB_STEP_SUMMARY"
+
+          PKGS=(ooxml collab render-gpu sheet-sdk doc-sdk slides-sdk whiteboard-sdk base-sdk sheet-ui doc-ui slides-ui whiteboard-ui base-ui)
+
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::notice::NPM_TOKEN secret is not configured; skipped npmjs.com publish. All 13 tarballs are packed and uploaded to Artifacts / GitHub Release."
+            for pkg in "${PKGS[@]}"; do
+              ver=$(node -p "require('./packages/${pkg}/package.json').version")
+              echo "| \`@jiange/${pkg}\` | \`${ver}\` | packed only (set \`NPM_TOKEN\` secret to publish to npmjs) |" >> "$GITHUB_STEP_SUMMARY"
+            done
+            exit 0
+          fi
+
+          for pkg in "${PKGS[@]}"; do
+            ver=$(node -p "require('./packages/${pkg}/package.json').version")
+            if npm view "@jiange/${pkg}@${ver}" version >/dev/null 2>&1; then
+              echo "Skipping @jiange/${pkg}@${ver} (already published on npmjs)"
+              echo "| \`@jiange/${pkg}\` | \`${ver}\` | skipped (already published) |" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo "Publishing @jiange/${pkg}@${ver}..."
+              pnpm --filter "@jiange/${pkg}" publish --access public --no-git-checks --provenance
+              echo "| \`@jiange/${pkg}\` | \`${ver}\` | published to npmjs.com |" >> "$GITHUB_STEP_SUMMARY"
+            fi
           done
       - uses: actions/upload-artifact@v7
         with:
@@ -112,13 +156,20 @@ jobs:
           test -z "$(gofmt -l .)"
           go vet ./...
           go test -count=1 -race -cover ./...
+      - working-directory: examples/go-backend
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet ./...
+          go run . --check
 
   publish-github-release:
-    if: startsWith(github.ref, 'refs/tags/')
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: [build-ts-sdks, build-go-cli, verify-go-sdks]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v8
         with:
           path: release-assets
@@ -126,11 +177,70 @@ jobs:
       - name: Generate SHA256 checksums
         working-directory: release-assets
         run: sha256sum * > SHA256SUMS.txt
-      - name: Create GitHub Release
+      - name: Create or update GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          DISPATCH_TAG: ${{ inputs.release_tag }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          gh release create "${TAG}" release-assets/* \
-            --title "Jiange ${TAG}" \
-            --generate-notes
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${DISPATCH_TAG}"
+            if ! git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+              git tag "${TAG}" "${GITHUB_SHA}"
+              git push origin "refs/tags/${TAG}"
+            fi
+          fi
+
+          VER="${TAG#sdk-v}"
+          VER="${VER#cli-v}"
+
+          cat > /tmp/release-notes.md <<EOF
+          ## Jiange SDKs & Go CLI (\`${TAG}\`)
+
+          ### TypeScript SDK Tarballs (13 packages, zero runtime dependencies)
+          All 13 \`@jiange/*\` packages (\`v${VER}\`) are attached as \`.tgz\` assets and can be installed directly or via npm (once \`NPM_TOKEN\` is configured):
+
+          \`\`\`bash
+          # Direct install from GitHub Release (example: headless Base SDK)
+          pnpm add https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/jiange-base-sdk-${VER}.tgz
+          \`\`\`
+
+          ### Go Backend SDKs & CLI
+          \`\`\`bash
+          go get github.com/${GITHUB_REPOSITORY}/sdk/go@v${VER}
+          go get github.com/${GITHUB_REPOSITORY}/sdk/go-pgstore@v${VER}
+          go install github.com/${GITHUB_REPOSITORY}/cli/cmd/jiange@v${VER}
+          \`\`\`
+
+          Prebuilt static CLI binaries for Linux, macOS, and Windows (\`amd64\` / \`arm64\`) plus \`SHA256SUMS.txt\` are attached below.
+          EOF
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" release-assets/* --clobber
+            gh release edit "${TAG}" --notes-file /tmp/release-notes.md
+          else
+            gh release create "${TAG}" release-assets/* \
+              --title "Jiange ${TAG}" \
+              --notes-file /tmp/release-notes.md
+          fi
+      - name: Tag Go submodules & warm proxy.golang.org
+        if: github.event_name != 'workflow_dispatch' || inputs.tag_go_modules != false
+        env:
+          DISPATCH_TAG: ${{ inputs.release_tag }}
+        run: |
+          TAG="${DISPATCH_TAG}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [[ "${TAG}" =~ ^sdk-v([0-9]+\.[0-9]+\.[0-9]+.*)$ ]]; then
+            VER="${BASH_REMATCH[1]}"
+            for mod in sdk/go sdk/go-pgstore cli; do
+              SUBTAG="${mod}/v${VER}"
+              if ! git rev-parse "refs/tags/${SUBTAG}" >/dev/null 2>&1; then
+                git tag "${SUBTAG}" "${GITHUB_SHA}"
+                git push origin "refs/tags/${SUBTAG}"
+              fi
+              curl -fsSL "https://proxy.golang.org/github.com/${GITHUB_REPOSITORY}/${mod}/@v/v${VER}.info" >/dev/null || true
+            done
+          fi

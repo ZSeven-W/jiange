@@ -105,10 +105,11 @@ cd sdk/go-pgstore && go vet ./... && go test -count=1 -race -cover ./...
 
 - **语义化版本**：13 个 TypeScript 包、`sdk/go/`、`sdk/go-pgstore/` 与 `cli/` 同步维护独立 `CHANGELOG.md`，当前统一为 **`0.2.0`**；`0.x` 阶段在 minor 版本中保持向后兼容并提供清晰迁移表，`1.0.0` 起严格遵循 SemVer。
 - **自动化发布工作流（[`.github/workflows/release-sdk.yml`](../.github/workflows/release-sdk.yml)）**：
-  - 触发方式：推送 `sdk-v*` 或 `cli-v*` Git Tag，或手动 `workflow_dispatch`。
-  - **`build-ts-sdks` 任务**：执行 `pnpm install --frozen-lockfile` → `pnpm -r build` → `pnpm test:sdk:pack` → `node benchmarks/run-benchmarks.mjs` → 打包全部 13 个 `@jiange/*.tgz` 上传构建产物（可用于 `npm publish --access public`）。
-  - **`build-go-cli` 任务**：运行 `go test -count=1 -race ./...`，并以 `CGO_ENABLED=0` 交叉编译 5 个平台静态二进制（`linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64`）。
-  - **`verify-go-sdk` 任务**：在 `sdk/go` 上执行 `gofmt`、`go vet ./...` 与 `go test -count=1 -race -cover ./...`。
+  - 触发方式：推送 `sdk-v*` 或 `cli-v*` Git Tag，或在 GitHub Actions 手动执行 `workflow_dispatch`（支持 `release_tag`、`publish_npm`、`tag_go_modules` 参数）。
+  - **`build-ts-sdks` 任务**：执行 `pnpm install --frozen-lockfile` → `pnpm -r build` → `pnpm test:sdk:pack` → `pnpm --workspace-concurrency=1 test:sdk:coverage` → `node benchmarks/run-benchmarks.mjs` → 按 L0→L1→L2 拓扑顺序打包全部 13 个 `@jiange/*.tgz`；配置 `NPM_TOKEN` Secret 后自动幂等发布到 npmjs.com（含 `--provenance`）。
+  - **`build-go-cli` 任务**：运行 `go test -count=1 -race -cover ./...`，并以 `CGO_ENABLED=0` 交叉编译 5 个平台静态二进制（`linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64`）。
+  - **`verify-go-sdks` 任务**：在 `sdk/go`、`sdk/go-pgstore` 与 `examples/go-backend` 上执行 `gofmt`、`go vet`、`go test -race -cover` 与 `--check`。
+  - **`publish-github-release` 任务**：生成 `SHA256SUMS.txt`、幂等创建/更新 GitHub Release（附带全部 13 个 `.tgz` 与 5 平台 CLI 二进制），并自动同步 Go 子模块 Tag（`sdk/go/vX.Y.Z`、`sdk/go-pgstore/vX.Y.Z`、`cli/vX.Y.Z`）与预热 `proxy.golang.org`。
 
 ---
 
