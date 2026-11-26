@@ -1140,23 +1140,28 @@ func (s *Server) extractAccessibleDocText(ctx context.Context, r *http.Request, 
 			if c, err := r.Cookie(CookieName); err == nil && c.Value != "" {
 				guard := store.RestoreGuard{UserID: uid, SessionHash: auth.HashToken(c.Value), Now: s.now}
 				if snap, err := s.Store.GetSheetWorkbook(ctx, guard, fresh.ID); err == nil {
-					var b strings.Builder
-					for _, ws := range snap.Sheets {
-						appendSearchSegment(&b, ws.Title)
-						for _, cell := range ws.Cells {
-							raw := strings.TrimSpace(cell.Raw)
-							if raw != "" {
-								appendSearchSegment(&b, raw)
-							}
-						}
-					}
-					return b.String(), true
+					return extractAIWorkspaceSheetText(snap), true
 				}
 			}
 		}
 		return "", true
 	}
 	return "", true
+}
+
+func extractAIWorkspaceSheetText(snap store.SheetSnapshot) string {
+	var b strings.Builder
+	for _, ws := range snap.Sheets {
+		appendSearchSegment(&b, ws.Title)
+		for _, cell := range ws.Cells {
+			raw := strings.TrimSpace(cell.Raw)
+			if raw == "" || strings.HasPrefix(raw, "=") {
+				continue
+			}
+			appendSearchSegment(&b, raw)
+		}
+	}
+	return b.String()
 }
 
 func scoreDocumentForRAG(title, bodyText, foldedQuestion string, terms []aiSearchTerm) (float64, string) {

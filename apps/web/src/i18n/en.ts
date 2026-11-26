@@ -5375,4 +5375,7 @@ export const en: Record<string, string> = {
   "图形 {kind}": "Shape {kind}",
   "元素动画顺序 {order}": "Element animation order {order}",
   "动画 #{order}": "Animation #{order}",
+  "加载示例工作区": "Load sample workspace",
+  "正在生成示例工作区…": "Creating sample workspace…",
+  "示例工作区创建失败，请稍后重试。": "Failed to create sample workspace. Please try again.",
 };

@@ -11,6 +11,7 @@ import { NewDocGlyph, TemplateGlyph } from "@/components/drive-action-icons";
 import { HomeUpload } from "@/components/home-upload";
 import { ShareDialog } from "@/components/share-dialog";
 import { FeishuSelect } from "@/components/feishu-select";
+import { createSampleWorkspace } from "./sample-workspace";
 import { HomeDocumentActions } from "./home-document-actions";
 import { canDuplicateHomeDocument, sameTrashSnapshot } from "./home-file-actions";
 import type { DriveUploadManager } from "./drive-upload";
@@ -60,6 +61,7 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
   const [pinsCollapsed, setPinsCollapsed] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set());
   const [batchPending, setBatchPending] = useState(false);
+  const [seedingSample, setSeedingSample] = useState(false);
   useEffect(() => { if (!actionNotice) return; const timer = window.setTimeout(() => setActionNotice(""), 4000); return () => window.clearTimeout(timer); }, [actionNotice]);
   const actionLock = useRef(false);
   const actionGeneration = useRef(0);
@@ -392,7 +394,40 @@ export function Home({ me, uploads, recent, favorites }: { me: Me; uploads: Driv
           {query.isPending ? <p className="px-2 py-14 text-center text-[13px] text-subtle">{t("加载中…")}</p> : query.isError ? <p role="alert" className="px-2 py-14 text-center text-[13px] text-destructive">{t("加载失败，请检查网络。")} <button type="button" className="underline" onClick={() => void query.refetch()}>{t("重试")}</button></p> : items.length ? view === "grid" ? <div className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2 xl:grid-cols-3" data-home-grid>{items.map((d) => <DocumentCard key={d.id} doc={d} selected={selectedIds.has(d.id)} selecting={chosenDocs.length > 0} onSelect={() => setSelectedIds((prev) => toggleId(prev, d.id))} actions={documentActions(d)}/>)}</div> : items.map((d) => <DocumentRow key={d.id} doc={d} selected={selectedIds.has(d.id)} selecting={chosenDocs.length > 0} onSelect={() => setSelectedIds((prev) => toggleId(prev, d.id))} viewedAt={selected === "recent" && "viewedAt" in d && typeof d.viewedAt === "string" ? d.viewedAt : undefined} workspaceName={d.workspaceName || me.workspaces.find((w) => w.id === d.workspaceId)?.name} actions={documentActions(d)} />) : <div className="grid place-items-center px-5 py-20 text-center" data-empty-guide>
             <span className="grid size-14 place-items-center rounded-full bg-sidebar text-subtle">{selected === "favorites" ? <Star size={23} strokeWidth={1.4} /> : <FolderOpen size={24} strokeWidth={1.4} />}</span>
             <p className="mt-4 text-[13px] text-muted-foreground">{kind !== "all" ? t("没有此类型的文档") : selected === "favorites" ? t("还没有收藏的文档") : selected === "shared" ? t("还没有与我共享的文档") : selected === "mine" ? t("暂无我创建的文档") : selected === "recent" ? t("还没有最近访问的文档") : t("暂无文档")}</p>
-            {selected === "recent" && kind === "all" && <button onClick={() => create.mutate("doc")} disabled={create.isPending} className="mt-3 text-[13px] text-primary hover:underline">{t("新建文档")}</button>}
+            {selected === "recent" && kind === "all" && (
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => create.mutate("doc")}
+                  disabled={create.isPending || seedingSample}
+                  className="rounded-md border px-3 py-1.5 text-[13px] text-foreground hover:bg-hover disabled:opacity-50"
+                >
+                  {t("新建文档")}
+                </button>
+                <button
+                  type="button"
+                  data-load-sample-workspace
+                  disabled={create.isPending || seedingSample}
+                  onClick={async () => {
+                    const owner = me.user.id;
+                    setSeedingSample(true);
+                    setActionError("");
+                    try {
+                      const res = await createSampleWorkspace(owner, locale);
+                      refreshHome();
+                      if (currentUser.current === owner) go(`#/doc/${res.docId}`);
+                    } catch {
+                      if (currentUser.current === owner) setActionError(t("示例工作区创建失败，请稍后重试。"));
+                    } finally {
+                      if (currentUser.current === owner) setSeedingSample(false);
+                    }
+                  }}
+                  className="rounded-md bg-primary px-3.5 py-1.5 text-[13px] font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+                >
+                  {seedingSample ? t("正在生成示例工作区…") : t("加载示例工作区")}
+                </button>
+              </div>
+            )}
           </div>}
         </div>
       </div>

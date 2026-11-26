@@ -20,6 +20,25 @@ if [ -n "${JIANGE_BLOB_DIR:-}" ]; then
 	mkdir -p "$JIANGE_BLOB_DIR"
 fi
 
+# Persist an auto-generated 32-byte key on first boot so single-node Docker
+# setups can save encrypted AI / SSO / Webhook secrets out of the box.
+if [ -z "${JIANGE_SECRET_KEY:-}" ]; then
+	key_file="${JIANGE_SECRET_KEY_FILE:-/data/.secret-key}"
+	mkdir -p "$(dirname "$key_file")"
+	if [ ! -s "$key_file" ]; then
+		tmp_key="${key_file}.tmp.$$"
+		(
+			umask 077
+			od -An -tx1 -N32 /dev/urandom | tr -d ' \n' > "$tmp_key"
+		)
+		chmod 600 "$tmp_key"
+		mv -f "$tmp_key" "$key_file"
+	fi
+	JIANGE_SECRET_KEY="$(tr -d ' \r\n' < "$key_file")"
+	export JIANGE_SECRET_KEY
+	echo "[jiange] JIANGE_SECRET_KEY not set; using persistent key at ${key_file} (set JIANGE_SECRET_KEY explicitly in multi-replica production)" >&2
+fi
+
 export JIANGE_SECURE_COOKIES="${JIANGE_SECURE_COOKIES:-true}"
 export JIANGE_AUTO_VERSION_EVERY="${JIANGE_AUTO_VERSION_EVERY:-0}"
 

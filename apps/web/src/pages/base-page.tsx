@@ -57,7 +57,7 @@ import { cn } from "@/lib/utils";
 import { BaseUndoStack, definedCells, viewToUndoSnapshot, type UndoApi } from "./base/undo";
 import { aiFilterPrompt, parseAiFilter } from "./base/ai-filter";
 import { aiApi, aiErrorText, openAISettings } from "@/lib/ai";
-import { ArrowDown, ArrowDownUp, ArrowUp, Check, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, ShieldCheck, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
+import { ArrowDown, ArrowDownUp, ArrowUp, Check, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, CircleChevronDown, Copy, Download, Eye, Filter, Home, Info, LayoutDashboard, LayoutPanelTop, ListFilter, PaintBucket, PanelsTopLeft, Pencil, Plus, Redo2, Rows3, Search, Settings2, Share2, ShieldCheck, Sparkles, Table2, Trash2, Undo2, Workflow, Zap } from "lucide-react";
 import { canDuplicateHomeDocument } from "./home-file-actions";
 
 export { view } from "./base/view";
@@ -135,6 +135,23 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
   const [aiPasteOpen, setAiPasteOpen] = useState(false);
   const [aiFillOpen, setAiFillOpen] = useState(false);
   const [viewMenuOpen, setViewMenuOpen] = useState(false);
+  const [ioMenuOpen, setIoMenuOpen] = useState(false);
+  const ioMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!ioMenuOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!ioMenuRef.current?.contains(event.target as Node)) setIoMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIoMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [ioMenuOpen]);
   const [baseSidebarOpen, setBaseSidebarOpen] = useState(() => typeof window !== "undefined" && window.innerWidth >= 1200);
   const expandBaseSidebar = useRef<HTMLButtonElement>(null), collapseBaseSidebar = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -776,30 +793,61 @@ export function BasePage({ id, userId, me }: { id: number; userId: number; me?: 
             {t("自动化")}
           </button>
         )}
-        {canAddRecord && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
-        {canAddRecord && current?.type === "grid" && <XlsxImport key={`xlsx:${id}`} baseId={id} fields={fields} members={members} onRefresh={refresh} />}
-        {!canExportBase(base, q.data.writeRestricted) ? (
-          <>
-            <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
-            <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-xlsx>{t("导出 Excel (.xlsx)（不可用）")}</span>
-          </>
-        ) : (
-          <>
-            <a href={activeTableId ? `/api/bases/${id}/export?tableId=${activeTableId}` : `/api/bases/${id}/export`} className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground" data-export-csv>{t("导出 CSV")}</a>
-            <button
-              type="button"
-              onClick={() => {
-                const tableName = tables.find((tbl) => tbl.id === activeTableId)?.name || base.title || t("数据表");
-                const bytes = exportBaseToXlsx(tableName, visibleFields, records, members);
-                downloadXlsxBytes(bytes, `${tableName}.xlsx`);
-              }}
-              className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground"
-              data-export-xlsx
-            >
-              {t("导出 Excel (.xlsx)")}
-            </button>
-          </>
-        )}
+        <div ref={ioMenuRef} className="relative shrink-0">
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={ioMenuOpen}
+            onClick={() => setIoMenuOpen((open) => !open)}
+            data-base-io-menu
+            className="flex h-8 items-center gap-1 rounded-md px-2 text-muted-foreground hover:bg-hover hover:text-foreground"
+          >
+            <Download size={14} strokeWidth={1.7} />
+            <span>{t("导入 / 导出")}</span>
+            <ChevronDown size={12} />
+          </button>
+          <div
+            role="menu"
+            aria-label={t("导入 / 导出")}
+            className={cn(
+              "absolute right-0 top-[calc(100%+4px)] z-30 flex min-w-44 flex-col gap-0.5 rounded-lg border bg-surface p-1.5 text-[13px] shadow-[0_6px_22px_rgba(31,35,41,0.16)]",
+              !ioMenuOpen && "hidden",
+            )}
+          >
+            {canAddRecord && current?.type === "grid" && <CsvImport key={id} baseId={id} onRefresh={refresh} />}
+            {canAddRecord && current?.type === "grid" && <XlsxImport key={`xlsx:${id}`} baseId={id} fields={fields} members={members} onRefresh={refresh} />}
+            {!canExportBase(base, q.data.writeRestricted) ? (
+              <>
+                <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-csv>{t("导出 CSV（不可用）")}</span>
+                <span className="rounded-md px-2 py-1 text-subtle" title={t("当前权限不支持导出")} data-export-xlsx>{t("导出 Excel (.xlsx)（不可用）")}</span>
+              </>
+            ) : (
+              <>
+                <a
+                  href={activeTableId ? `/api/bases/${id}/export?tableId=${activeTableId}` : `/api/bases/${id}/export`}
+                  onClick={() => setIoMenuOpen(false)}
+                  className="rounded-md px-2 py-1 text-muted-foreground hover:bg-hover hover:text-foreground"
+                  data-export-csv
+                >
+                  {t("导出 CSV")}
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIoMenuOpen(false);
+                    const tableName = tables.find((tbl) => tbl.id === activeTableId)?.name || base.title || t("数据表");
+                    const bytes = exportBaseToXlsx(tableName, visibleFields, records, members);
+                    downloadXlsxBytes(bytes, `${tableName}.xlsx`);
+                  }}
+                  className="rounded-md px-2 py-1 text-left text-muted-foreground hover:bg-hover hover:text-foreground"
+                  data-export-xlsx
+                >
+                  {t("导出 Excel (.xlsx)")}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
         <label className="flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2 text-subtle focus-within:bg-hover md:hidden"><Search size={14} /><span className="sr-only">{t("搜索记录")}</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder={t("搜索记录")} className="w-24 bg-transparent text-[12px] text-foreground outline-none" /></label>
         {current?.type !== "grid" && <span className="px-2 text-subtle">
           {records.length === source.length ? t("{n} 条记录", { n: records.length }) : t("{n} / {total} 条记录", { n: records.length, total: source.length })}

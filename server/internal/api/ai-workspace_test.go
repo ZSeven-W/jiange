@@ -898,3 +898,32 @@ func TestAIWorkspaceAskStreamSSELocalAndOpenAI(t *testing.T) {
 		t.Fatalf("unexpected OpenAI streaming result: joined=%q done=%+v", llmJoined.String(), llmDone)
 	}
 }
+
+func TestExtractAIWorkspaceSheetTextSkipsFormulas(t *testing.T) {
+	snap := store.SheetSnapshot{
+		Sheets: []store.SheetWorksheet{
+			{
+				Title: "Q4 Revenue",
+				Cells: []store.SheetCell{
+					{Raw: "Region"},
+					{Raw: "East China"},
+					{Raw: "268"},
+					{Raw: "=SUM(B2:E2)"},
+					{Raw: " =AVERAGE(B2:E2) "},
+					{Raw: "   "},
+				},
+			},
+		},
+	}
+	got := extractAIWorkspaceSheetText(snap)
+	for _, want := range []string{"Q4 Revenue", "Region", "East China", "268"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("extractAIWorkspaceSheetText missing %q in %q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"=SUM(B2:E2)", "=AVERAGE(B2:E2)"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("extractAIWorkspaceSheetText unexpectedly included formula %q in %q", unwanted, got)
+		}
+	}
+}
