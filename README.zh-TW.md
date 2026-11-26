@@ -17,6 +17,14 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ZSeven-W/jiange/actions/workflows/ci.yml"><img src="https://github.com/ZSeven-W/jiange/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/ZSeven-W/jiange/releases/latest"><img src="https://img.shields.io/github/v/release/ZSeven-W/jiange?label=release&color=3370FF" alt="Latest Release" /></a>
+  <a href="https://www.npmjs.com/package/@zseven-w/sheet-sdk"><img src="https://img.shields.io/npm/v/%40zseven-w%2Fsheet-sdk?label=npm%20%40zseven-w%2F*&color=CB3837" alt="npm SDKs" /></a>
+  <a href="https://github.com/ZSeven-W/jiange/pkgs/container/jiange"><img src="https://img.shields.io/badge/ghcr.io-zseven--w%2Fjiange-2496ED?logo=docker&logoColor=white" alt="GHCR Docker Image" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Dual--Track%20%7C%20SDK%20Free-10B981" alt="License" /></a>
+</p>
+
+<p align="center">
   <strong>開源的飛書／Lark 雲端文件 + 試算表 + 多維表格 + 簡報 + 白板／心智圖完整協作套件</strong><br />
   <sub>AI 原生 · 輕量可拆 · 政府與企業安全合規 · 多副本高可用 · 全倉雙語與離線 CRDT · 零 Canvas 2D（WebGPU/WebGL2 + 虛擬列表）</sub>
 </p>

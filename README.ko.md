@@ -17,6 +17,14 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ZSeven-W/jiange/actions/workflows/ci.yml"><img src="https://github.com/ZSeven-W/jiange/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/ZSeven-W/jiange/releases/latest"><img src="https://img.shields.io/github/v/release/ZSeven-W/jiange?label=release&color=3370FF" alt="Latest Release" /></a>
+  <a href="https://www.npmjs.com/package/@zseven-w/sheet-sdk"><img src="https://img.shields.io/npm/v/%40zseven-w%2Fsheet-sdk?label=npm%20%40zseven-w%2F*&color=CB3837" alt="npm SDKs" /></a>
+  <a href="https://github.com/ZSeven-W/jiange/pkgs/container/jiange"><img src="https://img.shields.io/badge/ghcr.io-zseven--w%2Fjiange-2496ED?logo=docker&logoColor=white" alt="GHCR Docker Image" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Dual--Track%20%7C%20SDK%20Free-10B981" alt="License" /></a>
+</p>
+
+<p align="center">
   <strong>오픈소스 Feishu / Lark 대안 올인원 협업 스위트 (문서 + 스프레드시트 + 다차원 테이블 + 슬라이드 + 화이트보드/마인드맵)</strong><br />
   <sub>AI 네이티브 · 경량 및 모듈 분리 가능 · 엔터프라이즈 보안 컴플라이언스 · 멀티 레플리카 고가용성 · 전체 저장소 이중 언어 및 오프라인 CRDT · 제로 Canvas 2D (WebGPU/WebGL2 + 가상 리스트)</sub>
 </p>

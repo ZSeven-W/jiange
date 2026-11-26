@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Q&A & Commercial Licensing / 问答交流与商业授权咨询
+    url: https://github.com/ZSeven-W/jiange/discussions
+    about: Ask deployment questions, share feedback, or inquire about commercial application licensing.
+  - name: Security Vulnerability Disclosure / 安全漏洞私密报告
+    url: https://github.com/ZSeven-W/jiange/security/advisories/new
+    about: Report security vulnerabilities privately without opening a public issue.

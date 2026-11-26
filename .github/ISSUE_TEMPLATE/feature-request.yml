@@ -1,0 +1,32 @@
+name: Feature Request / 功能建议
+description: Propose a new feature, SDK capability, or integration for Jiange
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Target Area / 目标模块
+      options:
+        - Cloud Doc / Editor
+        - Sheet / Formulas
+        - Base / Views / Automation
+        - Slides
+        - Whiteboard & MindMap
+        - Workspace AI / MCP
+        - Enterprise IAM / Compliance / Deployment
+        - TypeScript / Go SDKs
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or Use Case / 使用场景与痛点
+      description: Describe the workflow or problem this feature would solve.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution / 期望方案
+      description: How would you like it to work?

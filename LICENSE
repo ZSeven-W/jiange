@@ -4,10 +4,13 @@ https://github.com/ZSeven-W/jiange
 
 一、组件范围
 
-1. “SDK 部分”指本仓库 `packages/` 目录下的全部无 UI（Headless）软件开发工具包
-   及内部共享库，包括但不限于 `@jiange/collab`、`@jiange/doc-sdk`、
-   `@jiange/sheet-sdk`、`@jiange/slides-sdk`、`@jiange/whiteboard-sdk`、
-   `@jiange/ooxml`。
+1. “SDK 部分”指本仓库 `packages/` 目录下的全部 TypeScript / WebGPU SDK（含 Headless
+   与 UI 包，包括但不限于 `@zseven-w/ooxml`、`@zseven-w/collab`、`@zseven-w/doc-sdk`、
+   `@zseven-w/sheet-sdk`、`@zseven-w/base-sdk`、`@zseven-w/slides-sdk`、
+   `@zseven-w/whiteboard-sdk`、`@zseven-w/render-gpu`、`@zseven-w/doc-ui`、
+   `@zseven-w/sheet-ui`、`@zseven-w/base-ui`、`@zseven-w/slides-ui`、
+   `@zseven-w/whiteboard-ui`）、`sdk/` 目录下的 Go 后端 SDK（`sdk/go`、`sdk/go-pgstore`）
+   以及 `cli/` 目录下的 Go CLI 与 MCP Server。
 
 2. “应用部分”指本仓库除“SDK 部分”以外的全部软件、源码、配置与产品资源，包括
    但不限于 `apps/`（Web 前端应用）、`server/`（后端与同步服务）及部署文件。
@@ -23,8 +26,8 @@ https://github.com/ZSeven-W/jiange
    用于提供收费服务）须事先取得版权所有者的商业授权。未取得有效商业授权前，
    不得将应用部分或其修改版用于任何商业用途。
 
-3. 商业授权请联系版权所有者洽谈授权范围、期限与费用。取得商业授权后，相应使用
-   行为以另行签署的商业授权合同条款为准。
+3. 商业授权请联系版权所有者洽谈授权范围、期限与费用（可通过仓库
+   GitHub Discussions `https://github.com/ZSeven-W/jiange/discussions` 或仓库主页联系渠道发起咨询）。取得商业授权后，相应使用行为以另行签署的商业授权合同条款为准。
 
 三、SDK 部分许可（全部免费 / 企业二开须公开说明来源）
 
@@ -66,11 +69,14 @@ https://github.com/ZSeven-W/jiange
 
 1. Definitions & Scope
 
-   a) "SDK Components" means all headless software development kits and shared
-      libraries under the `packages/` directory of this repository, including
-      without limitation `@jiange/collab`, `@jiange/doc-sdk`,
-      `@jiange/sheet-sdk`, `@jiange/slides-sdk`, `@jiange/whiteboard-sdk`, and
-      `@jiange/ooxml`.
+   a) "SDK Components" means all TypeScript / WebGPU SDKs (both Headless and UI
+      packages) under the `packages/` directory of this repository (including
+      without limitation `@zseven-w/ooxml`, `@zseven-w/collab`, `@zseven-w/doc-sdk`,
+      `@zseven-w/sheet-sdk`, `@zseven-w/base-sdk`, `@zseven-w/slides-sdk`,
+      `@zseven-w/whiteboard-sdk`, `@zseven-w/render-gpu`, `@zseven-w/doc-ui`,
+      `@zseven-w/sheet-ui`, `@zseven-w/base-ui`, `@zseven-w/slides-ui`, and
+      `@zseven-w/whiteboard-ui`), the Go backend SDKs under `sdk/` (`sdk/go`,
+      `sdk/go-pgstore`), and the Go CLI & MCP Server under `cli/`.
 
    b) "Application Components" means all software, source code, configurations,
       and product assets in this repository outside the SDK Components,
@@ -94,7 +100,9 @@ https://github.com/ZSeven-W/jiange
 
    c) Commercial licensing terms (scope, duration, fees) are governed by a
       separate commercial license agreement negotiated with the copyright
-      holder.
+      holder. Licensing inquiries may be initiated via GitHub Discussions
+      (`https://github.com/ZSeven-W/jiange/discussions`) or the repository's
+      official contact channels.
 
 3. SDK License (Free for All Uses / Public Attribution for Enterprise Forks)
 

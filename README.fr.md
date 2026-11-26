@@ -17,6 +17,14 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ZSeven-W/jiange/actions/workflows/ci.yml"><img src="https://github.com/ZSeven-W/jiange/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+  <a href="https://github.com/ZSeven-W/jiange/releases/latest"><img src="https://img.shields.io/github/v/release/ZSeven-W/jiange?label=release&color=3370FF" alt="Latest Release" /></a>
+  <a href="https://www.npmjs.com/package/@zseven-w/sheet-sdk"><img src="https://img.shields.io/npm/v/%40zseven-w%2Fsheet-sdk?label=npm%20%40zseven-w%2F*&color=CB3837" alt="npm SDKs" /></a>
+  <a href="https://github.com/ZSeven-W/jiange/pkgs/container/jiange"><img src="https://img.shields.io/badge/ghcr.io-zseven--w%2Fjiange-2496ED?logo=docker&logoColor=white" alt="GHCR Docker Image" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Dual--Track%20%7C%20SDK%20Free-10B981" alt="License" /></a>
+</p>
+
+<p align="center">
   <strong>Suite collaborative open source complète : Docs + Tableur + Base multidimensionnelle + Présentations + Tableau blanc / Cartes mentales (alternative à Feishu/Lark)</strong><br />
   <sub>IA native · Léger et modulaire · Sécurité et conformité entreprise/secteur public · Haute disponibilité multi-réplicas · Internationalisation bilingue intégrale et CRDT hors ligne · Zéro Canvas 2D (WebGPU/WebGL2 + liste virtuelle)</sub>
 </p>

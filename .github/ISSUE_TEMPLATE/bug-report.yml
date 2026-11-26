@@ -1,0 +1,45 @@
+name: Bug Report / 问题反馈
+description: Report a bug in Jiange suite, Docker deployment, Go CLI/MCP, or SDKs
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈问题！请尽量提供复现步骤与环境信息，方便我们快速定位。
+  - type: dropdown
+    id: component
+    attributes:
+      label: Affected Component / 问题所属模块
+      options:
+        - Web App (Docs / Sheet / Base / Slides / Board)
+        - Workspace AI / RAG / Search
+        - Enterprise Auth / IAM / DLP / Webhook
+        - Docker / Helm / K8s Deployment
+        - npm TypeScript / WebGPU SDK (@zseven-w/*)
+        - Go CLI & MCP Server / Go SDK
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened? / 问题描述
+      description: Clear and concise description of what happened vs. what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to Reproduce / 复现步骤
+      placeholder: |
+        1. Deploy via docker compose / open ...
+        2. Click ...
+        3. See error ...
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment / 环境信息
+      placeholder: |
+        - Jiange version / commit / Docker tag:
+        - OS & Browser (for WebGPU/WebGL2 UI issues):
+        - Node / Go / PostgreSQL version:
