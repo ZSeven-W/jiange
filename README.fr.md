@@ -59,6 +59,47 @@
 | **Sécurité, conformité et écosystème ouvert** | **DLP d'entreprise par mots-clés sensibles et regex RE2 sûres** (couvrant Doc / Sheet / Base / Slides / Survey, blocage ou alerte sur le partage public et les exports CSV/pièces jointes publiques), **politiques de rétention des données avec purge planifiée en arrière-plan ou manuelle**, filigranes anti-fuite sur toute la suite, mots de passe sur les liens de partage public, journaux d'audit de sécurité d'entreprise avec export CSV, **contrat OpenAPI 3.1.0 intégral (361 points de terminaison vérifiés à 100 % sur les routes + 27 modèles de données + portail développeur interactif)**, **jetons d'accès personnels (PAT)**, **webhooks HMAC-SHA256 sur les 6 catégories d'événements d'espace**, **canaux de notification externes** (SMTP / Feishu / DingTalk / WeCom / Slack) |
 | **Haute disponibilité, internationalisation et Cloud-Native** | **Mise à l'échelle horizontale multi-réplicas sur les 4 hubs de collaboration temps réel** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, tous diffusés entre nœuds via Postgres `LISTEN/NOTIFY`), **internationalisation complète chinois/anglais sur tout le dépôt** (5 355 entrées, 0 oubli visible côté utilisateur), **`React.lazy` au niveau des routes + découpage de bundles Rollup** (bundle principal 308 KB / gzip 84 KB), édition hors ligne PWA + IndexedDB avec fusion automatique à la reconnexion (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, CLI de sauvegarde/restauration complète vérifiée par SHA-256 (`jiange backup` / `restore` / `reindex-attachments`), **Helm Chart** et manifestes **Kustomize** prêts pour la production |
 
+### Aperçu de l'interface produit
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="Documents cloud" width="100%" /><br />
+      <b>Documents cloud (Cloud Doc)</b><br />
+      <sub>CRDT temps réel &amp; hors ligne maison, plan hiérarchique et blocs riches</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="Tableur" width="100%" /><br />
+      <b>Tableur (Sheet)</b><br />
+      <sub>Grille virtuelle WebGPU, 148 formules intégrées, sparklines et graphiques</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="Base multidimensionnelle" width="100%" /><br />
+      <b>Base multidimensionnelle (Base)</b><br />
+      <sub>23 types de champs, vues Grille/Kanban/Gantt/Arborescente et remplissage IA</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="Présentations" width="100%" /><br />
+      <b>Présentations (Slides)</b><br />
+      <sub>Canevas WebGPU, graphiques/tableaux vectoriels, kit de marque et PPTX</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="Tableau blanc et cartes mentales" width="100%" /><br />
+      <b>Tableau blanc &amp; Cartes mentales (Board)</b><br />
+      <sub>Canevas infini, organigrammes en couloirs, cartes mentales et minicarte</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="Workspace AI" width="100%" /><br />
+      <b>Espace de travail IA (Workspace AI)</b><br />
+      <sub>RAG hybride vecteurs + BM25 avec citations cliquables vers les sources</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Démarrage rapide

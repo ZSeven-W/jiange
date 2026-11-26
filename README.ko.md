@@ -59,6 +59,47 @@
 | **보안 컴플라이언스 & 오픈 생태계** | **엔터프라이즈 DLP 민감어 및 안전한 RE2 정규식 유출 방지**(Doc / Sheet / Base / Slides / Survey 적용, 공개 공유 및 CSV / 공개 첨부 파일 내보내기 차단·경고), **데이터 보존 기간 정책 및 백그라운드 예약/수동 정리**, 전체 스위트 유출 방지 워터마크, 공개 공유 비밀번호, 엔터프라이즈 보안 감사 로그 및 CSV 내보내기, **OpenAPI 3.1.0 전체 명세(361개 엔드포인트 100% 라우트 커버리지 검증 + 27개 데이터 모델 + 인터랙티브 개발자 포털)**, **PAT 개인 액세스 토큰**, **전체 6종 워크스페이스 이벤트 HMAC-SHA256 Webhook**, **외부 알림 채널**(SMTP / Feishu / DingTalk / WeCom / Slack) |
 | **고가용성 · 국제화 · 클라우드 네이티브** | **4대 실시간 협업 Hub 전체 멀티 레플리카 수평 확장**(Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 모두 PostgreSQL `LISTEN/NOTIFY` 기반 노드 간 브로드캐스트 지원), **저장소 전체 중국어/영어 완전 이중 언어 국제화**(5,355개 항목, 사용자 노출 누락 0건), **라우트 단위 `React.lazy` + Rollup 코드 스플리팅**(메인 번들 308 KB / gzip 84 KB), PWA + IndexedDB 오프라인 편집 및 재연결 자동 병합(Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256 무결성 검증 전체 백업·복원 CLI(`jiange backup` / `restore` / `reindex-attachments`), 프로덕션급 **Helm Chart** 및 **Kustomize** 매니페스트 |
 
+### 제품 화면 미리보기
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="클라우드 문서" width="100%" /><br />
+      <b>클라우드 문서 (Cloud Doc)</b><br />
+      <sub>자체 CRDT 실시간/오프라인 협업, 목차 개요 및 리치 블록 편집</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="스프레드시트" width="100%" /><br />
+      <b>스프레드시트 (Sheet)</b><br />
+      <sub>WebGPU 가상 그리드, 148개 내장 수식 함수 및 플로팅 차트</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="다차원 테이블" width="100%" /><br />
+      <b>다차원 테이블 (Base)</b><br />
+      <sub>23종 필드, 그리드/칸반/간트/계층 뷰 및 AI 열 일괄 채우기</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="슬라이드" width="100%" /><br />
+      <b>슬라이드 (Slides)</b><br />
+      <sub>WebGPU 캔버스, 벡터 차트/표, 마스터 브랜드 키트 및 PPTX 호환</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="화이트보드 & 마인드맵" width="100%" /><br />
+      <b>화이트보드 &amp; 마인드맵 (Board &amp; MindMap)</b><br />
+      <sub>무한 캔버스, 스윔레인 플로차트, 마인드맵 및 미니맵 내비게이션</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="지식 베이스 AI Q&A" width="100%" /><br />
+      <b>워크스페이스 AI Q&amp;A (Workspace AI)</b><br />
+      <sub>하이브리드 시맨틱 벡터 + BM25 RAG 검색 및 클릭 가능한 출처 인용</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## 빠른 시작

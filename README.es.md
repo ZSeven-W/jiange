@@ -59,6 +59,47 @@
 | **Seguridad, cumplimiento y ecosistema abierto** | **DLP empresarial con palabras sensibles y expresiones regulares RE2 seguras** (cobertura para Doc / Sheet / Base / Slides / Survey, bloqueo o alerta en compartición pública y exportaciones CSV/adjuntos públicos), **políticas de retención de datos con limpieza programada en segundo plano o manual**, marcas de agua antifugas en toda la suite, contraseñas en enlaces públicos, registros de auditoría de seguridad empresarial con exportación CSV, **contrato OpenAPI 3.1.0 completo (361 endpoints con verificación de cobertura de rutas al 100% + 27 modelos de datos + portal interactivo para desarrolladores)**, **tokens de acceso personal (PAT)**, **webhooks HMAC-SHA256 para las 6 categorías de eventos del espacio** y **canales de notificación externos** (SMTP / Feishu / DingTalk / WeCom / Slack) |
 | **Alta disponibilidad, internacionalización y despliegue nativo en la nube** | **Escalado horizontal multirréplica en los 4 hubs de colaboración en tiempo real** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, todos con difusión entre nodos vía Postgres `LISTEN/NOTIFY`), **internacionalización bilingüe completa chino/inglés en todo el repositorio** (5,355 entradas, 0 omisiones visibles para el usuario), **`React.lazy` por ruta + división de paquetes con Rollup** (paquete principal de 308 KB / gzip 84 KB), edición sin conexión PWA + IndexedDB con fusión automática al reconectar (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, CLI de copia de seguridad y restauración completa verificada con SHA-256 (`jiange backup` / `restore` / `reindex-attachments`), **Helm Chart** y manifiestos **Kustomize** listos para producción |
 
+### Capturas de pantalla del producto
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="Documentos en la nube" width="100%" /><br />
+      <b>Documentos en la nube (Cloud Doc)</b><br />
+      <sub>CRDT propio en tiempo real y sin conexión, esquema y bloques enriquecidos</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="Hojas de cálculo" width="100%" /><br />
+      <b>Hojas de cálculo (Sheet)</b><br />
+      <sub>Cuadrícula virtual WebGPU, 148 fórmulas, minigráficos y gráficos flotantes</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="Base multidimensional" width="100%" /><br />
+      <b>Tablas multidimensionales (Base)</b><br />
+      <sub>23 tipos de campo, vistas Cuadrícula/Kanban/Gantt/Árbol y relleno con IA</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="Presentaciones" width="100%" /><br />
+      <b>Presentaciones (Slides)</b><br />
+      <sub>Lienzo WebGPU, gráficos/tablas vectoriales, kit de marca y soporte PPTX</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="Pizarra y mapas mentales" width="100%" /><br />
+      <b>Pizarra y Mapas mentales (Board)</b><br />
+      <sub>Lienzo infinito, diagramas de flujo con carriles, mapas mentales y minimapa</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="Workspace AI" width="100%" /><br />
+      <b>Espacio de trabajo IA (Workspace AI)</b><br />
+      <sub>RAG híbrido vectorial + BM25 con citas clicables a los documentos fuente</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Inicio rápido

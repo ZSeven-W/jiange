@@ -59,6 +59,47 @@
 | **安全合規與開放生態** | **企業 DLP 敏感詞與安全 RE2 正規表示式防外洩**（涵蓋 Doc / Sheet / Base / Slides / Survey，攔截或告警公開分享與 CSV／公開附件匯出）、**資料保留週期原則與背景排程／手動清理**、全套件防外洩浮水印、公開分享密碼、企業安全稽核日誌與 CSV 匯出、**OpenAPI 3.1.0 完整契約（361 個 API 端點 100% 路由覆蓋驗證 + 27 個資料模型 + 互動式開發者入口）**、**個人存取權杖（PAT）**、**全部 6 類空間事件 HMAC-SHA256 Webhook**、**外部通知管道**（SMTP／飛書／釘釘／企業微信／Slack） |
 | **高可用、國際化與雲原生維運** | **4 大即時協作 Hub 全量多副本水平擴展**（Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` 皆基於 Postgres `LISTEN/NOTIFY` 跨節點廣播）、**全倉中／英雙語完整國際化**（5,355 條詞條，0 處使用者可見遺漏）、**路由層級 `React.lazy` + Rollup 程式碼分割**（主套件 308 KB / gzip 84 KB）、PWA + IndexedDB 離線編輯與重連自動合併（Doc / Base / Sheet / Slides）、`/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`、SHA-256 校驗全量備份與還原 CLI（`jiange backup` / `restore` / `reindex-attachments`）、生產級 **Helm Chart** 與 **Kustomize** 部署清單 |
 
+### 產品介面預覽
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="雲端文件" width="100%" /><br />
+      <b>雲端文件（Cloud Doc）</b><br />
+      <sub>自研 CRDT 即時／離線協同、多層目錄大綱與豐富區塊編輯</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="試算表" width="100%" /><br />
+      <b>試算表（Sheet）</b><br />
+      <sub>WebGPU 虛擬格線、148 個內建公式函式與浮動圖表</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="多維表格" width="100%" /><br />
+      <b>多維表格（Base）</b><br />
+      <sub>23 種欄位、表格／看板／甘特／階層多檢視與 AI 批次填寫</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="簡報" width="100%" /><br />
+      <b>簡報（Slides）</b><br />
+      <sub>WebGPU 簡報畫布、向量圖表／表格、母片套件與 PPTX 互通</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="白板與心智圖" width="100%" /><br />
+      <b>白板與心智圖（Board &amp; MindMap）</b><br />
+      <sub>無限畫布、跨部門泳道流程圖、心智圖與小地圖導覽</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="知識庫 AI 問答" width="100%" /><br />
+      <b>知識庫 AI 問答（Workspace AI）</b><br />
+      <sub>混合語意向量 + BM25 RAG 全空間問答與可點擊引用溯源</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## 快速使用

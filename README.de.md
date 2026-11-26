@@ -59,6 +59,47 @@
 | **Sicherheit, Compliance & offenes Ökosystem** | **Enterprise-DLP mit sensiblen Schlüsselwörtern und sicheren RE2-Regulärausdrücken** (für Doc / Sheet / Base / Slides / Survey, Blockieren/Warnen bei öffentlichem Teilen sowie CSV-/öffentlichem Anhangsexport), **Datenaufbewahrungsrichtlinien mit zeitgesteuerter Hintergrund- und manueller Bereinigung**, suiteweite Wasserzeichen zum Schutz vor Datenabfluss, Passwortschutz für öffentliche Freigaben, Enterprise-Sicherheitsaudit-Logs mit CSV-Export, **vollständiger OpenAPI-3.1.0-Vertrag (361 Endpunkte mit 100-%-Routenabdeckungsprüfung + 27 Datenmodelle + interaktives Entwicklerportal)**, **Personal Access Tokens (PAT)**, **HMAC-SHA256-Webhooks für alle 6 Workspace-Ereigniskategorien**, **externe Benachrichtigungskanäle** (SMTP / Feishu / DingTalk / WeCom / Slack) |
 | **Hochverfügbarkeit, Internationalisierung & Cloud-Native** | **Horizontale Multi-Replikat-Skalierung aller 4 Echtzeit-Kollaborations-Hubs** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, alle über Postgres `LISTEN/NOTIFY` knotenübergreifend verteilt), **vollständige zweisprachige i18n (Chinesisch/Englisch) im gesamten Repository** (5.355 Einträge, 0 nutzersichtbare Lücken), **routenbasiertes `React.lazy` + Rollup-Code-Splitting** (Hauptbundle 308 KB / gzip 84 KB), PWA + IndexedDB Offline-Bearbeitung mit automatischem Merge bei Wiederverbindung (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256-verifizierte Voll-Backup-/Restore-CLI (`jiange backup` / `restore` / `reindex-attachments`), produktionsreifes **Helm Chart** und **Kustomize**-Manifeste |
 
+### Produkt-Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="Cloud-Dokumente" width="100%" /><br />
+      <b>Cloud-Dokumente (Cloud Doc)</b><br />
+      <sub>Eigenes CRDT für Echtzeit &amp; Offline-Merge, Gliederung und Rich-Blöcke</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="Tabellenkalkulation" width="100%" /><br />
+      <b>Tabellenkalkulation (Sheet)</b><br />
+      <sub>Virtuelles WebGPU-Raster, 148 Formelfunktionen, Sparklines und Diagramme</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="Base" width="100%" /><br />
+      <b>Multidimensionale Tabellen (Base)</b><br />
+      <sub>23 Feldtypen, Raster-/Kanban-/Gantt-/Baumansicht und KI-Stapelausfüllen</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="Präsentationen" width="100%" /><br />
+      <b>Präsentationen (Slides)</b><br />
+      <sub>WebGPU-Canvas, Vektordiagramme/-tabellen, Master Brand Kit und PPTX</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="Whiteboard & Mindmap" width="100%" /><br />
+      <b>Whiteboard &amp; Mindmap (Board)</b><br />
+      <sub>Unendliche Zeichenfläche, Swimlane-Flussdiagramme, Mindmaps und Minimap</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="Workspace AI" width="100%" /><br />
+      <b>KI-nativer Arbeitsbereich (Workspace AI)</b><br />
+      <sub>Hybride Vektor- + BM25-RAG-Abfrage mit klickbaren Quellenverweisen</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Schnellstart

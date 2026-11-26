@@ -59,6 +59,47 @@
 | **Безопасность, комплаенс и открытая платформа (Governance & Open)** | **Корпоративный DLP по ключевым словам и безопасным регулярным выражениям RE2** (покрывает Doc / Sheet / Base / Slides / Survey, блокировка/предупреждения при публичном доступе и экспорте CSV/вложений), **политики хранения данных с фоновой и ручной очисткой**, водяные знаки во всём пакете, пароли для публичных ссылок, аудит-логи и экспорт в CSV, **полный контракт OpenAPI 3.1.0 (361 эндпоинт со 100% проверкой соответствия маршрутам + 27 схем + интерактивный портал разработчика)**, **персональные токены доступа (PAT)**, **HMAC-SHA256 вебхуки для всех 6 категорий событий пространства**, **внешние каналы уведомлений** (SMTP / Feishu / DingTalk / WeCom / Slack) |
 | **Масштабирование, интернационализация и Cloud-Native (Scale & Ops)** | **Горизонтальное масштабирование всех 4 хабов реального времени** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` с межузловой рассылкой через Postgres `LISTEN/NOTIFY`), **полная двуязычная интернационализация ZH/EN** (5 355 ключей, 0 непереведённых элементов UI), **разделение кода на уровне маршрутов `React.lazy` + Rollup** (основной чанк 308 KB / gzip 84 KB), PWA + IndexedDB офлайн-редактирование и автослияние (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, CLI-бэкап и восстановление с проверкой SHA-256 (`jiange backup` / `restore` / `reindex-attachments`), готовые к продакшену **Helm Chart** и манифесты **Kustomize** |
 
+### Скриншоты интерфейса
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="Облачные документы" width="100%" /><br />
+      <b>Облачные документы (Cloud Doc)</b><br />
+      <sub>Собственный CRDT для онлайн/офлайн-синхронизации, оглавление и блоки</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="Электронные таблицы" width="100%" /><br />
+      <b>Электронные таблицы (Sheet)</b><br />
+      <sub>Виртуальная сетка на WebGPU, 148 формул, спарклайны и плавающие диаграммы</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="Многомерные базы" width="100%" /><br />
+      <b>Многомерные базы (Base)</b><br />
+      <sub>23 типа полей, сетка/канбан/Гант/дерево и массовое AI-заполнение</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="Презентации" width="100%" /><br />
+      <b>Презентации (Slides)</b><br />
+      <sub>Холст WebGPU, векторные диаграммы и таблицы, мастер-слайды и PPTX</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="Доски и интеллект-карты" width="100%" /><br />
+      <b>Доски и интеллект-карты (Board &amp; MindMap)</b><br />
+      <sub>Бесконечный холст, блок-схемы со свими, интеллект-карты и миникарта</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="Workspace AI" width="100%" /><br />
+      <b>AI-рабочее пространство (Workspace AI)</b><br />
+      <sub>Гибридный векторный + BM25 RAG-поиск со ссылками на первоисточники</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Быстрый старт

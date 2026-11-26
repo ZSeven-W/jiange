@@ -59,6 +59,47 @@
 | **セキュリティ・コンプライアンス・オープンエコシステム** | **エンタープライズ DLP（機密語句・安全な RE2 正規表現による情報漏えい防止）**（Doc / Sheet / Base / Slides / Survey に対応、公開共有や CSV / 公開添付ファイルのエクスポートをブロック・警告）、**データ保持期間ポリシーとバックグラウンド定期・手動パージ**、スイート全体の情報漏えい防止ウォーターマーク、公開共有パスワード、エンタープライズ監査ログと CSV エクスポート、**OpenAPI 3.1.0 完全仕様（361 エンドポイント 100% ルート網羅検証 + 27 データモデル + インタラクティブ開発者ポータル）**、**PAT（個人用アクセストークン）**、**全 6 カテゴリのワークスペースイベント向け HMAC-SHA256 Webhook**、**外部通知チャネル**（SMTP / Feishu / DingTalk / WeCom / Slack） |
 | **高可用性・国際化・クラウドネイティブ** | **4 大リアルタイム共同編集 Hub のマルチレプリカ水平スケーリング**（Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync` はすべて PostgreSQL の `LISTEN/NOTIFY` によるノード間ブロードキャストに対応）、**リポジトリ全体での中国語・英語バイリンガル完全国際化**（5,355 エントリ、ユーザー可視箇所の翻訳漏れ 0 件）、**ルート単位の `React.lazy` + Rollup コード分割**（メインバンドル 308 KB / gzip 84 KB）、PWA + IndexedDB オフライン編集と再接続時の自動マージ（Doc / Base / Sheet / Slides）、`/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`、SHA-256 検証付きフルバックアップ・リストア CLI（`jiange backup` / `restore` / `reindex-attachments`）、本番環境向け **Helm Chart** と **Kustomize** マニフェスト |
 
+### 製品画面プレビュー
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="クラウドドキュメント" width="100%" /><br />
+      <b>クラウドドキュメント（Cloud Doc）</b><br />
+      <sub>独自 CRDT リアルタイム／オフライン共同編集・見出しアウトライン・リッチブロック</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="スプレッドシート" width="100%" /><br />
+      <b>スプレッドシート（Sheet）</b><br />
+      <sub>WebGPU 仮想グリッド・148 個の組み込み数式関数・スパークラインとチャート</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="多次元テーブル" width="100%" /><br />
+      <b>多次元テーブル（Base）</b><br />
+      <sub>23 種のフィールド・グリッド／カンバン／ガント／階層ビュー・AI 一括入力</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="スライド" width="100%" /><br />
+      <b>スライド（Slides）</b><br />
+      <sub>WebGPU キャンバス・ベクターチャート／表・マスタースライドと PPTX 連携</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="ホワイトボード・マインドマップ" width="100%" /><br />
+      <b>ホワイトボード・マインドマップ（Board &amp; MindMap）</b><br />
+      <sub>無限キャンバス・スイムレーンフローチャート・マインドマップとミニマップ</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="ナレッジベース AI Q&A" width="100%" /><br />
+      <b>AI ネイティブワークスペース（Workspace AI）</b><br />
+      <sub>ハイブリッドベクトル + BM25 RAG 検索とクリック可能な出典引用</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## クイックスタート

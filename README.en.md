@@ -59,6 +59,47 @@
 | **Governance & Open Ecosystem** | **Enterprise DLP keyword & safe-RE2 regex leak prevention** (covering Doc / Sheet / Base / Slides / Survey; blocks or alerts on public sharing and CSV/public attachment exports), **data retention policies with background scheduled & manual sweeps**, suite-wide anti-leak watermarks, password-protected public shares, enterprise security audit logs with CSV export, **complete OpenAPI 3.1.0 contract (361 endpoints with 100% route-coverage verification + 27 schemas + interactive developer portal)**, **Personal Access Tokens (PATs)**, **HMAC-SHA256 webhooks for all 6 workspace event types**, and **external notification channels** (SMTP / Feishu / DingTalk / WeCom / Slack) |
 | **Scale, i18n & Cloud-Native Ops** | **Horizontal multi-replica scaling across all 4 real-time collaboration hubs** (Doc `syncsrv` / Base `btsync` / Sheet `sheetsync` / Slides `slidessync`, all broadcasting cross-node via Postgres `LISTEN/NOTIFY`), **complete repo-wide Chinese/English i18n** (5,355 translation keys, 0 user-visible gaps), **route-level `React.lazy` + Rollup code splitting** (main bundle 308 KB / 84 KB gzipped), PWA + IndexedDB offline editing & auto-merge on reconnect (Doc / Base / Sheet / Slides), `/healthz` + `/readyz` + Prometheus `/metrics` + W3C `traceparent`, SHA-256-verified full backup/restore CLI (`jiange backup` / `restore` / `reindex-attachments`), and production-grade **Helm Chart** & **Kustomize** manifests |
 
+### Product Screenshots
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/cloud-doc.png" alt="Cloud Doc" width="100%" /><br />
+      <b>Cloud Doc</b><br />
+      <sub>Custom CRDT real-time &amp; offline sync, outline navigation, and rich blocks</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/sheet.png" alt="Sheet" width="100%" /><br />
+      <b>Sheet</b><br />
+      <sub>WebGPU virtual grid, 148 built-in formulas, sparklines, and floating charts</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/base.png" alt="Base" width="100%" /><br />
+      <b>Base</b><br />
+      <sub>23 field types, Grid/Kanban/Gantt/Hierarchy views, and AI batch autofill</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/slides.png" alt="Slides" width="100%" /><br />
+      <b>Slides</b><br />
+      <sub>WebGPU canvas, vector charts/tables, Master Brand Kit, and PPTX interop</sub>
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <img src="design/screenshots/board.png" alt="Board & MindMap" width="100%" /><br />
+      <b>Board &amp; MindMap</b><br />
+      <sub>Infinite canvas, cross-team swimlanes, mind maps, and minimap navigation</sub>
+    </td>
+    <td align="center" width="50%">
+      <img src="design/screenshots/workspace-ai.png" alt="Workspace AI" width="100%" /><br />
+      <b>Workspace AI</b><br />
+      <sub>Hybrid semantic vector + BM25 RAG Q&amp;A with clickable citation provenance</sub>
+    </td>
+  </tr>
+</table>
+
 ---
 
 ## Quick Start
